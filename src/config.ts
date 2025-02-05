@@ -20,7 +20,7 @@ const requireEnvVar = (name: string): string => {
   return value;
 };
 
-const config: EnvConfig = {
+export const config: EnvConfig = {
   UID: requireEnvVar('UID'),
   SESSDATA: requireEnvVar('SESSDATA'),
   FETCH_INTERVAL: 15 * 60 * 1000, // 15 minutes in milliseconds
@@ -28,6 +28,10 @@ const config: EnvConfig = {
   MAX_HISTORY_DAYS: 7,
   ENABLE_TAG_FETCH: process.env.ENABLE_TAG_FETCH === 'true' || false,
 };
+
+export async function readConfig(): Promise<String> {
+  return JSON.stringify(config);
+}
 
 Object.freeze(config);
 

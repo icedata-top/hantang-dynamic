@@ -85,6 +85,10 @@ async function fetchVideos(): Promise<void> {
 // Main application function
 async function main() {
     console.log('Bilibili Video Tracker started...');
+
+    // Log configuration
+    const configString = await readConfig();
+    console.log('Configuration:', configString);
     
     // Schedule periodic fetches (15 minutes)
     const interval = config.FETCH_INTERVAL;
