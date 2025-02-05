@@ -34,8 +34,8 @@ export class StateManager {
         this.saveState();
     }
 
-    isWithinMaxHistory(): boolean {
-        const maxTime = config.MAX_HISTORY_DAYS * 24 * 60 * 60 * 1000;
-        return (Date.now() - this.state.lastUpdateTime) < maxTime;
+    isWithinMaxHistory(pubdate: number): boolean {
+        const maxHistoryTime = Date.now() - (config.MAX_HISTORY_DAYS * 24 * 60 * 60 * 1000);
+        return pubdate * 1000 > maxHistoryTime;
     }
 }

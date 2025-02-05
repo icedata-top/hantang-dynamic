@@ -23,17 +23,23 @@ async function fetchVideos(): Promise<void> {
 
     // Fetch historical videos if needed
     let currentOffset = newVideosResponse.data.next_offset;
-    while (currentOffset && stateManager.isWithinMaxHistory()) {
+    while (currentOffset) {
         const historyResponse = await fetchHistoricalVideos(currentOffset);
         if (!historyResponse.data.cards?.length) break;
         
+        // Check if the oldest video in this batch is too old
+        const oldestVideo = historyResponse.data.cards[historyResponse.data.cards.length - 1];
+        const oldestPubdate = JSON.parse(oldestVideo.card).pubdate;
+        if (!stateManager.isWithinMaxHistory(oldestPubdate)) break;
+        
         videos.push(...await processVideoData(historyResponse.data.cards));
+        
         // Check if we've reached our last known video
         const foundLastVideo = historyResponse.data.cards.some(
             card => card.desc.dynamic_id.toString() === lastDynamicId
         );
         if (foundLastVideo) break;
-
+    
         currentOffset = historyResponse.data.next_offset;
         await sleep(config.API_WAIT_TIME);
     }
