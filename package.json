@@ -6,6 +6,7 @@
   "bin": "dist/app.js",
   "pkg": {
     "assets": [
+      "node_modules/**/*",
       "dist/**/*"
     ],
     "targets": [
