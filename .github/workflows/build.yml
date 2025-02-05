@@ -1,0 +1,39 @@
+name: Build Executable
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Build TypeScript
+      run: npm run build
+      
+    - name: Package executable
+      run: |
+        npm install -g pkg
+        pkg . --target node18-linux,node18-win,node18-macos
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: executables
+        path: |
+          bilibili-dynamic-subscribe-linux
+          bilibili-dynamic-subscribe-win.exe
+          bilibili-dynamic-subscribe-macos
