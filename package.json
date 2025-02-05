@@ -2,11 +2,23 @@
   "name": "bilibili-dynamic-subscribe",
   "version": "1.1.0",
   "description": "A subscriber for fetching the latest dynamic videos from Bilibili every 15 minutes.",
+  "main": "dist/app.js",
+  "bin": "dist/app.js",
+  "pkg": {
+    "assets": [
+      "node_modules/**/*",
+      "dist/**/*"
+    ],
+    "targets": [
+      "node18-linux",
+      "node18-win",
+      "node18-macos"
+    ]
+  },
   "scripts": {
     "start": "ts-node src/app.ts",
-    "build": "tsc",
-    "package": "pkg ."
-  },
+    "build": "tsc"
+    },
   "author": "",
   "license": "ISC",
   "dependencies": {
