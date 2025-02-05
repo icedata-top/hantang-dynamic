@@ -1,4 +1,4 @@
-import dotenv from 'dotenv';
+import dotenv from "dotenv";
 
 dotenv.config();
 
@@ -21,12 +21,18 @@ const requireEnvVar = (name: string): string => {
 };
 
 export const config: EnvConfig = {
-  UID: requireEnvVar('UID'),
-  SESSDATA: requireEnvVar('SESSDATA'),
-  FETCH_INTERVAL: process.env.FETCH_INTERVAL ? parseInt(process.env.FETCH_INTERVAL) : 15 * 60 * 1000, // 15 minutes
-  API_WAIT_TIME: process.env.API_WAIT_TIME ? parseInt(process.env.API_WAIT_TIME) : 2000,
-  MAX_HISTORY_DAYS: process.env.MAX_HISTORY_DAYS ? parseInt(process.env.MAX_HISTORY_DAYS) : 7,
-  ENABLE_TAG_FETCH: process.env.ENABLE_TAG_FETCH === 'true' || false,
+  UID: requireEnvVar("UID"),
+  SESSDATA: requireEnvVar("SESSDATA"),
+  FETCH_INTERVAL: process.env.FETCH_INTERVAL
+    ? parseInt(process.env.FETCH_INTERVAL)
+    : 15 * 60 * 1000, // 15 minutes
+  API_WAIT_TIME: process.env.API_WAIT_TIME
+    ? parseInt(process.env.API_WAIT_TIME)
+    : 2000,
+  MAX_HISTORY_DAYS: process.env.MAX_HISTORY_DAYS
+    ? parseInt(process.env.MAX_HISTORY_DAYS)
+    : 7,
+  ENABLE_TAG_FETCH: process.env.ENABLE_TAG_FETCH === "true" || false,
 };
 
 export async function readConfig(): Promise<String> {
