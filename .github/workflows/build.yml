@@ -10,29 +10,34 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Setup Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '18'
-        
-    - name: Install dependencies
-      run: npm ci
-      
-    - name: Build TypeScript
-      run: npm run build
-      
-    - name: Package executable
-      run: |
-        npm install -g pkg
-        pkg . --target node18-linux,node18-win,node18-macos
+      - uses: actions/checkout@v3
 
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: executables
-        path: |
-          bilibili-dynamic-subscribe-linux
-          bilibili-dynamic-subscribe-win.exe
-          bilibili-dynamic-subscribe-macos
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "18"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: latest
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build TypeScript
+        run: pnpm run build
+
+      - name: Package executable
+        run: |
+          pnpm add -g pkg
+          pkg . --target node18-linux,node18-win,node18-macos
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: executables
+          path: |
+            bilibili-dynamic-subscribe-linux
+            bilibili-dynamic-subscribe-win.exe
+            bilibili-dynamic-subscribe-macos
