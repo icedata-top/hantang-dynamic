@@ -25,8 +25,7 @@ export async function processVideoData(cards: any[]): Promise<any[]> {
             pubdate: cardData.pubdate,
             title: cardData.title,
             description: cardData.desc,
-            tag: cardData.tname,
-            tags: tags,
+            tag: tags,
             pic: cardData.pic,
             type_id: cardData.tid,
             user_id: card.desc.uid
