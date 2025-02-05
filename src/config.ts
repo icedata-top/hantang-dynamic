@@ -9,6 +9,7 @@ interface EnvConfig {
   FETCH_INTERVAL: number;
   API_WAIT_TIME: number;
   MAX_HISTORY_DAYS: number;
+  ENABLE_TAG_FETCH: boolean;
 }
 
 const requireEnvVar = (name: string): string => {
@@ -25,6 +26,7 @@ const config: EnvConfig = {
   FETCH_INTERVAL: 15 * 60 * 1000, // 15 minutes in milliseconds
   API_WAIT_TIME: 2000, // 2 seconds in milliseconds
   MAX_HISTORY_DAYS: 7,
+  ENABLE_TAG_FETCH: process.env.ENABLE_TAG_FETCH === 'true' || false,
 };
 
 Object.freeze(config);

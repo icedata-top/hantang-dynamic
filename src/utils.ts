@@ -9,14 +9,16 @@ export async function processVideoData(cards: any[]): Promise<any[]> {
         const cardData = JSON.parse(card.card);
         
         let tags: string[] = [];
-        try {
-            const tagResponse: VideoTagResponse = await fetchVideoTags(card.desc.bvid);
-            if (tagResponse.data) {
-                tags = tagResponse.data.map(tag => tag.tag_name);
+        if (config.ENABLE_TAG_FETCH) {
+            try {
+                const tagResponse: VideoTagResponse = await fetchVideoTags(card.desc.bvid);
+                if (tagResponse.data) {
+                    tags = tagResponse.data.map(tag => tag.tag_name);
+                }
+                await sleep(config.API_WAIT_TIME);
+            } catch (error) {
+                console.error(`Failed to fetch tags for ${card.desc.bvid}:`, error);
             }
-            await sleep(config.API_WAIT_TIME);
-        } catch (error) {
-            console.error(`Failed to fetch tags for ${card.desc.bvid}:`, error);
         }
 
         processedVideos.push({
