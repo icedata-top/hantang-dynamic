@@ -1,0 +1,25 @@
+{
+  "name": "bilibili-tracker",
+  "version": "1.0.0",
+  "description": "A tracker for fetching the latest videos from Bilibili every 15 minutes.",
+  "main": "src/app.ts",
+  "scripts": {
+    "start": "ts-node src/app.ts",
+    "build": "tsc"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.7.9",
+    "csv-writer": "^1.6.0",
+    "dotenv": "^16.4.7",
+    "json2csv": "6.0.0-alpha.2",
+    "node-cron": "^3.0.3",
+    "toml": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/json2csv": "^5.0.7",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  }
+}
