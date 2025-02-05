@@ -2,7 +2,7 @@ import { fetchNewVideos, fetchHistoricalVideos } from './api';
 import { saveToCSV } from './csv';
 import { StateManager } from './state';
 import { processVideoData, sleep } from './utils';
-import config from './config';
+import { config , readConfig } from './config';
 
 const stateManager = new StateManager();
 
