@@ -4,3 +4,4 @@ node_modules/*
 *.csv
 *.state
 state.json
+dist/*
