@@ -1,4 +1,5 @@
 import { writeFileSync, readFileSync, existsSync } from 'fs';
+import config from './config';
 
 export class StateManager {
     private filePath: string;
@@ -33,8 +34,8 @@ export class StateManager {
         this.saveState();
     }
 
-    isWithinSevenDays(): boolean {
-        const sevenDays = 7 * 24 * 60 * 60 * 1000;
-        return (Date.now() - this.state.lastUpdateTime) < sevenDays;
+    isWithinMaxHistory(): boolean {
+        const maxTime = config.MAX_HISTORY_DAYS * 24 * 60 * 60 * 1000;
+        return (Date.now() - this.state.lastUpdateTime) < maxTime;
     }
 }

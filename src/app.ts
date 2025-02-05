@@ -2,6 +2,7 @@ import { fetchNewVideos, fetchHistoricalVideos } from './api';
 import { saveToCSV } from './csv';
 import { StateManager } from './state';
 import { sleep } from './utils';
+import config from './config';
 
 const stateManager = new StateManager();
 
@@ -35,11 +36,11 @@ async function fetchVideos(): Promise<void> {
     }
 
     // Wait before next request
-    await sleep(2000);
+    await sleep(config.API_WAIT_TIME);
 
     // Fetch historical videos if needed
     let currentOffset = newVideosResponse.data.next_offset;
-    while (currentOffset && stateManager.isWithinSevenDays()) {
+    while (currentOffset && stateManager.isWithinMaxHistory()) {
         const historyResponse = await fetchHistoricalVideos(currentOffset);
         if (!historyResponse.data.cards?.length) break;
         
@@ -51,7 +52,7 @@ async function fetchVideos(): Promise<void> {
         if (foundLastVideo) break;
 
         currentOffset = historyResponse.data.next_offset;
-        await sleep(2000);
+        await sleep(config.API_WAIT_TIME);
     }
 
     // Save to CSV if we have videos
@@ -65,7 +66,7 @@ async function main() {
     console.log('Bilibili Video Tracker started...');
     
     // Schedule periodic fetches (15 minutes)
-    const interval = 15 * 60 * 1000;
+    const interval = config.FETCH_INTERVAL;
     
     // Initial fetch
     await fetchVideos();

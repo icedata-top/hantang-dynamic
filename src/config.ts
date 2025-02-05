@@ -1,16 +1,16 @@
 import dotenv from 'dotenv';
 
-// Load environment variables
 dotenv.config();
 
-// Interface for environment variables
 interface EnvConfig {
   UID: string;
   SESSDATA: string;
   API_BASE_URL?: string;
+  FETCH_INTERVAL: number;
+  API_WAIT_TIME: number;
+  MAX_HISTORY_DAYS: number;
 }
 
-// Validate required environment variables
 const requireEnvVar = (name: string): string => {
   const value = process.env[name];
   if (!value) {
@@ -19,13 +19,14 @@ const requireEnvVar = (name: string): string => {
   return value;
 };
 
-// Configuration object
 const config: EnvConfig = {
   UID: requireEnvVar('UID'),
   SESSDATA: requireEnvVar('SESSDATA'),
+  FETCH_INTERVAL: 15 * 60 * 1000, // 15 minutes in milliseconds
+  API_WAIT_TIME: 2000, // 2 seconds in milliseconds
+  MAX_HISTORY_DAYS: 7,
 };
 
-// Freeze configuration to prevent modifications
 Object.freeze(config);
 
 export default config;
