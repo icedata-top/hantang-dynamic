@@ -1,11 +1,23 @@
 {
-  "name": "bilibili-tracker",
-  "version": "1.0.0",
-  "description": "A tracker for fetching the latest videos from Bilibili every 15 minutes.",
-  "main": "src/app.ts",
+  "name": "bilibili-dynamic-subscribe",
+  "version": "1.1.0",
+  "description": "A subscriber for fetching the latest dynamic videos from Bilibili every 15 minutes.",
+  "main": "dist/app.js",
+  "bin": "dist/app.js",
+  "pkg": {
+    "assets": [
+      "dist/**/*"
+    ],
+    "targets": [
+      "node18-linux",
+      "node18-win",
+      "node18-macos"
+    ]
+  },
   "scripts": {
     "start": "ts-node src/app.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "package": "pkg ."
   },
   "author": "",
   "license": "ISC",
