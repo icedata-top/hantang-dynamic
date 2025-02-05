@@ -31,6 +31,36 @@ interface ApiError extends Error {
     };
 }
 
+export interface VideoTagResponse {
+    code: number;
+    message: string;
+    ttl: number;
+    data: VideoTag[];
+}
+
+export interface VideoTag {
+    tag_id: number;
+    tag_name: string;
+    cover: string;
+    head_cover: string;
+    content: string;
+    short_content: string;
+    type: number;
+    state: number;
+    ctime: number;
+    count: {
+        view: number;
+        use: number;
+        atten: number;
+    };
+    is_atten: number;
+    likes: number;
+    hates: number;
+    attribute: number;
+    liked: number;
+    hated: number;
+}
+
 export async function fetchNewVideos(): Promise<BiliResponse> {
     const url = `${BASE_URL}/dynamic_new`;
     const params = {
@@ -82,4 +112,14 @@ export async function fetchHistoricalVideos(offsetDynamicId: string): Promise<Bi
         }
         throw error;
     }
+}
+
+export async function fetchVideoTags(bvid: string): Promise<VideoTagResponse> {
+    const url = `https://api.bilibili.com/x/tag/archive/tags?bvid=${bvid}`;
+    const response = await fetch(url, {
+        headers: {
+            'Cookie': `SESSDATA=${config.SESSDATA}`
+        }
+    });
+    return await response.json();
 }

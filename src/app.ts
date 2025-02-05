@@ -1,27 +1,10 @@
 import { fetchNewVideos, fetchHistoricalVideos } from './api';
 import { saveToCSV } from './csv';
 import { StateManager } from './state';
-import { sleep } from './utils';
+import { processVideoData, sleep } from './utils';
 import config from './config';
 
 const stateManager = new StateManager();
-
-async function processVideoData(cards: any[]): Promise<any[]> {
-    return cards.map(card => {
-        const cardData = JSON.parse(card.card);
-        return {
-            aid: cardData.aid,
-            bvid: card.desc.bvid,
-            pubdate: cardData.pubdate,
-            title: cardData.title,
-            description: cardData.desc,
-            tag: cardData.tname,
-            pic: cardData.pic,
-            type_id: cardData.tid,
-            user_id: card.desc.uid
-        };
-    });
-}
 
 async function fetchVideos(): Promise<void> {
     const videos = [];
