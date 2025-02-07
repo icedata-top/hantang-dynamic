@@ -1,5 +1,6 @@
 import axios from "axios";
 import { config } from "../core/config";
+import { retryDelay } from "../utils/datetime";
 
 const createClient = (baseURL: string) => {
   const instance = axios.create({
@@ -17,13 +18,20 @@ const createClient = (baseURL: string) => {
       }
       return response;
     },
-    (error) => {
+    async (error) => {
+      if (!error.response) {
+        return retryDelay(
+          () => instance(error.config),
+          config.API_RETRY_TIMES,
+          config.API_WAIT_TIME
+        );
+      }
       return Promise.reject({
         message: error.message,
         code: error.response?.status,
         data: error.response?.data,
       });
-    },
+    }
   );
 
   return instance;
