@@ -11,6 +11,13 @@ const envSchema = z.object({
   MAX_HISTORY_DAYS: z.coerce.number().default(7),
   ENABLE_TAG_FETCH: z.coerce.boolean().default(false),
   TYPE_ID_WHITE_LIST: z.array(z.number()).default([]),
+
+  MYSQL_IP: z.string().optional(),
+  MYSQL_PORT: z.coerce.number().optional(),
+  MYSQL_USERNAME: z.string().optional(),
+  MYSQL_PASSWORD: z.string().optional(),
+  MYSQL_TABLE: z.string().optional(),
+  MYSQL_DATABASE: z.string().optional(),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
@@ -25,4 +32,10 @@ export const config: EnvConfig = envSchema.parse({
   TYPE_ID_WHITE_LIST: process.env.TYPE_ID_WHITE_LIST
     ? process.env.TYPE_ID_WHITE_LIST.split(",").map(Number)
     : [],
+  MYSQL_IP: process.env.MYSQL_IP,
+  MYSQL_PORT: process.env.MYSQL_PORT,
+  MYSQL_USERNAME: process.env.MYSQL_USERNAME,
+  MYSQL_PASSWORD: process.env.MYSQL_PASSWORD,
+  MYSQL_TABLE: process.env.MYSQL_TABLE,
+  MYSQL_DATABASE: process.env.MYSQL_DATABASE,
 });

@@ -1,11 +1,10 @@
-// src/services/tracker.ts
 import { StateManager } from "../core/state";
 import { fetchDynamics } from "../api/dynamic";
-import { saveAsCSV } from "../utils/csv";
+import { exportData } from "../utils/exporter";
 import { processCard } from "../utils/helpers";
 import { config } from "../core/config";
 import { sleep } from "../utils/datetime";
-import type { BiliCard } from "../core/types";
+import type { BiliCard, VideoData } from "../core/types";
 
 export class DynamicTracker {
   private state = new StateManager();
@@ -45,7 +44,7 @@ export class DynamicTracker {
   }
 
   private async processDynamics(dynamics: BiliCard[]) {
-    let videoData = [];
+    let videoData = [] as VideoData[];
     console.log(`Processing ${dynamics.length} dynamics`);
 
     for (const dynamic of dynamics) {
@@ -56,7 +55,7 @@ export class DynamicTracker {
     }
 
     if (dynamics.length) {
-      saveAsCSV(videoData, `dynamics_${Date.now()}.csv`);
+      exportData(videoData);
     }
   }
 }
