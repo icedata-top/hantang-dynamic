@@ -43,6 +43,6 @@ export const processCard = async (
     tag: tagString,
     pic: data.pic,
     type_id: data.tid,
-    user_id: card.desc.uid,
+    user_id: card.desc.BILIBILI_UID,
   };
 };

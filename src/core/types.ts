@@ -1,6 +1,6 @@
 export interface BiliCard {
   desc: {
-    uid: number;
+    BILIBILI_UID: number;
     dynamic_id: number;
     timestamp: number;
     bvid: string;

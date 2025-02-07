@@ -4,7 +4,7 @@ import { z } from "zod";
 dotenv.config();
 
 const envSchema = z.object({
-  UID: z.string().min(1),
+  BILIBILI_UID: z.string().min(1),
   SESSDATA: z.string().min(1),
   FETCH_INTERVAL: z.coerce.number().default(900_000), // 15 minutes
   API_RETRY_TIMES: z.coerce.number().default(3),
@@ -24,7 +24,7 @@ const envSchema = z.object({
 export type EnvConfig = z.infer<typeof envSchema>;
 
 export const config: EnvConfig = envSchema.parse({
-  UID: process.env.UID,
+  BILIBILI_UID: process.env.BILIBILI_UID,
   SESSDATA: process.env.SESSDATA,
   FETCH_INTERVAL: process.env.FETCH_INTERVAL,
   API_RETRY_TIMES: process.env.API_RETRY_TIMES,

@@ -6,7 +6,7 @@ const createClient = (baseURL: string) => {
   const instance = axios.create({
     baseURL,
     headers: {
-      Referer: `https://space.bilibili.com/${config.UID}/`,
+      Referer: `https://space.bilibili.com/${config.BILIBILI_UID}/`,
       Cookie: `SESSDATA=${config.SESSDATA}`,
     },
   });
