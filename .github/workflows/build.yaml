@@ -52,4 +52,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bilibili-dynamic-subscribe-windows
-          path: dist/executables/bilibili-dynamic-subscribe-windows.exe
+          path: dist/executables/bilibili-dynamic-subscribe-win.exe
