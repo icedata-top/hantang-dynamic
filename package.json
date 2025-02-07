@@ -1,36 +1,41 @@
 {
   "name": "bilibili-dynamic-subscribe",
-  "version": "1.1.0",
-  "description": "A subscriber for fetching the latest dynamic videos from Bilibili every 15 minutes.",
-  "main": "dist/app.js",
-  "bin": "dist/app.js",
-  "pkg": {
-    "assets": [
-      "node_modules/**/*",
-      "dist/**/*"
-    ],
-    "targets": [
-      "node18-linux",
-      "node18-win",
-      "node18-macos"
-    ]
-  },
+  "version": "2.0.0",
+  "main": "dist/index.js",
   "scripts": {
-    "start": "ts-node src/app.ts",
-    "build": "tsc"
-    },
-  "author": "",
-  "license": "ISC",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "lint": "eslint . --ext .ts",
+    "format": "prettier --write .",
+    "package": "pkg . --out-path dist/executables --targets node20-win-x64,node20-linux-x64"
+  },
+  "pkg": {
+    "scripts": "dist/**/*.js",
+    "assets": [
+      "dist/**/*",
+      "node_modules/**/*"
+    ]
+
+  },
+  "bin": {
+    "bilibili-dynamic-subscribe": "dist/index.js"
+  },
   "dependencies": {
     "axios": "^1.7.9",
-    "csv-writer": "^1.6.0",
     "dotenv": "^16.4.7",
-    "json2csv": "6.0.0-alpha.2",
-    "node-cron": "^3.0.3",
-    "toml": "^3.0.0"
+    "json2csv": "^6.0.0-alpha.2",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/json2csv": "^5.0.7",
+    "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^8.23.0",
+    "@typescript-eslint/parser": "^8.23.0",
+    "@yao-pkg/pkg": "^6.3.0",
+    "eslint": "^9.19.0",
+    "eslint-config-prettier": "^10.0.1",
+    "prettier": "^3.4.2",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.3"
   }
