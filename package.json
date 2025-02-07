@@ -2,7 +2,6 @@
   "name": "bilibili-dynamic-subscribe",
   "version": "2.0.0",
   "main": "dist/index.js",
-  "packageManager": "^pnpm@9.15.5",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
