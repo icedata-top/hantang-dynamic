@@ -36,11 +36,21 @@ jobs:
       - name: Package project with pkg
         run: pkg . --out-path dist/executables --compress GZip
 
-      # Upload the packaged executables as artifacts
-      - name: Upload artifact
+      - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
         with:
-          path: |
-            dist/executables/bilibili-dynamic-subscribe-linux
-            dist/executables/bilibili-dynamic-subscribe-macos
-            dist/executables/bilibili-dynamic-subscribe-win.exe
+          name: bilibili-dynamic-subscribe-linux
+          path: dist/executables/bilibili-dynamic-subscribe-linux
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bilibili-dynamic-subscribe-macos
+          path: dist/executables/bilibili-dynamic-subscribe-macos
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bilibili-dynamic-subscribe-windows
+          path: dist/executables/bilibili-dynamic-subscribe-windows.exe
+
