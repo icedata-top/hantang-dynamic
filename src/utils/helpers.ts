@@ -1,48 +1,54 @@
 import { config } from "../core/config";
-import { BiliCard } from "../core/types";
+import type {
+  BiliDynamicCard,
+  VideoData,
+  BiliCards,
+  VideoTagResponse,
+} from "../core/types";
 import { fetchVideoTags } from "../api/video";
 import { sleep } from "./datetime";
-import type { VideoData } from "../core/types";
 
 export const processCard = async (
-  card: BiliCard,
+  dynamiccard: BiliDynamicCard,
 ): Promise<VideoData | null> => {
-  const data = JSON.parse(card.card);
+  const card: BiliCards = JSON.parse(dynamiccard.card);
   let tagString = "";
 
   if (
     Array.isArray(config.TYPE_ID_WHITE_LIST) &&
     config.TYPE_ID_WHITE_LIST.length > 0
   ) {
-    if (!config.TYPE_ID_WHITE_LIST.includes(data.tid)) {
-      console.log(`忽略类型 ${data.tid}: ${data.title}`);
+    if (!config.TYPE_ID_WHITE_LIST.includes(card.tid)) {
+      console.log(`忽略类型 ${card.tid}: ${card.title}`);
       return null;
     }
   }
 
   if (config.ENABLE_TAG_FETCH) {
     try {
-      const { data: tagData } = await fetchVideoTags(card.desc.bvid);
-      tagString = tagData.map((t) => t.tag_name).join(";");
-      console.log(`标签获取成功 ${card.desc.bvid}:`, tagString);
+      const { data: VideoTagResponse } = await fetchVideoTags(
+        dynamiccard.desc.bvid,
+      );
+      tagString = VideoTagResponse.map((t) => t.tag_name).join(";");
+      console.log(`标签获取成功 ${dynamiccard.desc.bvid}:`, tagString);
       await sleep(config.API_WAIT_TIME);
     } catch (error) {
       console.error(
-        `标签获取失败 ${card.desc.bvid}:`,
+        `标签获取失败 ${dynamiccard.desc.bvid}:`,
         error instanceof Error ? error.message : "未知错误",
       );
     }
   }
 
   return {
-    aid: data.aid,
-    bvid: card.desc.bvid,
-    pubdate: data.pubdate,
-    title: data.title,
-    description: data.desc,
+    aid: card.aid,
+    bvid: dynamiccard.desc.bvid,
+    pubdate: card.pubdate,
+    title: card.title,
+    description: card.desc,
     tag: tagString,
-    pic: data.pic,
-    type_id: data.tid,
-    user_id: card.desc.BILIBILI_UID,
+    pic: card.pic,
+    type_id: card.tid,
+    user_id: card.owner.mid,
   };
 };

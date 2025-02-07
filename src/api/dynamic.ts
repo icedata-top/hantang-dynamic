@@ -2,7 +2,7 @@ import { dynamicClient } from "./client";
 import {
   BiliDynamicNewResponse,
   BiliDynamicHistoryResponse,
-  BiliCard,
+  BiliDynamicCard,
 } from "../core/types";
 import { config } from "../core/config";
 import { sleep } from "../utils/datetime";
@@ -40,8 +40,8 @@ export const fetchDynamics = async ({
   minDynamicId = 0 as number,
   minTimestamp = (Date.now() / 1000 -
     config.MAX_HISTORY_DAYS * 86400) as number,
-}): Promise<BiliCard[]> => {
-  const dynamics: BiliCard[] = [];
+}): Promise<BiliDynamicCard[]> => {
+  const dynamics: BiliDynamicCard[] = [];
   let offset = minDynamicId;
   let hasMore = true;
   let firstRun = minDynamicId === 0;

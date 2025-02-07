@@ -4,7 +4,7 @@ import { exportData } from "../utils/exporter";
 import { processCard } from "../utils/helpers";
 import { config } from "../core/config";
 import { sleep } from "../utils/datetime";
-import type { BiliCard, VideoData } from "../core/types";
+import type { BiliDynamicCard, VideoData } from "../core/types";
 
 export class DynamicTracker {
   private state = new StateManager();
@@ -43,7 +43,7 @@ export class DynamicTracker {
     }
   }
 
-  private async processDynamics(dynamics: BiliCard[]) {
+  private async processDynamics(dynamics: BiliDynamicCard[]) {
     let videoData = [] as VideoData[];
     dynamics = dynamics.filter(
       (dynamic, index, self) =>
