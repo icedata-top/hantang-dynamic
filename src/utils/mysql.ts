@@ -27,7 +27,7 @@ export const saveToMysql = async (data: VideoData[]) => {
     // Insert each record into the specified table
     const table = config.MYSQL_TABLE;
     const insertQuery = `
-      INSERT INTO \`${table}\`
+      INSERT IGNORE INTO \`${table}\`
       (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
