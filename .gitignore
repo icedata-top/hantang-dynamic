@@ -5,3 +5,4 @@ node_modules/*
 *.state
 state.json
 dist/*
+.vscode/*
