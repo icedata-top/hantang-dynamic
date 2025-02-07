@@ -45,6 +45,10 @@ export class DynamicTracker {
 
   private async processDynamics(dynamics: BiliCard[]) {
     let videoData = [] as VideoData[];
+    dynamics = dynamics.filter(
+      (dynamic, index, self) =>
+        index === self.findIndex((t) => t.desc.bvid === dynamic.desc.bvid),
+    );
     console.log(`Processing ${dynamics.length} dynamics`);
 
     for (const dynamic of dynamics) {
