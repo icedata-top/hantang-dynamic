@@ -38,7 +38,7 @@ jobs:
           mv dist/executables/index-linux dist/bilibili-dynamic-subscribe-linux
           mv dist/executables/index-macos dist/bilibili-dynamic-subscribe-macos
           mv dist/executables/index-win.exe dist/bilibili-dynamic-subscribe-windows
-          cp .env.example dist/.env
+          cp .env.example dist/.env.example
           cp README.md dist/README.md
           cp start.sh dist/start.sh
           cp start.bat dist/start.bat
@@ -49,7 +49,7 @@ jobs:
           name: bilibili-dynamic-subscribe-linux
           path: |
             dist/bilibili-dynamic-subscribe-linux
-            dist/.env
+            dist/.env.example
             dist/README.md
             dist/start.sh
 
@@ -59,7 +59,7 @@ jobs:
           name: bilibili-dynamic-subscribe-macos
           path: |
             dist/bilibili-dynamic-subscribe-macos
-            dist/.env
+            dist/.env.example
             dist/README.md
             dist/start.sh
 
@@ -69,7 +69,7 @@ jobs:
           name: bilibili-dynamic-subscribe-windows
           path: |
             dist/bilibili-dynamic-subscribe-windows
-            dist/.env
+            dist/.env.example
             dist/README.md
             dist/start.bat
 
