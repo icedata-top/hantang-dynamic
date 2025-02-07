@@ -7,10 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest] # Run on both Linux and Windows
+    runs-on: ubuntu-latest
     steps:
       # Checkout the repository
       - name: Checkout code
@@ -43,5 +40,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bilibili-video-tracker-${{ matrix.os }}
-          path: dist/executables/
+          path: |
+            dist/executables/bilibili-dynamic-subscribe-linux
+            dist/executables/bilibili-dynamic-subscribe-macos
+            dist/executables/bilibili-dynamic-subscribe-win.exe
