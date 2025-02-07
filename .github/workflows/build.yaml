@@ -32,24 +32,46 @@ jobs:
 
       - name: Package project with pkg
         run: pnpm run package
+      
+      - name: Renaming and moving artifacts
+        run: |
+          mv dist/executables/index-linux dist/bilibili-dynamic-subscribe-linux
+          mv dist/executables/index-macos dist/bilibili-dynamic-subscribe-macos
+          mv dist/executables/index-win.exe dist/bilibili-dynamic-subscribe-windows
+          cp .env.example dist/.env
+          cp README.md dist/README.md
+          cp start.sh dist/start.sh
+          cp start.bat dist/start.bat
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
         with:
           name: bilibili-dynamic-subscribe-linux
-          path: dist/executables/index-linux
+          path: |
+            dist/bilibili-dynamic-subscribe-linux
+            dist/.env
+            dist/README.md
+            dist/start.sh
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: bilibili-dynamic-subscribe-macos
-          path: dist/executables/index-macos
+          path: |
+            dist/bilibili-dynamic-subscribe-macos
+            dist/.env
+            dist/README.md
+            dist/start.sh
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: bilibili-dynamic-subscribe-windows
-          path: dist/executables/index-win.exe
+          path: |
+            dist/bilibili-dynamic-subscribe-windows
+            dist/.env
+            dist/README.md
+            dist/start.bat
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

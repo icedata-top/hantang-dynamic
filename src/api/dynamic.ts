@@ -25,7 +25,10 @@ export const fetchDynamicsAPI = async (
 };
 
 export const getNewDynamics = () =>
-  fetchDynamicsAPI("/dynamic_new", { BILIBILI_UID: config.BILIBILI_UID, type: 8 });
+  fetchDynamicsAPI("/dynamic_new", {
+    BILIBILI_UID: config.BILIBILI_UID,
+    type: 8,
+  });
 export const getHistoryDynamics = (offset: number) =>
   fetchDynamicsAPI("/dynamic_history", {
     BILIBILI_UID: config.BILIBILI_UID,
