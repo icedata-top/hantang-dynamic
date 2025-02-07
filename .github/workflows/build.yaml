@@ -32,7 +32,7 @@ jobs:
 
       - name: Package project with pkg
         run: pnpm run package
-      
+
       - name: Renaming and moving artifacts
         run: |
           mv dist/executables/index-linux dist/bilibili-dynamic-subscribe-linux
