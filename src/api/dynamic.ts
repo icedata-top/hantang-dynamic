@@ -59,22 +59,10 @@ export const fetchDynamics = async ({
     const validCards = response.data.cards.filter((card) => {
       const isTimestampValid = card.desc.timestamp > minTimestamp;
       const isDynamicIdValid = card.desc.dynamic_id > minDynamicId;
-
-      if (!isTimestampValid) {
-        console.debug(
-          `Card filtered out: Timestamp ${card.desc.timestamp} is less than or equal to minTimestamp ${minTimestamp}`,
-        );
-      }
-      if (!isDynamicIdValid) {
-        console.debug(
-          `Card filtered out: Dynamic ID ${card.desc.dynamic_id} is less than or equal to minDynamicId ${minDynamicId}`,
-        );
-      }
-
       return isTimestampValid && isDynamicIdValid;
     });
 
-    console.log(`API ${++apiNo}: ${validCards.length} new dynamics`);
+    console.log(`API ${++apiNo}: ${validCards.length} new dynamics at time ${new Date().toLocaleString()}`);
 
     dynamics.push(...validCards);
 
