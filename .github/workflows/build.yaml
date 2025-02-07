@@ -44,4 +44,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bilibili-video-tracker-${{ matrix.os }}
-          path: dist/executables/bilibili-video-tracker-${{ matrix.os == 'windows-latest' && 'win' || 'linux' }}.exe
+          path: dist/executables/
