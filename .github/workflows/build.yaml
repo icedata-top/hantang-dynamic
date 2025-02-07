@@ -37,7 +37,7 @@ jobs:
         run: |
           mv dist/executables/index-linux dist/bilibili-dynamic-subscribe-linux
           mv dist/executables/index-macos dist/bilibili-dynamic-subscribe-macos
-          mv dist/executables/index-win.exe dist/bilibili-dynamic-subscribe-windows.exe
+          mv dist/executables/index-win.exe dist/bilibili-dynamic-subscribe-win.exe
           cp .env.example dist/.env.example
           cp README.md dist/README.md
           cp start.sh dist/start.sh
@@ -66,9 +66,9 @@ jobs:
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bilibili-dynamic-subscribe-windows
+          name: bilibili-dynamic-subscribe-win
           path: |
-            dist/bilibili-dynamic-subscribe-windows.exe
+            dist/bilibili-dynamic-subscribe-win.exe
             dist/.env.example
             dist/README.md
             dist/start.bat
