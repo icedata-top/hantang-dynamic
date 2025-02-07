@@ -43,9 +43,7 @@ pnpm start
 
 ## Configuration
 
-Create a
-
-.env file in the same directory as the executable with your settings:
+Create a `.env` file in the same directory as the executable with your settings:
 
 ```env
 # Required Settings
