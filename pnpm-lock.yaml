@@ -36,6 +36,9 @@ importers:
       '@typescript-eslint/parser':
         specifier: ^8.23.0
         version: 8.23.0(eslint@9.19.0)(typescript@5.7.3)
+      '@vercel/ncc':
+        specifier: ^0.38.3
+        version: 0.38.3
       '@yao-pkg/pkg':
         specifier: ^6.3.0
         version: 6.3.0
@@ -254,6 +257,10 @@ packages:
   '@typescript-eslint/visitor-keys@8.23.0':
     resolution: {integrity: sha512-oWWhcWDLwDfu++BGTZcmXWqpwtkwb5o7fxUIGksMQQDSdPW9prsSnfIOZMlsj4vBOSrcnjIUZMiIjODgGosFhQ==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+
+  '@vercel/ncc@0.38.3':
+    resolution: {integrity: sha512-rnK6hJBS6mwc+Bkab+PGPs9OiS0i/3kdTO+CkI8V0/VrW3vmz7O2Pxjw/owOlmo6PKEIxRSeZKv/kuL9itnpYA==}
+    hasBin: true
 
   '@yao-pkg/pkg-fetch@3.5.19':
     resolution: {integrity: sha512-EEURrS1Q5sSSAwaQ4zD0wZsquDiG8CroY3SCi7jYBoM0NG3eRA239mW6YMUYPNWUK4zCMhuK3bzFT5aIZP/rDg==}
@@ -1381,6 +1388,8 @@ snapshots:
     dependencies:
       '@typescript-eslint/types': 8.23.0
       eslint-visitor-keys: 4.2.0
+
+  '@vercel/ncc@0.38.3': {}
 
   '@yao-pkg/pkg-fetch@3.5.19':
     dependencies:

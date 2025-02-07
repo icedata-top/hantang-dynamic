@@ -3,22 +3,12 @@
   "version": "2.0.0",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "ncc build src/index.ts -o dist",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "lint": "eslint . --ext .ts",
     "format": "prettier --write . --ignore-path .prettierignore",
-    "package": "pkg . --out-path dist/executables --targets node20-win-x64,node20-linux-x64"
-  },
-  "pkg": {
-    "scripts": "dist/**/*.js",
-    "assets": [
-      "dist/**/*",
-      "node_modules/**/*"
-    ]
-  },
-  "bin": {
-    "bilibili-dynamic-subscribe": "dist/index.js"
+    "package": "pkg dist/index.js --out-path dist/executables --compress Gzip"
   },
   "dependencies": {
     "axios": "^1.7.9",
@@ -32,6 +22,7 @@
     "@types/node": "^20.11.0",
     "@typescript-eslint/eslint-plugin": "^8.23.0",
     "@typescript-eslint/parser": "^8.23.0",
+    "@vercel/ncc": "^0.38.3",
     "@yao-pkg/pkg": "^6.3.0",
     "eslint": "^9.19.0",
     "eslint-config-prettier": "^10.0.1",
