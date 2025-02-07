@@ -50,6 +50,7 @@ export class DynamicTracker {
 
     for (const dynamic of dynamics) {
       const processedData = await processCard(dynamic);
+      if (!processedData) continue;
       console.log(`Processed ${processedData.bvid}: ${processedData.title}`);
       videoData.push(processedData);
     }
