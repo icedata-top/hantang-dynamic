@@ -16,7 +16,6 @@
       "dist/**/*",
       "node_modules/**/*"
     ]
-
   },
   "bin": {
     "bilibili-dynamic-subscribe": "dist/index.js"

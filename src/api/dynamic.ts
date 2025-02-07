@@ -9,7 +9,7 @@ import { sleep } from "../utils/datetime";
 
 export const fetchDynamicsAPI = async (
   endpoint: string,
-  params: Record<string, any>
+  params: Record<string, any>,
 ): Promise<BiliDynamicNewResponse | BiliDynamicHistoryResponse> => {
   try {
     const response = await dynamicClient.get<
@@ -62,12 +62,12 @@ export const fetchDynamics = async ({
 
       if (!isTimestampValid) {
         console.debug(
-          `Card filtered out: Timestamp ${card.desc.timestamp} is less than or equal to minTimestamp ${minTimestamp}`
+          `Card filtered out: Timestamp ${card.desc.timestamp} is less than or equal to minTimestamp ${minTimestamp}`,
         );
       }
       if (!isDynamicIdValid) {
         console.debug(
-          `Card filtered out: Dynamic ID ${card.desc.dynamic_id} is less than or equal to minDynamicId ${minDynamicId}`
+          `Card filtered out: Dynamic ID ${card.desc.dynamic_id} is less than or equal to minDynamicId ${minDynamicId}`,
         );
       }
 
