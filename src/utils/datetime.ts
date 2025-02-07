@@ -8,9 +8,9 @@ const DEFAULT_RETRY_TIMES = 3;
 const DEFAULT_RETRY_DELAY = 1000;
 
 export const retryDelay = async <T>(
-  fn: () => Promise<T>, 
+  fn: () => Promise<T>,
   retries = DEFAULT_RETRY_TIMES,
-  delay = DEFAULT_RETRY_DELAY
+  delay = DEFAULT_RETRY_DELAY,
 ): Promise<T> => {
   try {
     return await fn();

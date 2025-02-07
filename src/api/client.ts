@@ -23,7 +23,7 @@ const createClient = (baseURL: string) => {
         return retryDelay(
           () => instance(error.config),
           config.API_RETRY_TIMES,
-          config.API_WAIT_TIME
+          config.API_WAIT_TIME,
         );
       }
       return Promise.reject({
@@ -31,7 +31,7 @@ const createClient = (baseURL: string) => {
         code: error.response?.status,
         data: error.response?.data,
       });
-    }
+    },
   );
 
   return instance;

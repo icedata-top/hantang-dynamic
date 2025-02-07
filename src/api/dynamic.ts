@@ -62,7 +62,9 @@ export const fetchDynamics = async ({
       return isTimestampValid && isDynamicIdValid;
     });
 
-    console.log(`API ${++apiNo}: ${validCards.length} new dynamics at time ${new Date().toLocaleString()}`);
+    console.log(
+      `API ${++apiNo}: ${validCards.length} new dynamics at time ${new Date().toLocaleString()}`,
+    );
 
     dynamics.push(...validCards);
 
