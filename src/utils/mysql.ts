@@ -26,14 +26,16 @@ export const saveToMysql = async (data: VideoData[]) => {
 
     // Insert each record into the specified table
     const table = config.MYSQL_TABLE;
+    const batchSize = 20;
     const insertQuery = `
       INSERT IGNORE INTO \`${table}\`
       (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES ?
     `;
 
-    for (const record of data) {
-      const values = [
+    for (let i = 0; i < data.length; i += batchSize) {
+      const batch = data.slice(i, i + batchSize);
+      const values = batch.map(record => [
         record.aid,
         record.bvid,
         record.pubdate,
@@ -43,9 +45,12 @@ export const saveToMysql = async (data: VideoData[]) => {
         record.pic,
         record.type_id,
         record.user_id,
-      ];
-      await connection.execute(insertQuery, values);
+      ]);
+      
+      await connection.query(insertQuery, [values]);
+      console.log(`Processed batch ${Math.floor(i / batchSize) + 1}: ${values.length} records at time ${new Date().toLocaleString()}`);
     }
+
 
     console.log(`Inserted ${data.length} records into MySQL table ${table}`);
     await connection.end();
