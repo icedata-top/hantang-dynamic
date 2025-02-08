@@ -7,6 +7,13 @@ import {
 import { config } from "../core/config";
 import { sleep } from "../utils/datetime";
 
+type DynamicType = "video" | "forward";
+
+const DYNAMIC_TYPE_MAP: Record<DynamicType, number> = {
+  forward: 1,
+  video: 8,
+};
+
 export const fetchDynamicsAPI = async (
   endpoint: string,
   params: Record<string, any>,
@@ -24,15 +31,16 @@ export const fetchDynamicsAPI = async (
   }
 };
 
-export const getNewDynamics = () =>
+export const getNewDynamic = (type: number) =>
   fetchDynamicsAPI("/dynamic_new", {
     BILIBILI_UID: config.BILIBILI_UID,
-    type: 8,
+    type,
   });
-export const getHistoryDynamics = (offset: number) =>
+
+export const getHistoryDynamic = (type: number, offset: number) =>
   fetchDynamicsAPI("/dynamic_history", {
     BILIBILI_UID: config.BILIBILI_UID,
-    type: 8,
+    type,
     offset_dynamic_id: offset,
   });
 
@@ -40,54 +48,60 @@ export const fetchDynamics = async ({
   minDynamicId = 0 as number,
   minTimestamp = (Date.now() / 1000 -
     config.MAX_HISTORY_DAYS * 86400) as number,
+  types = ["video", "forward"] as DynamicType[],
 }): Promise<BiliDynamicCard[]> => {
   const dynamics: BiliDynamicCard[] = [];
-  let offset = minDynamicId;
-  let hasMore = true;
-  let firstRun = minDynamicId === 0;
   let apiNo = 0;
 
-  while (hasMore) {
-    let response: BiliDynamicNewResponse | BiliDynamicHistoryResponse;
+  for (const type of types) {
+    const typeCode = DYNAMIC_TYPE_MAP[type];
+    let offset = minDynamicId;
+    let hasMore = true;
+    let firstRun = minDynamicId === 0;
 
-    response = firstRun
-      ? await getNewDynamics()
-      : await getHistoryDynamics(offset);
+    while (hasMore) {
+      let response: BiliDynamicNewResponse | BiliDynamicHistoryResponse;
 
-    if (response.code !== 0 || !response.data.cards?.length) {
-      console.error("API Error:", response);
-      break;
-    }
+      response = firstRun
+        ? await getNewDynamic(typeCode)
+        : await getHistoryDynamic(typeCode, offset);
 
-    const validCards = response.data.cards.filter((card) => {
-      const isTimestampValid = card.desc.timestamp > minTimestamp;
-      const isDynamicIdValid = card.desc.dynamic_id > minDynamicId;
-      return isTimestampValid && isDynamicIdValid;
-    });
+      if (response.code !== 0 || !response.data.cards?.length) {
+        console.error(`API Error for ${type}:`, response);
+        break;
+      }
 
-    console.log(
-      `API ${++apiNo}: ${validCards.length} new dynamics at time ${new Date().toLocaleString()}`,
-    );
+      const validCards = response.data.cards.filter((card) => {
+        const isTimestampValid = card.desc.timestamp > minTimestamp;
+        const isDynamicIdValid = card.desc.dynamic_id > minDynamicId;
+        return isTimestampValid && isDynamicIdValid;
+      });
 
-    dynamics.push(...validCards);
+      console.log(
+        `API ${++apiNo}: ${validCards.length} new ${type} dynamics at time ${new Date().toLocaleString()}`,
+      );
 
-    if (!validCards.length || validCards.length < response.data.cards.length)
-      break;
+      dynamics.push(...validCards);
 
-    if (firstRun) {
-      const newResponse = response as BiliDynamicNewResponse;
-      offset = newResponse.data.history_offset;
-      firstRun = false;
-    } else {
-      const historyResponse = response as BiliDynamicHistoryResponse;
-      hasMore = historyResponse.data.has_more === 1;
-      offset = historyResponse.data.next_offset;
-    }
+      if (!validCards.length || validCards.length < response.data.cards.length)
+        break;
 
-    if (config.API_WAIT_TIME > 0) {
-      await sleep(config.API_WAIT_TIME);
+      if (firstRun) {
+        const newResponse = response as BiliDynamicNewResponse;
+        offset = newResponse.data.history_offset;
+        firstRun = false;
+      } else {
+        const historyResponse = response as BiliDynamicHistoryResponse;
+        hasMore = historyResponse.data.has_more === 1;
+        offset = historyResponse.data.next_offset;
+      }
+
+      if (config.API_WAIT_TIME > 0) {
+        await sleep(config.API_WAIT_TIME);
+      }
     }
   }
+
   console.log(`Total ${dynamics.length} dynamics fetched`);
-  return dynamics.reverse();
+  return dynamics.sort((a, b) => a.desc.timestamp - b.desc.timestamp);
 };
