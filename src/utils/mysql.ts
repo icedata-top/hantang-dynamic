@@ -35,7 +35,7 @@ export const saveToMysql = async (data: VideoData[]) => {
 
     for (let i = 0; i < data.length; i += batchSize) {
       const batch = data.slice(i, i + batchSize);
-      const values = batch.map(record => [
+      const values = batch.map((record) => [
         record.aid,
         record.bvid,
         record.pubdate,
@@ -46,11 +46,12 @@ export const saveToMysql = async (data: VideoData[]) => {
         record.type_id,
         record.user_id,
       ]);
-      
-      await connection.query(insertQuery, [values]);
-      console.log(`Processed batch ${Math.floor(i / batchSize) + 1}: ${values.length} records at time ${new Date().toLocaleString()}`);
-    }
 
+      await connection.query(insertQuery, [values]);
+      console.log(
+        `Processed batch ${Math.floor(i / batchSize) + 1}: ${values.length} records at time ${new Date().toLocaleString()}`,
+      );
+    }
 
     console.log(`Inserted ${data.length} records into MySQL table ${table}`);
     await connection.end();

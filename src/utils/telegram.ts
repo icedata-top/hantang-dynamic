@@ -1,11 +1,8 @@
-import axios from 'axios';
-import { config } from '../core/config';
+import axios from "axios";
+import { config } from "../core/config";
 
 export async function sendTelegramMessage(message: string) {
-  if (
-    !config.TELEGRAM_BOT_TOKEN ||
-    !config.TELEGRAM_CHAT_ID
-  ) {
+  if (!config.TELEGRAM_BOT_TOKEN || !config.TELEGRAM_CHAT_ID) {
     return;
   }
 
@@ -15,10 +12,10 @@ export async function sendTelegramMessage(message: string) {
       {
         chat_id: config.TELEGRAM_CHAT_ID,
         text: message,
-        parse_mode: 'HTML'
-      }
+        parse_mode: "HTML",
+      },
     );
   } catch (error) {
-    console.error('Failed to send telegram message:', error);
+    console.error("Failed to send telegram message:", error);
   }
 }
