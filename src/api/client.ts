@@ -15,7 +15,11 @@ const createClient = (baseURL: string) => {
   instance.interceptors.response.use(
     (response) => {
       if (response.data.code !== 0) {
-        const message = `API Error: ${response.data.message}`;
+        const message =
+          `API Error:\n` +
+          `baseURL: ${baseURL + response.config.url}\n` +
+          `Config: ${JSON.stringify(response.config)}\n` +
+          `Response: ${JSON.stringify(response.data || "No message")?.slice(0, 1000)}`;
         notify(message);
         return Promise.reject(new Error(`API Error: ${response.data.msg}`));
       }
