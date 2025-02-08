@@ -19,6 +19,9 @@ const envSchema = z.object({
   MYSQL_PASSWORD: z.string().optional(),
   MYSQL_TABLE: z.string().optional(),
   MYSQL_DATABASE: z.string().optional(),
+
+  TELEGRAM_BOT_TOKEN: z.string().optional(),
+  TELEGRAM_CHAT_ID: z.string().optional(),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
@@ -40,4 +43,7 @@ export const config: EnvConfig = envSchema.parse({
   MYSQL_PASSWORD: process.env.MYSQL_PASSWORD,
   MYSQL_TABLE: process.env.MYSQL_TABLE,
   MYSQL_DATABASE: process.env.MYSQL_DATABASE,
+
+  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
+  TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID,
 });

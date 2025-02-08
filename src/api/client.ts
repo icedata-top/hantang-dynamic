@@ -1,6 +1,7 @@
 import axios from "axios";
 import { config } from "../core/config";
 import { retryDelay } from "../utils/datetime";
+import { notify } from "../utils/notifier";
 
 const createClient = (baseURL: string) => {
   const instance = axios.create({
@@ -14,6 +15,8 @@ const createClient = (baseURL: string) => {
   instance.interceptors.response.use(
     (response) => {
       if (response.data.code !== 0) {
+        const message = `API Error: ${response.data.message}`;
+        notify(message);
         return Promise.reject(new Error(`API Error: ${response.data.msg}`));
       }
       return response;
