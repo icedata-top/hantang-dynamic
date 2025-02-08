@@ -33,6 +33,7 @@ export class DynamicTracker {
     const Dynamics = await fetchDynamics({
       minDynamicId: this.state.lastDynamicId,
       minTimestamp: Date.now() / 1000 - config.MAX_HISTORY_DAYS * 86400,
+      types: ["video"],
     });
 
     if (Dynamics.length) {
