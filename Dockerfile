@@ -3,7 +3,7 @@ FROM alpine:3.21
 WORKDIR /app
 
 # Copy Linux executable 
-COPY dist/executables/index-linux /app/bilibili-dynamic-subscribe
+COPY dist/executables/bilibili-dynamic-subscribe-linux /app/bilibili-dynamic-subscribe
 
 # Add execution permissions
 RUN chmod +x /app/bilibili-dynamic-subscribe
