@@ -86,3 +86,5 @@ EMAIL_TO = "recipient@example.com"
 ```
 
 ### 2.7.1 Fix randUserAgent ESM issue
+
+### 2.7.2 Refactor dynamic processing
