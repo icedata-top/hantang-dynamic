@@ -76,14 +76,13 @@ export const fetchDynamics = async ({
   types = ["video", "forward"] as DynamicType[],
 }): Promise<BiliDynamicCard[]> => {
   const dynamics: BiliDynamicCard[] = [];
-  let apiNo = 0;
   let totalItems = 0;
 
   for (const type of types) {
     const typeCode = DYNAMIC_TYPE_MAP[type];
-    let offset = minDynamicId;
+    let offset = 0;
     let hasMore = true;
-    let firstRun = minDynamicId === 0;
+    let firstRun = true;
 
     while (hasMore) {
       let response: BiliDynamicNewResponse | BiliDynamicHistoryResponse;

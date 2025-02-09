@@ -64,3 +64,7 @@ MAX_ITEM = 0                # Maximum number of items to fetch (0 for unlimited)
 ### 2.6 Add support for forwarded messages
 
 Add support for forwarded messages. Enabled by default. No configuration required.
+
+### 2.6.1 fix workflow
+
+### 2.6.2 fix fetchDynamics logic
