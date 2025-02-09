@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { config } from "./config";
-import { randUserAgent } from "@tonyrl/rand-user-agent";
+import { randUA } from "@ahmedrangel/rand-user-agent";
 
 type AppState = {
   lastDynamicId: number;
@@ -21,7 +21,7 @@ export class StateManager {
     return {
       lastDynamicId: 0,
       lastUpdate: Date.now(),
-      lastUA: randUserAgent("desktop"),
+      lastUA: randUA(),
     };
   }
 
@@ -41,7 +41,7 @@ export class StateManager {
       return {
         lastDynamicId: loadedState.lastDynamicId ?? 0,
         lastUpdate: loadedState.lastUpdate ?? Date.now(),
-        lastUA: loadedState.lastUA || randUserAgent("desktop"),
+        lastUA: loadedState.lastUA || randUA(),
       };
     } catch (error) {
       console.error("Error loading state:", error);
@@ -66,7 +66,7 @@ export class StateManager {
   }
 
   updateUA() {
-    this.state.lastUA = randUserAgent("desktop");
+    this.state.lastUA = randUA();
     this.saveState();
     return this.state.lastUA;
   }

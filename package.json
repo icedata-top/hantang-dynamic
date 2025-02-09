@@ -4,14 +4,14 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "ncc build src/index.ts -o dist",
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts",
+    "start": "tsx dist/index.js",
+    "dev": "tsx src/index.ts",
     "lint": "eslint . --ext .ts",
     "format": "prettier --write . --ignore-path .prettierignore",
     "package": "pkg dist/index.js --out-path dist/executables --compress Gzip"
   },
   "dependencies": {
-    "@tonyrl/rand-user-agent": "^2.0.82",
+    "@ahmedrangel/rand-user-agent": "^2.0.23",
     "axios": "^1.7.9",
     "dotenv": "^16.4.7",
     "json2csv": "^6.0.0-alpha.2",
@@ -30,7 +30,7 @@
     "eslint": "^9.19.0",
     "eslint-config-prettier": "^10.0.1",
     "prettier": "^3.4.2",
-    "ts-node": "^10.9.2",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }
 }
