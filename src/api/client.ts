@@ -1,7 +1,13 @@
-import axios from "axios";
+import axios, { InternalAxiosRequestConfig, AxiosResponse } from "axios";
 import { config } from "../core/config";
 import { retryDelay } from "../utils/datetime";
 import { notify } from "../utils/notifier";
+
+interface RequestConfig extends InternalAxiosRequestConfig {
+  metadata?: {
+    startTime: number;
+  };
+}
 
 const createClient = (baseURL: string) => {
   const instance = axios.create({
@@ -11,9 +17,21 @@ const createClient = (baseURL: string) => {
       Cookie: `SESSDATA=${config.SESSDATA}`,
     },
   });
-
+  instance.interceptors.request.use((config: RequestConfig) => {
+    config.metadata = { startTime: Date.now() };
+    return config;
+  });
   instance.interceptors.response.use(
-    (response) => {
+    (response: AxiosResponse) => {
+      const endTime = Date.now();
+      const startTime = (response.config as RequestConfig).metadata?.startTime ?? 0;
+      const timeUsed = endTime - startTime;
+      const params = response.config.params ? ` params=${JSON.stringify(response.config.params)}` : '';
+      const data = response.config.data ? ` data=${JSON.stringify(response.config.data)}` : '';
+      
+      console.log(
+        `[${new Date().toISOString()}] ${baseURL}${response.config.url}${params}${data} (${timeUsed}ms)`
+      );
       if (response.data.code !== 0) {
         const message =
           `API Error:\n` +

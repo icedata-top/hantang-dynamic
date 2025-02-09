@@ -103,10 +103,6 @@ export const fetchDynamics = async ({
         return isTimestampValid && isDynamicIdValid;
       });
 
-      console.log(
-        `API ${++apiNo}: ${validCards.length} new ${type} dynamics at time ${new Date().toLocaleString()}`,
-      );
-
       dynamics.push(...validCards);
       totalItems += validCards.length;
 
