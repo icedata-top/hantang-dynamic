@@ -8,9 +8,9 @@ importers:
 
   .:
     dependencies:
-      '@ahmedrangel/rand-user-agent':
-        specifier: ^2.0.23
-        version: 2.0.23
+      '@tonyrl/rand-user-agent':
+        specifier: ^2.0.82
+        version: 2.0.82
       axios:
         specifier: ^1.7.9
         version: 1.7.9
@@ -68,10 +68,6 @@ importers:
         version: 5.7.3
 
 packages:
-
-  '@ahmedrangel/rand-user-agent@2.0.23':
-    resolution: {integrity: sha512-0ROa5Ckk96NKduPVyYe+/Rvp7Uu3IcI5kUmD5hN8rtMQCD8L+zLCLuhL4qIb9YJ4w23FUdM1S9s8GXCuMzEAJg==}
-    engines: {node: '>=22.11.0'}
 
   '@babel/generator@7.26.5':
     resolution: {integrity: sha512-2caSP6fN9I7HOe6nqhtft7V4g7/V/gfDsC3Ag4W7kEzzvRGKqiv0pu0HogPiZ3KaVSoNDhUws6IJjDjpfmYIXw==}
@@ -199,6 +195,10 @@ packages:
 
   '@streamparser/json@0.0.6':
     resolution: {integrity: sha512-vL9EVn/v+OhZ+Wcs6O4iKE9EUpwHUqHmCtNUMWjqp+6dr85+XPOSGTEsqYNq1Vn04uk9SWlOVmx9J48ggJVT2Q==}
+
+  '@tonyrl/rand-user-agent@2.0.82':
+    resolution: {integrity: sha512-uh0pAksx59diJaKzmLjDFaeAEl8nIjdFq97L4hUOr8AlBZoiB1UWSXjDqt+lBTqRBxsfyE/joVql4/X8mL/rqA==}
+    engines: {node: '>=14.16'}
 
   '@tsconfig/node10@1.0.11':
     resolution: {integrity: sha512-DcRjDCujK/kCk/cUe8Xz8ZSpm8mS3mNNpta+jGCA6USEDfktlNvm1+IuZ9eTcDbNk41BHwpHHeW+N1lKCz4zOw==}
@@ -1180,8 +1180,6 @@ packages:
 
 snapshots:
 
-  '@ahmedrangel/rand-user-agent@2.0.23': {}
-
   '@babel/generator@7.26.5':
     dependencies:
       '@babel/parser': 7.26.7
@@ -1313,6 +1311,8 @@ snapshots:
     optional: true
 
   '@streamparser/json@0.0.6': {}
+
+  '@tonyrl/rand-user-agent@2.0.82': {}
 
   '@tsconfig/node10@1.0.11': {}
 

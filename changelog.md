@@ -84,3 +84,5 @@ EMAIL_PASS = "your-password"
 EMAIL_FROM = "your-email@example.com"
 EMAIL_TO = "recipient@example.com"
 ```
+
+### 2.7.1 Fix randUserAgent ESM issue
