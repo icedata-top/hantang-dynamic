@@ -18,7 +18,7 @@ const createClient = (baseURL: string) => {
     headers: {
       Referer: `https://space.bilibili.com/${config.BILIBILI_UID}/`,
       Cookie: `SESSDATA=${config.SESSDATA}`,
-      'User-Agent': state.lastUA,
+      "User-Agent": state.lastUA,
     },
   });
 
