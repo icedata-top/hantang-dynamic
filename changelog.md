@@ -68,3 +68,5 @@ Add support for forwarded messages. Enabled by default. No configuration require
 ### 2.6.1 fix workflow
 
 ### 2.6.2 fix fetchDynamics logic
+
+### 2.6.3 Add random User-Agent

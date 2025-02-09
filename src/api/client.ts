@@ -2,6 +2,7 @@ import axios, { InternalAxiosRequestConfig, AxiosResponse } from "axios";
 import { config } from "../core/config";
 import { retryDelay } from "../utils/datetime";
 import { notify } from "../utils/notifier";
+import { StateManager } from "../core/state";
 
 interface RequestConfig extends InternalAxiosRequestConfig {
   metadata?: {
@@ -9,14 +10,18 @@ interface RequestConfig extends InternalAxiosRequestConfig {
   };
 }
 
+const state = new StateManager();
+
 const createClient = (baseURL: string) => {
   const instance = axios.create({
     baseURL,
     headers: {
       Referer: `https://space.bilibili.com/${config.BILIBILI_UID}/`,
       Cookie: `SESSDATA=${config.SESSDATA}`,
+      'User-Agent': state.lastUA,
     },
   });
+
   instance.interceptors.request.use((config: RequestConfig) => {
     config.metadata = { startTime: Date.now() };
     return config;

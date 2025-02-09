@@ -1,9 +1,11 @@
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { config } from "./config";
+import { randUA } from "@ahmedrangel/rand-user-agent";
 
 type AppState = {
   lastDynamicId: number;
   lastUpdate: number;
+  lastUA: string;
 };
 
 export class StateManager {
@@ -15,14 +17,35 @@ export class StateManager {
     this.state = this.loadState();
   }
 
+  private getDefaultState(): AppState {
+    return {
+      lastDynamicId: 0,
+      lastUpdate: Date.now(),
+      lastUA: randUA(),
+    };
+  }
+
   private loadState(): AppState {
     try {
-      return existsSync(this.filePath)
-        ? JSON.parse(readFileSync(this.filePath, "utf-8"))
-        : { lastDynamicId: 0, lastUpdate: Date.now() };
+      if (!existsSync(this.filePath)) {
+        return this.getDefaultState();
+      }
+
+      const fileContent = readFileSync(this.filePath, "utf-8");
+      if (!fileContent) {
+        return this.getDefaultState();
+      }
+
+      const loadedState = JSON.parse(fileContent) as Partial<AppState>;
+
+      return {
+        lastDynamicId: loadedState.lastDynamicId ?? 0,
+        lastUpdate: loadedState.lastUpdate ?? Date.now(),
+        lastUA: loadedState.lastUA || randUA(),
+      };
     } catch (error) {
       console.error("Error loading state:", error);
-      return { lastDynamicId: 0, lastUpdate: Date.now() };
+      return this.getDefaultState();
     }
   }
 
@@ -36,6 +59,16 @@ export class StateManager {
 
   get lastDynamicId() {
     return this.state.lastDynamicId;
+  }
+
+  get lastUA() {
+    return this.state.lastUA;
+  }
+
+  updateUA() {
+    this.state.lastUA = randUA();
+    this.saveState();
+    return this.state.lastUA;
   }
 
   updateLastDynamicId(id: number) {
