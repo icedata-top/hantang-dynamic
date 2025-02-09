@@ -52,13 +52,13 @@ export const fetchDynamicAPI = async (
 
 export const getNewDynamic = (type: number) =>
   fetchDynamicsAPI("/dynamic_new", {
-    BILIBILI_UID: config.BILIBILI_UID,
+    uid: config.BILIBILI_UID,
     type,
   });
 
 export const getHistoryDynamic = (type: number, offset: number | string) =>
   fetchDynamicsAPI("/dynamic_history", {
-    BILIBILI_UID: config.BILIBILI_UID,
+    uid: config.BILIBILI_UID,
     type,
     offset_dynamic_id: offset,
   });
