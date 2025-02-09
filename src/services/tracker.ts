@@ -20,6 +20,7 @@ export class DynamicTracker {
         await sleep(config.FETCH_INTERVAL);
       } catch (error) {
         console.error("Tracker error:", error);
+        this.state.updateUA();
         await sleep(3600);
       }
     }
