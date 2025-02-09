@@ -2,21 +2,33 @@
 
 A tool to track and export Bilibili video updates.
 
+See [Changelog](./changelog.md) for version history.
+
 ## Installation
 
 Choose one of these installation methods:
 
 ### 1. Pre-built Executables
 
-1. Download the executable for your platform from the latest GitHub Actions artifacts:
-
-   - `bilibili-dynamic-subscribe-linux` for Linux
-   - `bilibili-dynamic-subscribe-win.exe` for Windows
-   - `bilibili-dynamic-subscribe-macos` for macOS
+1. Download the executable for your platform from the latest GitHub Release:
 
 2. Make the file executable (Linux/macOS only):
+
    ```bash
    chmod +x bilibili-dynamic-subscribe-linux
+   ```
+
+3. Init the configuration file:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+4. Edit the `.env` file with your settings.
+
+5. Run the executable:
+   ```bash
+   ./bilibili-dynamic-subscribe-linux
    ```
 
 ### 2. Docker(Coming Soon)
@@ -47,7 +59,7 @@ Create a `.env` file in the same directory as the executable with your settings:
 
 ```env
 # Required Settings
-SESSDATA = ""                # Your Bilibili session data
+SESSDATA = ""                        # Your Bilibili session data
 BILIBILI_UID = ""                    # Your Bilibili user ID
 
 # Optional Settings
@@ -55,6 +67,7 @@ FETCH_INTERVAL = 900000     # Fetch interval in ms (default: 15 minutes)
 API_WAIT_TIME = 2000        # Wait time between API calls (default: 2000ms)
 API_RETRY_TIMES = 3         # Number of API retry attempts (default: 3)
 MAX_HISTORY_DAYS = 7        # Maximum days of history to fetch (default: 7)
+MAX_ITEM = 0                # Maximum number of items to fetch (0 for unlimited)
 ENABLE_TAG_FETCH = "true"   # Whether to fetch video tags (default: false)
 
 # Video Type Filtering
@@ -70,11 +83,18 @@ MYSQL_USERNAME = ""        # MySQL username
 MYSQL_PASSWORD = ""        # MySQL password
 MYSQL_DATABASE = ""        # MySQL database name
 MYSQL_TABLE = ""          # MySQL table name
+
+# Telegram Bot Settings (Optional)
+TELEGRAM_BOT_TOKEN = ""    # Telegram bot token
+TELEGRAM_CHAT_ID = ""      # Telegram chat ID
 ```
 
 ## Development
 
 ```bash
+# use pnpm to install dependencies
+pnpm install
+
 # Run in development mode
 pnpm dev
 
