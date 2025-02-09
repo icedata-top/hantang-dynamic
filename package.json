@@ -1,6 +1,6 @@
 {
   "name": "bilibili-dynamic-subscribe",
-  "version": "2.6.3",
+  "version": "2.7.0",
   "main": "dist/index.js",
   "scripts": {
     "build": "ncc build src/index.ts -o dist",
@@ -16,11 +16,13 @@
     "dotenv": "^16.4.7",
     "json2csv": "^6.0.0-alpha.2",
     "mysql2": "^3.12.0",
+    "nodemailer": "^6.10.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/json2csv": "^5.0.7",
     "@types/node": "^20.11.0",
+    "@types/nodemailer": "^6.4.17",
     "@typescript-eslint/eslint-plugin": "^8.23.0",
     "@typescript-eslint/parser": "^8.23.0",
     "@vercel/ncc": "^0.38.3",

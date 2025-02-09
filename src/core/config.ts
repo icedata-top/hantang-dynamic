@@ -23,6 +23,14 @@ const envSchema = z.object({
 
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
+
+  // Add email configuration
+  EMAIL_HOST: z.string().optional(),
+  EMAIL_PORT: z.coerce.number().optional(),
+  EMAIL_USER: z.string().optional(),
+  EMAIL_PASS: z.string().optional(),
+  EMAIL_FROM: z.string().optional(),
+  EMAIL_TO: z.string().optional(),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
@@ -48,4 +56,12 @@ export const config: EnvConfig = envSchema.parse({
 
   TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
   TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID,
+
+  // Add email configuration
+  EMAIL_HOST: process.env.EMAIL_HOST,
+  EMAIL_PORT: process.env.EMAIL_PORT,
+  EMAIL_USER: process.env.EMAIL_USER,
+  EMAIL_PASS: process.env.EMAIL_PASS,
+  EMAIL_FROM: process.env.EMAIL_FROM,
+  EMAIL_TO: process.env.EMAIL_TO,
 });

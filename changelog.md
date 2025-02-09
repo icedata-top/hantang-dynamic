@@ -70,3 +70,17 @@ Add support for forwarded messages. Enabled by default. No configuration require
 ### 2.6.2 fix fetchDynamics logic
 
 ### 2.6.3 Add random User-Agent
+
+## 2.7 Add support for email notifications
+
+Add support for email notifications. Enable with environment variables.
+
+```env
+# Email Notification Settings (Optional)
+EMAIL_HOST = "smtp.example.com"
+EMAIL_PORT = "587"
+EMAIL_USER = "your-email@example.com"
+EMAIL_PASS = "your-password"
+EMAIL_FROM = "your-email@example.com"
+EMAIL_TO = "recipient@example.com"
+```

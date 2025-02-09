@@ -87,6 +87,14 @@ MYSQL_TABLE = ""          # MySQL table name
 # Telegram Bot Settings (Optional)
 TELEGRAM_BOT_TOKEN = ""    # Telegram bot token
 TELEGRAM_CHAT_ID = ""      # Telegram chat ID
+
+# Email Notification Settings (Optional)
+EMAIL_HOST = "smtp.example.com"
+EMAIL_PORT = "587"
+EMAIL_USER = "your-email@example.com"
+EMAIL_PASS = "your-password"
+EMAIL_FROM = "your-email@example.com"
+EMAIL_TO = "recipient@example.com"
 ```
 
 ## Development
