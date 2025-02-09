@@ -60,3 +60,7 @@ Add `MAX_ITEM` environment variable to limit the number of items to be fetched.
 ```env
 MAX_ITEM = 0                # Maximum number of items to fetch (0 for unlimited)
 ```
+
+### 2.6 Add support for forwarded messages
+
+Add support for forwarded messages. Enabled by default. No configuration required.

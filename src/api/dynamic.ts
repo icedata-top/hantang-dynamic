@@ -2,6 +2,7 @@ import { dynamicClient } from "./client";
 import {
   BiliDynamicNewResponse,
   BiliDynamicHistoryResponse,
+  BiliDynamicDetailResponse,
   BiliDynamicCard,
 } from "../core/types";
 import { config } from "../core/config";
@@ -31,17 +32,40 @@ export const fetchDynamicsAPI = async (
   }
 };
 
+export const fetchDynamicAPI = async (
+  endpoint: string,
+  params: Record<string, any>,
+): Promise<BiliDynamicDetailResponse> => {
+  try {
+    const response = await dynamicClient.get<BiliDynamicDetailResponse>(
+      endpoint,
+      {
+        params,
+      },
+    );
+    return response.data;
+  } catch (error) {
+    console.error("API Error:", error);
+    throw new Error("API Error: Fetch dynamic detail failed");
+  }
+};
+
 export const getNewDynamic = (type: number) =>
   fetchDynamicsAPI("/dynamic_new", {
     BILIBILI_UID: config.BILIBILI_UID,
     type,
   });
 
-export const getHistoryDynamic = (type: number, offset: number) =>
+export const getHistoryDynamic = (type: number, offset: number | string) =>
   fetchDynamicsAPI("/dynamic_history", {
     BILIBILI_UID: config.BILIBILI_UID,
     type,
     offset_dynamic_id: offset,
+  });
+
+export const getDynamic = (dynamicId: number | string) =>
+  fetchDynamicAPI("/get_dynamic_detail", {
+    dynamic_id: dynamicId,
   });
 
 export const fetchDynamics = async ({
@@ -86,7 +110,11 @@ export const fetchDynamics = async ({
       dynamics.push(...validCards);
       totalItems += validCards.length;
 
-      if (!validCards.length || validCards.length < response.data.cards.length || ( totalItems >= max_items && max_items > 0))
+      if (
+        !validCards.length ||
+        validCards.length < response.data.cards.length ||
+        (totalItems >= max_items && max_items > 0)
+      )
         break;
 
       if (firstRun) {

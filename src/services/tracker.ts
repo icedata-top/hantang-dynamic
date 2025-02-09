@@ -1,5 +1,5 @@
 import { StateManager } from "../core/state";
-import { fetchDynamics } from "../api/dynamic";
+import { fetchDynamics, getDynamic } from "../api/dynamic";
 import { exportData } from "../utils/exporter";
 import { processCard } from "../utils/helpers";
 import { config } from "../core/config";
@@ -47,6 +47,35 @@ export class DynamicTracker {
 
   private async processDynamics(dynamics: BiliDynamicCard[]) {
     let videoData = [] as VideoData[];
+    console.log(`Processing ${dynamics.length} dynamics`);
+    let videoDynamics: BiliDynamicCard[] = [];
+    for (let dynamic of dynamics) {
+      if (dynamic.desc.type !== 8 && dynamic.desc.type !== 1) {
+        console.log(`Skip dynamic ${dynamic.desc.dynamic_id}`);
+        continue;
+      }
+      if (dynamic.desc.type === 1) {
+        if (!dynamic.desc.origin) {
+          continue;
+        }
+        if (!dynamic.desc.origin || dynamic.desc.origin.type !== 8) {
+          console.log(`Skip dynamic ${dynamic.desc.dynamic_id_str}`);
+          continue;
+        }
+        console.log(
+          `Processing forward dynamic ${dynamic.desc.dynamic_id_str}`,
+        );
+        let newdynamic = await getDynamic(dynamic.desc.origin.dynamic_id_str);
+        await sleep(config.API_WAIT_TIME);
+        if (!newdynamic) {
+          continue;
+        }
+        dynamic = newdynamic.data.card;
+      }
+      videoDynamics.push(dynamic);
+    }
+    dynamics = videoDynamics;
+
     dynamics = dynamics.filter(
       (dynamic, index, self) =>
         index === self.findIndex((t) => t.desc.bvid === dynamic.desc.bvid),

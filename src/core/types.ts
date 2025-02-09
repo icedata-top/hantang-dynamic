@@ -7,13 +7,14 @@ export interface BiliDynamicCard {
     acl: number;
     view: number;
     repost: number;
+    comment: number;
     like: number;
     is_liked: number;
     dynamic_id: number;
     timestamp: number;
-    pre_dy_id?: number;
-    orig_dy_id?: number;
-    orig_type?: number;
+    pre_dy_id: number; // 原动态ID, 无则为0，注意很可能被四舍五入不准确
+    orig_dy_id: number; // 转发动态ID, 无则为0, 注意很可能被四舍五入不准确
+    orig_type: number; // 原动态类型, 无则为0
     user_profile?: {
       info?: {
         uid: number;
@@ -35,8 +36,39 @@ export interface BiliDynamicCard {
     status: number;
     dynamic_id_str: string;
     pre_dy_id_str?: string;
+    orig_dy_id_str?: string;
+    rid_str: string;
+    origin?: {
+      uid: number;
+      type: number;
+      rid: number;
+      acl: number;
+      view: number;
+      repost: number;
+      comment: number;
+      like: number;
+      is_liked: number;
+      dynamic_id: number;
+      timestamp: number;
+      pre_dy_id?: number;
+      orig_dy_id?: number;
+      orig_type?: number;
+      user_profile?: null;
+      spec_type: number;
+      uid_type: number;
+      stype: number;
+      r_type: number;
+      inner_id: number;
+      status: number;
+      dynamic_id_str: string;
+      pre_dy_id_str?: string;
+      orig_dy_id_str?: string;
+      rid_str: string;
+      origin?: {};
+      bvid: string | null;
+      previous?: null;
+    };
     bvid: string;
-    comment?: number;
   };
   card: string;
   extend_json?: string;
@@ -55,7 +87,7 @@ export interface BiliDynamicCard {
 }
 
 // 视频的card结构
-export interface BiliCards {
+export interface BiliVideoCard {
   aid: number;
   cid: number;
   ctime: number;
@@ -95,6 +127,39 @@ export interface BiliCards {
   videos: number;
 }
 
+// 转发的card结构
+export interface BiliForwardCard {
+  user: {
+    uid: number;
+    uname: string;
+    face: string;
+  };
+  item: {
+    rp_id: number;
+    uid: number;
+    content: string;
+    reply: number;
+    orig_type: number;
+    orig_dy_id: number;
+    pre_dy_id: number;
+  };
+  origin: string;
+  origin_extend_json: string;
+  origin_user: {
+    info: {
+      uid: number;
+      uname: string;
+      face: string;
+    };
+    card: {};
+    vip: {};
+    pendant: {};
+    rank: number;
+    sign: string;
+    level_info: {};
+  };
+}
+
 // /dynamic_new 响应结构
 export interface BiliDynamicNewResponse {
   code: number;
@@ -117,6 +182,15 @@ export interface BiliDynamicHistoryResponse {
     has_more: number; // 是否还有更多数据
     next_offset: number; // 下一次请求的偏移量
     cards: BiliDynamicCard[]; // 动态卡片列表
+  };
+}
+
+// /dynamic_detail 响应结构
+export interface BiliDynamicDetailResponse {
+  code: number;
+  msg: string;
+  data: {
+    card: BiliDynamicCard;
   };
 }
 
