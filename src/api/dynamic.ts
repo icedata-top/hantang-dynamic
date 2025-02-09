@@ -48,10 +48,12 @@ export const fetchDynamics = async ({
   minDynamicId = 0 as number,
   minTimestamp = (Date.now() / 1000 -
     config.MAX_HISTORY_DAYS * 86400) as number,
+  max_items = 0 as number,
   types = ["video", "forward"] as DynamicType[],
 }): Promise<BiliDynamicCard[]> => {
   const dynamics: BiliDynamicCard[] = [];
   let apiNo = 0;
+  let totalItems = 0;
 
   for (const type of types) {
     const typeCode = DYNAMIC_TYPE_MAP[type];
@@ -82,8 +84,9 @@ export const fetchDynamics = async ({
       );
 
       dynamics.push(...validCards);
+      totalItems += validCards.length;
 
-      if (!validCards.length || validCards.length < response.data.cards.length)
+      if (!validCards.length || validCards.length < response.data.cards.length || ( totalItems >= max_items && max_items > 0))
         break;
 
       if (firstRun) {
@@ -100,6 +103,10 @@ export const fetchDynamics = async ({
         await sleep(config.API_WAIT_TIME);
       }
     }
+  }
+
+  if (max_items > 0) {
+    dynamics.splice(max_items);
   }
 
   console.log(`Total ${dynamics.length} dynamics fetched`);

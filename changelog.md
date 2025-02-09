@@ -52,3 +52,11 @@ TELEGRAM_CHAT_ID = ""      # Telegram chat ID
 ```
 
 ### 2.4.1 Remove Docker Build
+
+### 2.5 Add MAX_ITEM
+
+Add `MAX_ITEM` environment variable to limit the number of items to be fetched.
+
+```env
+MAX_ITEM = 0                # Maximum number of items to fetch (0 for unlimited)
+```

@@ -10,6 +10,7 @@ const envSchema = z.object({
   API_RETRY_TIMES: z.coerce.number().default(3),
   API_WAIT_TIME: z.coerce.number().default(2000),
   MAX_HISTORY_DAYS: z.coerce.number().default(7),
+  MAX_ITEM: z.coerce.number().default(0),
   ENABLE_TAG_FETCH: z.coerce.boolean().default(false),
   TYPE_ID_WHITE_LIST: z.array(z.number()).default([]),
 
@@ -33,6 +34,7 @@ export const config: EnvConfig = envSchema.parse({
   API_RETRY_TIMES: process.env.API_RETRY_TIMES,
   API_WAIT_TIME: process.env.API_WAIT_TIME,
   MAX_HISTORY_DAYS: process.env.MAX_HISTORY_DAYS,
+  MAX_ITEM: process.env.MAX_ITEM,
   ENABLE_TAG_FETCH: process.env.ENABLE_TAG_FETCH,
   TYPE_ID_WHITE_LIST: process.env.TYPE_ID_WHITE_LIST
     ? process.env.TYPE_ID_WHITE_LIST.split(",").map(Number)
