@@ -3,6 +3,7 @@ import { config } from "../core/config";
 import { retryDelay } from "../utils/datetime";
 import { notify } from "../utils/notifier";
 import { StateManager } from "../core/state";
+import { logger } from "../utils/logger";
 
 interface RequestConfig extends InternalAxiosRequestConfig {
   metadata?: {
@@ -39,7 +40,7 @@ const createClient = (baseURL: string) => {
         ? ` data=${JSON.stringify(response.config.data)}`
         : "";
 
-      console.log(
+      logger.debug(
         `[${new Date().toISOString()}] ${baseURL}${response.config.url}${params}${data} (${timeUsed}ms)`,
       );
       if (response.data.code !== 0) {

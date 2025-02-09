@@ -6,6 +6,7 @@ dotenv.config();
 const envSchema = z.object({
   BILIBILI_UID: z.string().min(1),
   SESSDATA: z.string().min(1),
+  LOGLEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   FETCH_INTERVAL: z.coerce.number().default(900_000), // 15 minutes
   API_RETRY_TIMES: z.coerce.number().default(3),
   API_WAIT_TIME: z.coerce.number().default(2000),
@@ -24,7 +25,6 @@ const envSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
 
-  // Add email configuration
   EMAIL_HOST: z.string().optional(),
   EMAIL_PORT: z.coerce.number().optional(),
   EMAIL_USER: z.string().optional(),
@@ -38,6 +38,8 @@ export type EnvConfig = z.infer<typeof envSchema>;
 export const config: EnvConfig = envSchema.parse({
   BILIBILI_UID: process.env.BILIBILI_UID,
   SESSDATA: process.env.SESSDATA,
+
+  LOGLEVEL: process.env.LOGLEVEL,
   FETCH_INTERVAL: process.env.FETCH_INTERVAL,
   API_RETRY_TIMES: process.env.API_RETRY_TIMES,
   API_WAIT_TIME: process.env.API_WAIT_TIME,
@@ -57,7 +59,6 @@ export const config: EnvConfig = envSchema.parse({
   TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
   TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID,
 
-  // Add email configuration
   EMAIL_HOST: process.env.EMAIL_HOST,
   EMAIL_PORT: process.env.EMAIL_PORT,
   EMAIL_USER: process.env.EMAIL_USER,

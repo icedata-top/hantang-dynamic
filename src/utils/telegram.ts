@@ -1,5 +1,6 @@
 import axios from "axios";
 import { config } from "../core/config";
+import { logger } from "./logger";
 
 export async function sendTelegramMessage(message: string) {
   if (!config.TELEGRAM_BOT_TOKEN || !config.TELEGRAM_CHAT_ID) {
@@ -16,6 +17,6 @@ export async function sendTelegramMessage(message: string) {
       },
     );
   } catch (error) {
-    console.error("Failed to send telegram message:", error);
+    logger.error("Failed to send telegram message:", error);
   }
 }

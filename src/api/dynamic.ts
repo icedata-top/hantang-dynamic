@@ -1,4 +1,5 @@
 import { dynamicClient } from "./client";
+import { logger } from "../utils/logger";
 import {
   BiliDynamicNewResponse,
   BiliDynamicHistoryResponse,
@@ -27,7 +28,7 @@ export const fetchDynamicsAPI = async (
     });
     return response.data;
   } catch (error) {
-    console.error("API Error:", error);
+    logger.error("API Error:", error);
     throw new Error("API Error: Fetch dynamics failed");
   }
 };
@@ -45,7 +46,7 @@ export const fetchDynamicAPI = async (
     );
     return response.data;
   } catch (error) {
-    console.error("API Error:", error);
+    logger.error("API Error:", error);
     throw new Error("API Error: Fetch dynamic detail failed");
   }
 };
@@ -69,10 +70,9 @@ export const getDynamic = (dynamicId: number | string) =>
   });
 
 export const fetchDynamics = async ({
-  minDynamicId = 0 as number,
-  minTimestamp = (Date.now() / 1000 -
-    config.MAX_HISTORY_DAYS * 86400) as number,
-  max_items = 0 as number,
+  minDynamicId = 0,
+  minTimestamp = Date.now() / 1000 - config.MAX_HISTORY_DAYS * 86400,
+  max_items = 0,
   types = ["video", "forward"] as DynamicType[],
 }): Promise<BiliDynamicCard[]> => {
   const dynamics: BiliDynamicCard[] = [];
@@ -92,7 +92,7 @@ export const fetchDynamics = async ({
         : await getHistoryDynamic(typeCode, offset);
 
       if (response.code !== 0 || !response.data.cards?.length) {
-        console.error(`API Error for ${type}:`, response);
+        logger.error(`API Error for ${type}:`, response);
         break;
       }
 
@@ -132,6 +132,6 @@ export const fetchDynamics = async ({
     dynamics.splice(max_items);
   }
 
-  console.log(`Total ${dynamics.length} dynamics fetched`);
+  logger.info(`Total ${dynamics.length} dynamics fetched`);
   return dynamics.sort((a, b) => a.desc.timestamp - b.desc.timestamp);
 };

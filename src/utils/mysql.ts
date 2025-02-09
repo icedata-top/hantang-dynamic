@@ -1,9 +1,9 @@
 import mysql from "mysql2/promise";
 import { config } from "../core/config";
 import { VideoData } from "../core/types";
+import { logger } from "./logger";
 
 export const saveToMysql = async (data: VideoData[]) => {
-  // Check if all MySQL config values are provided
   if (
     !config.MYSQL_IP ||
     !config.MYSQL_PORT ||
@@ -11,7 +11,7 @@ export const saveToMysql = async (data: VideoData[]) => {
     !config.MYSQL_PASSWORD ||
     !config.MYSQL_TABLE
   ) {
-    console.error("Missing MySQL configuration. Falling back to CSV export.");
+    logger.warn("Missing MySQL configuration. Falling back to CSV export.");
     return false;
   }
 
@@ -48,16 +48,16 @@ export const saveToMysql = async (data: VideoData[]) => {
       ]);
 
       await connection.query(insertQuery, [values]);
-      console.log(
+      logger.debug(
         `Processed batch ${Math.floor(i / batchSize) + 1}: ${values.length} records at time ${new Date().toLocaleString()}`,
       );
     }
 
-    console.log(`Inserted ${data.length} records into MySQL table ${table}`);
+    logger.info(`Inserted ${data.length} records into MySQL table ${table}`);
     await connection.end();
     return true;
   } catch (error) {
-    console.error("MySQL export failed:", error);
+    logger.error("MySQL export failed:", error);
     return false;
   }
 };

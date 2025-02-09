@@ -1,6 +1,7 @@
 import { sendTelegramMessage } from "./telegram";
 import { sendEmailMessage } from "./email";
 import { config } from "../core/config";
+import { logger } from "./logger";
 
 export async function notify(message: string) {
   const promises: Promise<void>[] = [];
@@ -14,7 +15,7 @@ export async function notify(message: string) {
   }
 
   if (promises.length === 0) {
-    console.log(message);
+    logger.warn(message);
     return;
   }
 

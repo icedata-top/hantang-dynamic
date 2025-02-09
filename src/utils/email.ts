@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import { config } from "../core/config";
+import { logger } from "./logger";
 
 export async function sendEmailMessage(message: string) {
   if (!config.EMAIL_HOST || !config.EMAIL_USER || !config.EMAIL_TO) {
@@ -23,7 +24,8 @@ export async function sendEmailMessage(message: string) {
       subject: "Bilibili Dynamic Notification",
       html: message,
     });
+    logger.info("Email sent successfully");
   } catch (error) {
-    console.error("Failed to send email message:", error);
+    logger.error("Failed to send email message:", error);
   }
 }

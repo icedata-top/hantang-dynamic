@@ -1,10 +1,11 @@
 import { config } from "./core/config";
 import { DynamicTracker } from "./services/tracker";
 import { sleep } from "./utils/datetime";
+import { logger } from "./utils/logger";
 
 async function main() {
-  console.log("Starting Bilibili Video Tracker");
-  console.log("Configuration:", JSON.stringify(config, null, 2));
+  logger.info("Starting Bilibili Video Tracker");
+  logger.debug("Configuration:", config);
 
   const tracker = new DynamicTracker();
 
@@ -13,19 +14,19 @@ async function main() {
 
   // Setup periodic execution
   const interval = setInterval(
-    () => tracker.start().catch(console.error),
+    () => tracker.start().catch((err) => logger.error(err)),
     config.FETCH_INTERVAL,
   );
 
   // Graceful shutdown
   process.on("SIGINT", () => {
     clearInterval(interval);
-    console.log("Tracker stopped");
+    logger.info("Tracker stopped");
     process.exit(0);
   });
 }
 
 main().catch((error) => {
-  console.error("Fatal Error:", error);
+  logger.error("Fatal Error:", error);
   process.exit(1);
 });

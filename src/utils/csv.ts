@@ -1,6 +1,7 @@
 import { writeFileSync } from "fs";
 import { parse } from "json2csv";
 import { VideoData } from "../core/types";
+import { logger } from "./logger";
 
 const fields = [
   { label: "AID", value: "aid" },
@@ -18,8 +19,8 @@ export const saveAsCSV = (data: VideoData[], filename: string) => {
   try {
     const csv = parse(data, { fields });
     writeFileSync(filename, `\ufeff${csv}`, "utf-8");
-    console.log(`已保存 ${data.length} 条记录到 ${filename}`);
+    logger.info(`已保存 ${data.length} 条记录到 ${filename}`);
   } catch (error) {
-    console.error("CSV 保存失败:", error);
+    logger.error("CSV 保存失败:", error);
   }
 };

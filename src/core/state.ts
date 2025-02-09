@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { config } from "./config";
 import { randUA } from "@ahmedrangel/rand-user-agent";
+import { logger } from "../utils/logger";
 
 type AppState = {
   lastDynamicId: number;
@@ -44,7 +45,7 @@ export class StateManager {
         lastUA: loadedState.lastUA || randUA(),
       };
     } catch (error) {
-      console.error("Error loading state:", error);
+      logger.error("Error loading state:", error);
       return this.getDefaultState();
     }
   }
@@ -53,7 +54,7 @@ export class StateManager {
     try {
       writeFileSync(this.filePath, JSON.stringify(this.state));
     } catch (error) {
-      console.error("Error saving state:", error);
+      logger.error("Error saving state:", error);
     }
   }
 

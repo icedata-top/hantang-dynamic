@@ -3,25 +3,26 @@ import { getDynamic } from "../api/dynamic";
 import { sleep } from "./datetime";
 import { config } from "../core/config";
 import { processCard } from "./helpers";
+import { logger } from "./logger";
 
 export async function filterAndProcessDynamics(
   dynamics: BiliDynamicCard[],
 ): Promise<VideoData[]> {
   let videoData: VideoData[] = [];
-  console.log(`Processing ${dynamics.length} dynamics`);
+  logger.info(`Processing ${dynamics.length} dynamics`);
 
   // Filter and process forwarded dynamics
   let videoDynamics = await processForwardedDynamics(dynamics);
 
   // Remove duplicates based on bvid
   videoDynamics = removeDuplicateDynamics(videoDynamics);
-  console.log(`Processing ${videoDynamics.length} unique dynamics`);
+  logger.info(`Processing ${videoDynamics.length} unique dynamics`);
 
   // Process each dynamic into video data
   for (const dynamic of videoDynamics) {
     const processedData = await processCard(dynamic);
     if (!processedData) continue;
-    console.log(`Processed ${processedData.bvid}: ${processedData.title}`);
+    logger.debug(`Processed ${processedData.bvid}: ${processedData.title}`);
     videoData.push(processedData);
   }
 
@@ -35,7 +36,7 @@ async function processForwardedDynamics(
 
   for (let dynamic of dynamics) {
     if (dynamic.desc.type !== 8 && dynamic.desc.type !== 1) {
-      console.log(`Skip dynamic ${dynamic.desc.dynamic_id}`);
+      logger.debug(`Skip dynamic ${dynamic.desc.dynamic_id}`);
       continue;
     }
 
@@ -56,11 +57,11 @@ async function handleForwardedDynamic(
 ): Promise<BiliDynamicCard | null> {
   if (!dynamic.desc.origin) return null;
   if (dynamic.desc.origin.type !== 8) {
-    console.log(`Skip dynamic ${dynamic.desc.dynamic_id_str}`);
+    logger.info(`Skip dynamic ${dynamic.desc.dynamic_id_str}`);
     return null;
   }
 
-  console.log(`Processing forward dynamic ${dynamic.desc.dynamic_id_str}`);
+  logger.info(`Processing forward dynamic ${dynamic.desc.dynamic_id_str}`);
   const newDynamic = await getDynamic(dynamic.desc.origin.dynamic_id_str);
   await sleep(config.API_WAIT_TIME);
 

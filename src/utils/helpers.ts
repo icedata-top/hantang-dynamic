@@ -1,4 +1,5 @@
 import { config } from "../core/config";
+import { logger } from "./logger";
 import type {
   BiliDynamicCard,
   VideoData,
@@ -19,7 +20,7 @@ export const processDynamic = async (
     config.TYPE_ID_WHITE_LIST.length > 0
   ) {
     if (!config.TYPE_ID_WHITE_LIST.includes(card.tid)) {
-      console.log(`忽略类型 ${card.tid}: ${card.title}`);
+      logger.info(`忽略类型 ${card.tid}: ${card.title}`);
       return null;
     }
   }
@@ -30,10 +31,10 @@ export const processDynamic = async (
         dynamiccard.desc.bvid,
       );
       tagString = VideoTagResponse.map((t) => t.tag_name).join(";");
-      console.log(`标签获取成功 ${dynamiccard.desc.bvid}:`, tagString);
+      logger.info(`标签获取成功 ${dynamiccard.desc.bvid}:`, tagString);
       await sleep(config.API_WAIT_TIME);
     } catch (error) {
-      console.error(
+      logger.error(
         `标签获取失败 ${dynamiccard.desc.bvid}:`,
         error instanceof Error ? error.message : "未知错误",
       );
@@ -64,7 +65,7 @@ export const processCard = async (
     config.TYPE_ID_WHITE_LIST.length > 0
   ) {
     if (!config.TYPE_ID_WHITE_LIST.includes(card.tid)) {
-      console.log(`忽略类型 ${card.tid}: ${card.title}`);
+      logger.debug(`忽略类型 ${card.tid}: ${card.title}`);
       return null;
     }
   }
@@ -75,10 +76,10 @@ export const processCard = async (
         dynamiccard.desc.bvid,
       );
       tagString = VideoTagResponse.map((t) => t.tag_name).join(";");
-      console.log(`标签获取成功 ${dynamiccard.desc.bvid}:`, tagString);
+      logger.debug(`标签获取成功 ${dynamiccard.desc.bvid}:`, tagString);
       await sleep(config.API_WAIT_TIME);
     } catch (error) {
-      console.error(
+      logger.error(
         `标签获取失败 ${dynamiccard.desc.bvid}:`,
         error instanceof Error ? error.message : "未知错误",
       );

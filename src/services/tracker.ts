@@ -3,6 +3,7 @@ import { fetchDynamics } from "../api/dynamic";
 import { exportData } from "../utils/exporter";
 import { config } from "../core/config";
 import { sleep } from "../utils/datetime";
+import { logger } from "../utils/logger";
 import { filterAndProcessDynamics } from "../utils/dynamic";
 import type { BiliDynamicCard } from "../core/types";
 
@@ -19,7 +20,7 @@ export class DynamicTracker {
         await this.checkDynamics();
         await sleep(config.FETCH_INTERVAL);
       } catch (error) {
-        console.error("Tracker error:", error);
+        logger.error("Tracker error:", error);
         this.state.updateUA();
         await sleep(3600);
       }
