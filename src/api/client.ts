@@ -24,13 +24,18 @@ const createClient = (baseURL: string) => {
   instance.interceptors.response.use(
     (response: AxiosResponse) => {
       const endTime = Date.now();
-      const startTime = (response.config as RequestConfig).metadata?.startTime ?? 0;
+      const startTime =
+        (response.config as RequestConfig).metadata?.startTime ?? 0;
       const timeUsed = endTime - startTime;
-      const params = response.config.params ? ` params=${JSON.stringify(response.config.params)}` : '';
-      const data = response.config.data ? ` data=${JSON.stringify(response.config.data)}` : '';
-      
+      const params = response.config.params
+        ? ` params=${JSON.stringify(response.config.params)}`
+        : "";
+      const data = response.config.data
+        ? ` data=${JSON.stringify(response.config.data)}`
+        : "";
+
       console.log(
-        `[${new Date().toISOString()}] ${baseURL}${response.config.url}${params}${data} (${timeUsed}ms)`
+        `[${new Date().toISOString()}] ${baseURL}${response.config.url}${params}${data} (${timeUsed}ms)`,
       );
       if (response.data.code !== 0) {
         const message =
