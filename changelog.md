@@ -94,3 +94,7 @@ EMAIL_TO = "recipient@example.com"
 ### 2.7.4 Add logger level
 
 ### 2.7.5 Fix bigint issue
+
+## 2.8 Add support for DuckDB
+
+No configuration required. Automatically enabled.

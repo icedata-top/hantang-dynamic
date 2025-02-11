@@ -31,6 +31,13 @@ const envSchema = z.object({
   EMAIL_PASS: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
   EMAIL_TO: z.string().optional(),
+
+  CSV_PATH: z
+    .string()
+    .default("./data/uid" + process.env.BILIBILI_UID + ".csv"),
+  DUCKDB_PATH: z
+    .string()
+    .default("./data/uid" + process.env.BILIBILI_UID + ".duckdb"),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
@@ -65,4 +72,7 @@ export const config: EnvConfig = envSchema.parse({
   EMAIL_PASS: process.env.EMAIL_PASS,
   EMAIL_FROM: process.env.EMAIL_FROM,
   EMAIL_TO: process.env.EMAIL_TO,
+
+  CSV_PATH: process.env.CSV_PATH,
+  DUCKDB_PATH: process.env.DUCKDB_PATH,
 });

@@ -11,6 +11,9 @@ importers:
       '@ahmedrangel/rand-user-agent':
         specifier: ^2.0.23
         version: 2.0.23
+      '@duckdb/node-api':
+        specifier: 1.2.0-alpha.14
+        version: 1.2.0-alpha.14
       axios:
         specifier: ^1.7.9
         version: 1.7.9
@@ -93,6 +96,37 @@ packages:
   '@babel/types@7.26.7':
     resolution: {integrity: sha512-t8kDRGrKXyp6+tjUh7hw2RLyclsW4TRoRvRHtSyAX9Bb5ldlFh+90YAYY6awRXrlB4G5G2izNeGySpATlFzmOg==}
     engines: {node: '>=6.9.0'}
+
+  '@duckdb/node-api@1.2.0-alpha.14':
+    resolution: {integrity: sha512-emLbLac4DuKbQO4q3Aafsn//OQbe8lMiLxxzgKPz/tgRzyOWYdiowissfWwVbhJ/JNy8Us5W+oFcGRSUWm7saA==}
+
+  '@duckdb/node-bindings-darwin-arm64@1.2.0-alpha.14':
+    resolution: {integrity: sha512-DUnWLs+r5ePntaxld+mk/lxDwIT8PBrXY8yMnzb5HTWSFdcHWF2UIeuMhLFgVcyQnm7r5pRjd36XeffMQPVFGQ==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@duckdb/node-bindings-darwin-x64@1.2.0-alpha.14':
+    resolution: {integrity: sha512-RqzFF/4yZseNAK6dv3kNL+YUgkTsqFrLTAmgG65YTN8YWHv5VYBtb9NKETb5gZi9GVQ4+d5cc5tuKOXXPRhB3w==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@duckdb/node-bindings-linux-arm64@1.2.0-alpha.14':
+    resolution: {integrity: sha512-1EcGTDiwtas0eJeFWmzZsKqHCDBrt1TBPnL2il9s9mKYYcbBYkwtsVCgtO5BH8XmgNEM4WxVfGtR6KwJ90ymoA==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@duckdb/node-bindings-linux-x64@1.2.0-alpha.14':
+    resolution: {integrity: sha512-B9EfSZosrMhFVdgi3WKV854Vj8tnE4ywW3aXqNQ73qLZ4gBnKdiZYXdpt9Eed4qJv4cvQ4PWege3TThD/SOv8A==}
+    cpu: [x64]
+    os: [linux]
+
+  '@duckdb/node-bindings-win32-x64@1.2.0-alpha.14':
+    resolution: {integrity: sha512-v565LwMjVoV4Tn/D2RazmQhesKnl3cUHO/VXP1gS46sLsEdXMkNjDUNa4RiGy0LCWT+SPKsaAex8BJoPHXVTMg==}
+    cpu: [x64]
+    os: [win32]
+
+  '@duckdb/node-bindings@1.2.0-alpha.14':
+    resolution: {integrity: sha512-S6L2JRnuC6yqMYgPUW81fnpFEMtbnFBHil/hXafAMKlZs3093NNAKTikU2H1sMQVDUKhAluPOaJ2AAs1k1Ixbw==}
 
   '@esbuild/aix-ppc64@0.23.1':
     resolution: {integrity: sha512-6VhYk1diRqrhBAqpJEdjASR/+WVRtfjpqKuNw11cLiaWpAT/Uu+nokB+UJnevzy/P9C/ty6AOe0dwueMrGh/iQ==}
@@ -1310,6 +1344,33 @@ snapshots:
     dependencies:
       '@babel/helper-string-parser': 7.25.9
       '@babel/helper-validator-identifier': 7.25.9
+
+  '@duckdb/node-api@1.2.0-alpha.14':
+    dependencies:
+      '@duckdb/node-bindings': 1.2.0-alpha.14
+
+  '@duckdb/node-bindings-darwin-arm64@1.2.0-alpha.14':
+    optional: true
+
+  '@duckdb/node-bindings-darwin-x64@1.2.0-alpha.14':
+    optional: true
+
+  '@duckdb/node-bindings-linux-arm64@1.2.0-alpha.14':
+    optional: true
+
+  '@duckdb/node-bindings-linux-x64@1.2.0-alpha.14':
+    optional: true
+
+  '@duckdb/node-bindings-win32-x64@1.2.0-alpha.14':
+    optional: true
+
+  '@duckdb/node-bindings@1.2.0-alpha.14':
+    optionalDependencies:
+      '@duckdb/node-bindings-darwin-arm64': 1.2.0-alpha.14
+      '@duckdb/node-bindings-darwin-x64': 1.2.0-alpha.14
+      '@duckdb/node-bindings-linux-arm64': 1.2.0-alpha.14
+      '@duckdb/node-bindings-linux-x64': 1.2.0-alpha.14
+      '@duckdb/node-bindings-win32-x64': 1.2.0-alpha.14
 
   '@esbuild/aix-ppc64@0.23.1':
     optional: true
