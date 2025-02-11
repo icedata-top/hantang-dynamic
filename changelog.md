@@ -92,3 +92,5 @@ EMAIL_TO = "recipient@example.com"
 ### 2.7.3 Use tsx for dev
 
 ### 2.7.4 Add logger level
+
+### 2.7.5 Fix bigint issue

@@ -1,23 +1,23 @@
 // 动态的card结构
 export interface BiliDynamicCard {
   desc: {
-    uid: number;
+    uid: bigint;
     type: number;
-    rid: number;
+    rid: bigint;
     acl: number;
     view: number;
     repost: number;
     comment: number;
     like: number;
     is_liked: number;
-    dynamic_id: number;
+    dynamic_id: bigint;
     timestamp: number;
-    pre_dy_id: number; // 原动态ID, 无则为0，注意很可能被四舍五入不准确
-    orig_dy_id: number; // 转发动态ID, 无则为0, 注意很可能被四舍五入不准确
-    orig_type: number; // 原动态类型, 无则为0
+    pre_dy_id: bigint; // 原动态ID, 无则为0
+    orig_dy_id: bigint; // 转发动态ID, 无则为0
+    orig_type: bigint; // 原动态类型, 无则为0
     user_profile?: {
       info?: {
-        uid: number;
+        aid: bigint;
         uname: string;
         face: string;
       };
@@ -32,14 +32,14 @@ export interface BiliDynamicCard {
     uid_type: number;
     stype: number;
     r_type: number;
-    inner_id: number;
+    inner_id: bigint;
     status: number;
     dynamic_id_str: string;
     pre_dy_id_str?: string;
     orig_dy_id_str?: string;
     rid_str: string;
     origin?: {
-      uid: number;
+      uid: bigint;
       type: number;
       rid: number;
       acl: number;
@@ -48,7 +48,7 @@ export interface BiliDynamicCard {
       comment: number;
       like: number;
       is_liked: number;
-      dynamic_id: number;
+      dynamic_id: bigint;
       timestamp: number;
       pre_dy_id?: number;
       orig_dy_id?: number;
@@ -58,7 +58,7 @@ export interface BiliDynamicCard {
       uid_type: number;
       stype: number;
       r_type: number;
-      inner_id: number;
+      inner_id: bigint;
       status: number;
       dynamic_id_str: string;
       pre_dy_id_str?: string;
@@ -88,7 +88,7 @@ export interface BiliDynamicCard {
 
 // 视频的card结构
 export interface BiliVideoCard {
-  aid: number;
+  aid: bigint;
   cid: number;
   ctime: number;
   desc: string;
@@ -103,14 +103,14 @@ export interface BiliVideoCard {
   jump_url: string;
   owner: {
     face: string;
-    mid: number;
+    mid: bigint;
     name: string;
   };
   pic: string;
   pubdate: number;
   short_link: string | null;
   stat: {
-    aid: number;
+    aid: bigint;
     coin: number;
     danmaku: number;
     dislike: number;
@@ -130,24 +130,24 @@ export interface BiliVideoCard {
 // 转发的card结构
 export interface BiliForwardCard {
   user: {
-    uid: number;
+    aid: bigint;
     uname: string;
     face: string;
   };
   item: {
     rp_id: number;
-    uid: number;
+    aid: bigint;
     content: string;
     reply: number;
     orig_type: number;
-    orig_dy_id: number;
-    pre_dy_id: number;
+    orig_dy_id: bigint;
+    pre_dy_id: bigint;
   };
   origin: string;
   origin_extend_json: string;
   origin_user: {
     info: {
-      uid: number;
+      aid: bigint;
       uname: string;
       face: string;
     };
@@ -168,8 +168,8 @@ export interface BiliDynamicNewResponse {
     exist_gap: number; // 是否存在动态缺口
     new_num: number; // 新动态数量
     update_num: number; // 更新动态数量
-    history_offset: number; // 历史动态偏移量
-    max_dynamic_id: number; // 最大动态ID
+    history_offset: bigint; // 历史动态偏移量
+    max_dynamic_id: bigint; // 最大动态ID
     cards: BiliDynamicCard[]; // 动态卡片列表
   };
 }
@@ -180,7 +180,7 @@ export interface BiliDynamicHistoryResponse {
   msg: string;
   data: {
     has_more: number; // 是否还有更多数据
-    next_offset: number; // 下一次请求的偏移量
+    next_offset: bigint; // 下一次请求的偏移量
     cards: BiliDynamicCard[]; // 动态卡片列表
   };
 }
@@ -225,7 +225,7 @@ export interface VideoTag {
 }
 
 export interface VideoData {
-  aid: number;
+  aid: bigint;
   bvid: string;
   pubdate: number;
   title: string;
@@ -233,5 +233,5 @@ export interface VideoData {
   tag: string;
   pic: string;
   type_id: number;
-  user_id: number;
+  user_id: bigint;
 }
