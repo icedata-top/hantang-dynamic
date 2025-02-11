@@ -46,7 +46,7 @@ export const config: EnvConfig = envSchema.parse({
   BILIBILI_UID: process.env.BILIBILI_UID,
   SESSDATA: process.env.SESSDATA,
 
-  LOGLEVEL: process.env.LOGLEVEL,
+  LOGLEVEL: process.env.LOGLEVEL?.toLowerCase(),
   FETCH_INTERVAL: process.env.FETCH_INTERVAL,
   API_RETRY_TIMES: process.env.API_RETRY_TIMES,
   API_WAIT_TIME: process.env.API_WAIT_TIME,
