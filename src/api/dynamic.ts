@@ -57,7 +57,7 @@ export const getNewDynamic = (type: number) =>
     type,
   });
 
-export const getHistoryDynamic = (type: number, offset: number | string) =>
+export const getHistoryDynamic = (type: number, offset: number | string | BigInt) =>
   fetchDynamicsAPI("/dynamic_history", {
     uid: config.BILIBILI_UID,
     type,
@@ -80,7 +80,7 @@ export const fetchDynamics = async ({
 
   for (const type of types) {
     const typeCode = DYNAMIC_TYPE_MAP[type];
-    let offset = 0;
+    let offset = BigInt(0);
     let hasMore = true;
     let firstRun = true;
 
