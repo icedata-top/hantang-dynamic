@@ -1,7 +1,7 @@
 import { writeFileSync } from "fs";
 import { parse } from "json2csv";
-import { VideoData } from "../core/types";
-import { logger } from "./logger";
+import { VideoData } from "../../core/types";
+import { logger } from "../logger";
 
 const fields = [
   { label: "AID", value: "aid" },

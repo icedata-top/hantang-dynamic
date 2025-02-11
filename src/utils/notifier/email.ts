@@ -1,6 +1,6 @@
 import nodemailer from "nodemailer";
-import { config } from "../core/config";
-import { logger } from "./logger";
+import { config } from "../../core/config";
+import { logger } from "../logger";
 
 export async function sendEmailMessage(message: string) {
   if (!config.EMAIL_HOST || !config.EMAIL_USER || !config.EMAIL_TO) {

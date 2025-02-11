@@ -1,7 +1,7 @@
 import mysql from "mysql2/promise";
-import { config } from "../core/config";
-import { VideoData } from "../core/types";
-import { logger } from "./logger";
+import { config } from "../../core/config";
+import { VideoData } from "../../core/types";
+import { logger } from "../logger";
 
 export const saveToMysql = async (data: VideoData[]) => {
   if (

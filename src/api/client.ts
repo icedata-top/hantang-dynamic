@@ -1,7 +1,7 @@
 import axios, { InternalAxiosRequestConfig, AxiosResponse } from "axios";
 import { config } from "../core/config";
 import { retryDelay } from "../utils/datetime";
-import { notify } from "../utils/notifier";
+import { notify } from "../utils/notifier/notifier";
 import { StateManager } from "../core/state";
 import { logger } from "../utils/logger";
 

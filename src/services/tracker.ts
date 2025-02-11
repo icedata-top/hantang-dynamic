@@ -1,6 +1,6 @@
 import { StateManager } from "../core/state";
 import { fetchDynamics } from "../api/dynamic";
-import { exportData } from "../utils/exporter";
+import { exportData } from "../utils/exporter/exporter";
 import { config } from "../core/config";
 import { sleep } from "../utils/datetime";
 import { logger } from "../utils/logger";
