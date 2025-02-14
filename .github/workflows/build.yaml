@@ -59,23 +59,38 @@ jobs:
               # Windows has only x64 build.
               bin="bilibili-dynamic-subscribe-win-x64.exe"
               start="start.bat"
-              lib="duckdb.dll"
-              zip -r "bundle-$platform-x64.zip" "$bin" .env.example README.md "$start" duckdb.node "$lib"
+              lib_name="duckdb.dll"
+              lib_url="https://github.com/duckdb/duckdb/releases/latest/download/libduckdb-windows-amd64.zip"
+              curl -L $lib_url -o duckdb.zip
+              unzip -j duckdb.zip "$lib_name" -d .
+              rm duckdb.zip
+              zip -r "bundle-$platform-x64.zip" "$bin" .env.example README.md "$start" duckdb.node "$lib_name"
+              rm "$lib_name"
             else
               for arch in x64 arm64; do
                 case $platform in
                   linux)
                     bin="bilibili-dynamic-subscribe-linux-${arch}"
                     start="start.sh"
-                    lib="libduckdb.so"
+                    lib_name="libduckdb.so"
+                    if [ "$arch" = "x64" ]; then
+                      lib_url="https://github.com/duckdb/duckdb/releases/latest/download/libduckdb-linux-amd64.zip"
+                    else
+                      lib_url="https://github.com/duckdb/duckdb/releases/latest/download/libduckdb-linux-aarch64.zip"
+                    fi
                     ;;
                   macos)
                     bin="bilibili-dynamic-subscribe-macos-${arch}"
                     start="start.sh"
-                    lib="libduckdb.dylib"
+                    lib_name="libduckdb.dylib"
+                    lib_url="https://github.com/duckdb/duckdb/releases/latest/download/libduckdb-osx-universal.zip"
                     ;;
                 esac
-                zip -r "bundle-$platform-$arch.zip" "$bin" .env.example README.md "$start" duckdb.node "$lib"
+                curl -L $lib_url -o duckdb.zip
+                unzip -j duckdb.zip "$lib_name" -d .
+                rm duckdb.zip
+                zip -r "bundle-$platform-$arch.zip" "$bin" .env.example README.md "$start" duckdb.node "$lib_name"
+                rm "$lib_name"
               done
             fi
           done
