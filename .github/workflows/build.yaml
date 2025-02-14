@@ -12,12 +12,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # Checkout the repository
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-      # Set up Node.js environment
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: "20"
@@ -26,7 +23,6 @@ jobs:
         with:
           version: 9
 
-      # Install dependencies
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -41,62 +37,60 @@ jobs:
           mv dist/executables/index-linux dist/bilibili-dynamic-subscribe-linux
           mv dist/executables/index-macos dist/bilibili-dynamic-subscribe-macos
           mv dist/executables/index-win.exe dist/bilibili-dynamic-subscribe-win.exe
+
+      - name: Prepare distribution files
+        run: |
           cp .env.example dist/.env.example
           cp README.md dist/README.md
-          cp start.sh dist/start.sh
-          cp start.bat dist/start.bat
+          cp start.* dist/
 
-      - name: Upload Linux artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: bilibili-dynamic-subscribe-linux
-          path: |
-            dist/bilibili-dynamic-subscribe-linux
-            dist/.env.example
-            dist/README.md
-            dist/start.sh
-            dist/duckdb.node
-            dist/libduckdb.so
-
-      - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: bilibili-dynamic-subscribe-macos
-          path: |
-            dist/bilibili-dynamic-subscribe-macos
-            dist/.env.example
-            dist/README.md
-            dist/start.sh
-            dist/duckdb.node
-            dist/libduckdb.dylib
-
-      - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: bilibili-dynamic-subscribe-win
-          path: |
-            dist/bilibili-dynamic-subscribe-win.exe
-            dist/.env.example
-            dist/README.md
-            dist/start.bat
-            dist/duckdb.node
-            dist/duckdb.dll
-
-      - name: Build Zip for Release
+      - name: Create platform bundles
         run: |
           cd dist
-          zip -r bilibili-dynamic-subscribe-linux.zip bilibili-dynamic-subscribe-linux .env.example README.md start.sh duckdb.node
-          zip -r bilibili-dynamic-subscribe-macos.zip bilibili-dynamic-subscribe-macos .env.example README.md start.sh duckdb.node
-          zip -r bilibili-dynamic-subscribe-win.zip bilibili-dynamic-subscribe-win.exe .env.example README.md start.bat duckdb.node duckdb.dll
-          cd ..
+          for platform in linux macos win; do
+            case $platform in
+              linux)
+                bin="bilibili-dynamic-subscribe-linux"
+                start="start.sh"
+                lib="libduckdb.so"
+                ;;
+              macos)
+                bin="bilibili-dynamic-subscribe-macos"
+                start="start.sh"
+                lib="libduckdb.dylib"
+                ;;
+              win)
+                bin="bilibili-dynamic-subscribe-win.exe"
+                start="start.bat"
+                lib="duckdb.dll"
+                ;;
+            esac
+            zip -r "bundle-$platform.zip" "$bin" .env.example README.md "$start" duckdb.node "$lib"
+          done
+      
+      - name: Upload artifacts for linux
+        uses: actions/upload-artifact@v4
+        with:
+          path: dist/bundle-linux.zip
+          name: bilibili-dynamic-subscribe-linux
+      
+      - name: Upload artifacts for macos
+        uses: actions/upload-artifact@v4
+        with:
+          path: dist/bundle-macos.zip
+          name: bilibili-dynamic-subscribe-macos
 
-      - name: Create release
-        id: create_release
+      - name: Upload artifacts for windows
+        uses: actions/upload-artifact@v4
+        with:
+          path: dist/bundle-win.zip
+          name: bilibili-dynamic-subscribe-win
+        
+      - name: Publish Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: ncipollo/release-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: "true"
         with:
-          artifacts: |
-            dist/*.zip
+          artifacts: "dist/bundle-*.zip"
