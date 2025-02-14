@@ -10,14 +10,38 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+            arch: x64
+            duckdb_lib_name: duckdb.dll
+            start: start.bat
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+            duckdb_lib_name: libduckdb.so
+            start: start.sh
+          - os: ubuntu-22.04-arm
+            platform: linux
+            arch: arm64
+            duckdb_lib_name: libduckdb.so
+            start: start.sh
+          - os: macos-latest
+            platform: macos
+            arch: arm64
+            duckdb_lib_name: libduckdb.dylib
+            start: start.sh
+
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
 
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: "20"
+          node-version: '20'
 
       - uses: pnpm/action-setup@v4
         with:
@@ -27,6 +51,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - uses: MOZGIII/install-ldid-action@v1
+        if: ${{ matrix.platform == 'macos' }}
         with:
           tag: v2.1.5-procursus7
 
@@ -38,11 +63,11 @@ jobs:
 
       - name: Renaming and moving artifacts
         run: |
-          mv dist/executables/index-linux-x64 dist/bilibili-dynamic-subscribe-linux-x64
-          mv dist/executables/index-linux-arm64 dist/bilibili-dynamic-subscribe-linux-arm64
-          mv dist/executables/index-macos-x64 dist/bilibili-dynamic-subscribe-macos-x64
-          mv dist/executables/index-macos-arm64 dist/bilibili-dynamic-subscribe-macos-arm64
-          mv dist/executables/index-win-x64.exe dist/bilibili-dynamic-subscribe-win-x64.exe
+          if [ "${{ matrix.platform }}" = "win" ]; then
+            mv dist/executables/index-win-x64.exe dist/bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }}.exe
+          else
+            mv dist/executables/index-${{ matrix.platform }}-${{ matrix.arch }} dist/bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }}
+          fi
 
       - name: Prepare distribution files
         run: |
@@ -50,85 +75,29 @@ jobs:
           cp README.md dist/README.md
           cp start.* dist/
 
-      - name: Create platform bundles
+      - name: Create platform bundle
         run: |
           cd dist
-          for platform in linux macos win; do
-            if [ "$platform" = "win" ]; then
-              # Windows has only x64 build.
-              bin="bilibili-dynamic-subscribe-win-x64.exe"
-              start="start.bat"
-              lib_name="duckdb.dll"
-              lib_url="https://github.com/duckdb/duckdb/releases/latest/download/libduckdb-windows-amd64.zip"
-              curl -L $lib_url -o duckdb.zip
-              unzip -o -j duckdb.zip "$lib_name" -d .
-              rm duckdb.zip
-              zip -r "bundle-$platform-x64.zip" "$bin" .env.example README.md "$start" duckdb.node "$lib_name"
-              rm "$lib_name"
-            else
-              for arch in x64 arm64; do
-                case $platform in
-                  linux)
-                    bin="bilibili-dynamic-subscribe-linux-${arch}"
-                    start="start.sh"
-                    lib_name="libduckdb.so"
-                    if [ "$arch" = "x64" ]; then
-                      lib_url="https://github.com/duckdb/duckdb/releases/latest/download/libduckdb-linux-amd64.zip"
-                    else
-                      lib_url="https://github.com/duckdb/duckdb/releases/latest/download/libduckdb-linux-aarch64.zip"
-                    fi
-                    ;;
-                  macos)
-                    bin="bilibili-dynamic-subscribe-macos-${arch}"
-                    start="start.sh"
-                    lib_name="libduckdb.dylib"
-                    lib_url="https://github.com/duckdb/duckdb/releases/latest/download/libduckdb-osx-universal.zip"
-                    ;;
-                esac
-                curl -L $lib_url -o duckdb.zip
-                unzip -o -j duckdb.zip "$lib_name" -d .
-                rm duckdb.zip
-                zip -r "bundle-$platform-$arch.zip" "$bin" .env.example README.md "$start" duckdb.node "$lib_name"
-                rm "$lib_name"
-              done
-            fi
-          done
+          zip -r "bundle-${{ matrix.platform }}-${{ matrix.arch }}.zip" bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }} .env.example README.md "${{ matrix.start }}" duckdb.node "${{ matrix.duckdb_lib_name }}"
 
-      - name: Upload artifacts for linux x64
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          path: dist/bundle-linux-x64.zip
-          name: bilibili-dynamic-subscribe-linux-x64
+          path: dist/bundle-${{ matrix.platform }}-${{ matrix.arch }}.zip
+          name: bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }}
 
-      - name: Upload artifacts for linux arm64
-        uses: actions/upload-artifact@v4
-        with:
-          path: dist/bundle-linux-arm64.zip
-          name: bilibili-dynamic-subscribe-linux-arm64
-
-      - name: Upload artifacts for macos x64
-        uses: actions/upload-artifact@v4
-        with:
-          path: dist/bundle-macos-x64.zip
-          name: bilibili-dynamic-subscribe-macos-x64
-
-      - name: Upload artifacts for macos arm64
-        uses: actions/upload-artifact@v4
-        with:
-          path: dist/bundle-macos-arm64.zip
-          name: bilibili-dynamic-subscribe-macos-arm64
-
-      - name: Upload artifacts for windows
-        uses: actions/upload-artifact@v4
-        with:
-          path: dist/bundle-win-x64.zip
-          name: bilibili-dynamic-subscribe-win
-
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Download artifact
+        uses: actions/download-artifact@v4
       - name: Publish Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: ncipollo/release-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: "true"
         with:
-          artifacts: "dist/bundle-*.zip"
+          artifacts: "bundle-linux-x64.zip,bundle-linux-arm64.zip,bundle-macos-arm64.zip,bundle-win-x64.exe"
