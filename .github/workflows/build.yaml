@@ -26,10 +26,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install ldid
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ldid
+      - uses: MOZGIII/install-ldid-action@v1
+        with:
+          tag: v2.1.5-procursus7
 
       - name: Build project
         run: pnpm run build
