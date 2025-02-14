@@ -26,6 +26,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install ldid
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ldid
+
       - name: Build project
         run: pnpm run build
 
@@ -34,9 +39,11 @@ jobs:
 
       - name: Renaming and moving artifacts
         run: |
-          mv dist/executables/index-linux dist/bilibili-dynamic-subscribe-linux
-          mv dist/executables/index-macos dist/bilibili-dynamic-subscribe-macos
-          mv dist/executables/index-win.exe dist/bilibili-dynamic-subscribe-win.exe
+          mv dist/executables/index-linux-x64 dist/bilibili-dynamic-subscribe-linux-x64
+          mv dist/executables/index-linux-arm64 dist/bilibili-dynamic-subscribe-linux-arm64
+          mv dist/executables/index-macos-x64 dist/bilibili-dynamic-subscribe-macos-x64
+          mv dist/executables/index-macos-arm64 dist/bilibili-dynamic-subscribe-macos-arm64
+          mv dist/executables/index-win-x64.exe dist/bilibili-dynamic-subscribe-win-x64.exe
 
       - name: Prepare distribution files
         run: |
@@ -48,44 +55,61 @@ jobs:
         run: |
           cd dist
           for platform in linux macos win; do
-            case $platform in
-              linux)
-                bin="bilibili-dynamic-subscribe-linux"
-                start="start.sh"
-                lib="libduckdb.so"
-                ;;
-              macos)
-                bin="bilibili-dynamic-subscribe-macos"
-                start="start.sh"
-                lib="libduckdb.dylib"
-                ;;
-              win)
-                bin="bilibili-dynamic-subscribe-win.exe"
-                start="start.bat"
-                lib="duckdb.dll"
-                ;;
-            esac
-            zip -r "bundle-$platform.zip" "$bin" .env.example README.md "$start" duckdb.node "$lib"
+            if [ "$platform" = "win" ]; then
+              # Windows has only x64 build.
+              bin="bilibili-dynamic-subscribe-win-x64.exe"
+              start="start.bat"
+              lib="duckdb.dll"
+              zip -r "bundle-$platform-x64.zip" "$bin" .env.example README.md "$start" duckdb.node "$lib"
+            else
+              for arch in x64 arm64; do
+                case $platform in
+                  linux)
+                    bin="bilibili-dynamic-subscribe-linux-${arch}"
+                    start="start.sh"
+                    lib="libduckdb.so"
+                    ;;
+                  macos)
+                    bin="bilibili-dynamic-subscribe-macos-${arch}"
+                    start="start.sh"
+                    lib="libduckdb.dylib"
+                    ;;
+                esac
+                zip -r "bundle-$platform-$arch.zip" "$bin" .env.example README.md "$start" duckdb.node "$lib"
+              done
+            fi
           done
-      
-      - name: Upload artifacts for linux
+
+      - name: Upload artifacts for linux x64
         uses: actions/upload-artifact@v4
         with:
-          path: dist/bundle-linux.zip
-          name: bilibili-dynamic-subscribe-linux
-      
-      - name: Upload artifacts for macos
+          path: dist/bundle-linux-x64.zip
+          name: bilibili-dynamic-subscribe-linux-x64
+
+      - name: Upload artifacts for linux arm64
         uses: actions/upload-artifact@v4
         with:
-          path: dist/bundle-macos.zip
-          name: bilibili-dynamic-subscribe-macos
+          path: dist/bundle-linux-arm64.zip
+          name: bilibili-dynamic-subscribe-linux-arm64
+
+      - name: Upload artifacts for macos x64
+        uses: actions/upload-artifact@v4
+        with:
+          path: dist/bundle-macos-x64.zip
+          name: bilibili-dynamic-subscribe-macos-x64
+
+      - name: Upload artifacts for macos arm64
+        uses: actions/upload-artifact@v4
+        with:
+          path: dist/bundle-macos-arm64.zip
+          name: bilibili-dynamic-subscribe-macos-arm64
 
       - name: Upload artifacts for windows
         uses: actions/upload-artifact@v4
         with:
-          path: dist/bundle-win.zip
+          path: dist/bundle-win-x64.zip
           name: bilibili-dynamic-subscribe-win
-        
+
       - name: Publish Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: ncipollo/release-action@v1
