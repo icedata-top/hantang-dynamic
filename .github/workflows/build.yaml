@@ -61,13 +61,15 @@ jobs:
       - name: Package project with pkg
         run: pnpm run package
 
-      - name: Renaming and moving artifacts
+      - name: Renaming and moving artifacts for Windows
+        if: ${{ matrix.platform == 'win' }}
         run: |
-          if [ "${{ matrix.platform }}" = "win" ]; then
-            mv dist/executables/index-win-x64.exe dist/bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }}.exe
-          else
-            mv dist/executables/index-${{ matrix.platform }}-${{ matrix.arch }} dist/bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }}
-          fi
+          mv dist/executables/index-win-x64.exe dist/bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }}.exe
+
+      - name: Renaming and moving artifacts for Other platforms
+        if: ${{ matrix.platform != 'win' }}
+        run: |
+          mv dist/executables/index-${{ matrix.platform }}-${{ matrix.arch }} dist/bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }}
 
       - name: Prepare distribution files
         run: |
