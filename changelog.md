@@ -98,3 +98,5 @@ EMAIL_TO = "recipient@example.com"
 ## 2.8 Add support for DuckDB
 
 No configuration required. Automatically enabled.
+
+## 2.8.1 Fix DuckDB runtime
