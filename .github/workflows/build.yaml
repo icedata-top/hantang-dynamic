@@ -75,18 +75,38 @@ jobs:
         run: |
           cp .env.example dist/.env.example
           cp README.md dist/README.md
-          cp start.* dist/
 
-      - name: Create platform bundle
+      - name: Write start script
+        if: ${{ matrix.platform != 'win' }}
         run: |
-          cd dist
-          zip -r "bundle-${{ matrix.platform }}-${{ matrix.arch }}.zip" bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }} .env.example README.md "${{ matrix.start }}" duckdb.node "${{ matrix.duckdb_lib_name }}"
+          echo '#!/bin/bash
+          if [ ! -f "$(dirname "$0")/.env" ]; then
+          echo "Error: .env file not found!"
+          echo "Please create a .env file with your configuration"
+          cp "$(dirname "$0")/.env.example" "$(dirname "$0")/.env"
+          exit 1
+          fi
+          exec "$(dirname "$0")/bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }}" "$@"' > dist/${{ matrix.start }}
+          chmod +x dist/${{ matrix.start }}
+          cp dist/${{ matrix.start }} dist/start
+
+      - name: Write start script for Windows
+        if: ${{ matrix.platform == 'win' }}
+        run: |
+          echo '@echo off
+          if not exist ".env" (
+            echo Error: .env file not found!
+            echo Please create a .env file with your configuration
+            copy ".env.example" ".env"
+            exit /b 1
+          )
+          start "" /B "bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }}.exe" %*' > dist/start.bat
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          path: dist/bundle-${{ matrix.platform }}-${{ matrix.arch }}.zip
           name: bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/*
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
