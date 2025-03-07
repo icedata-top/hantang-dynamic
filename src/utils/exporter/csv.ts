@@ -33,6 +33,9 @@ export const saveAsCSV = (data: VideoData[]) => {
     return true;
   } catch (error) {
     logger.error("CSV 保存失败:", error);
+    if (error instanceof Error) {
+      logger.error(error.stack);
+    }
     return false;
   }
 };

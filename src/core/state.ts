@@ -46,6 +46,9 @@ export class StateManager {
       };
     } catch (error) {
       logger.error("Error loading state:", error);
+      if (error instanceof Error) {
+        logger.error(error.stack);
+      }
       return this.getDefaultState();
     }
   }
@@ -55,6 +58,9 @@ export class StateManager {
       writeFileSync(this.filePath, JSON.stringify(this.state));
     } catch (error) {
       logger.error("Error saving state:", error);
+      if (error instanceof Error) {
+        logger.error(error.stack);
+      }
     }
   }
 

@@ -58,6 +58,9 @@ export const saveToMysql = async (data: VideoData[]) => {
     return true;
   } catch (error) {
     logger.error("MySQL export failed:", error);
+    if (error instanceof Error) {
+      logger.error(error.stack);
+    }
     return false;
   }
 };

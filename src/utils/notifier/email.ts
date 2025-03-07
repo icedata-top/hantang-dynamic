@@ -27,5 +27,8 @@ export async function sendEmailMessage(message: string) {
     logger.info("Email sent successfully");
   } catch (error) {
     logger.error("Failed to send email message:", error);
+    if (error instanceof Error) {
+      logger.error(error.stack);
+    }
   }
 }

@@ -106,3 +106,4 @@ No configuration required. Automatically enabled.
 ## 2.8.5 
 
 fix: update .gitignore to include data directory
+fix: log error stack for better debugging in API and state management

@@ -29,6 +29,9 @@ export const fetchDynamicsAPI = async (
     return response.data;
   } catch (error) {
     logger.error("API Error:", error);
+    if (error instanceof Error) {
+      logger.error(error.stack);
+    }
     throw new Error("API Error: Fetch dynamics failed");
   }
 };
@@ -47,6 +50,9 @@ export const fetchDynamicAPI = async (
     return response.data;
   } catch (error) {
     logger.error("API Error:", error);
+    if (error instanceof Error) {
+      logger.error(error.stack);
+    }
     throw new Error("API Error: Fetch dynamic detail failed");
   }
 };

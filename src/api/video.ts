@@ -13,6 +13,9 @@ export const fetchVideoTags = async (
     return response.data;
   } catch (error) {
     logger.error("API Error:", error);
+    if (error instanceof Error) {
+      logger.error(error.stack);
+    }
     throw new Error("API Error: Fetch video tags failed");
   }
 };

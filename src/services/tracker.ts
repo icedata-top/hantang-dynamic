@@ -21,6 +21,9 @@ export class DynamicTracker {
         await sleep(config.FETCH_INTERVAL);
       } catch (error) {
         logger.error("Tracker error:", error);
+        if (error instanceof Error) {
+          logger.error(error.stack);
+        }
         this.state.updateUA();
         await sleep(3600);
       }

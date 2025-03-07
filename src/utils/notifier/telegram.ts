@@ -18,5 +18,8 @@ export async function sendTelegramMessage(message: string) {
     );
   } catch (error) {
     logger.error("Failed to send telegram message:", error);
+    if (error instanceof Error) {
+      logger.error(error.stack);
+    }
   }
 }

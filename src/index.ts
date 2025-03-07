@@ -28,5 +28,8 @@ async function main() {
 
 main().catch((error) => {
   logger.error("Fatal Error:", error);
+  if (error instanceof Error) {
+    logger.error(error.stack);
+  }
   process.exit(1);
 });

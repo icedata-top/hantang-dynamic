@@ -61,6 +61,9 @@ export const saveToDuckDB = async (data: VideoData[]) => {
     return true;
   } catch (error) {
     logger.error("DuckDB export failed:", error);
+    if (error instanceof Error) {
+      logger.error(error.stack);
+    }
     return false;
   }
 };
