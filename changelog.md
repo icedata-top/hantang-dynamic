@@ -102,3 +102,7 @@ No configuration required. Automatically enabled.
 ## 2.8.1 Fix DuckDB runtime
 
 ## 2.8.4 Build updates
+
+## 2.8.5 
+
+fix: update .gitignore to include data directory
