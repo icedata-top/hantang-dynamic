@@ -41,7 +41,7 @@ export const saveToDuckDB = async (data: VideoData[]) => {
     const appender = await connection.createAppender("main", "videos");
 
     for (const record of data) {
-      appender.appendBigInt(record.aid);
+      appender.appendBigInt(BigInt(record.aid));
       appender.appendVarchar(record.bvid);
       appender.appendTimestamp(
         new DuckDBTimestampValue(BigInt(record.pubdate) * 1000n),
@@ -51,12 +51,12 @@ export const saveToDuckDB = async (data: VideoData[]) => {
       appender.appendVarchar(record.tag);
       appender.appendVarchar(record.pic);
       appender.appendInteger(record.type_id);
-      appender.appendBigInt(record.user_id);
+      appender.appendBigInt(BigInt(record.user_id));
       appender.endRow();
     }
 
-    await appender.close();
-    await connection.close();
+    appender.close();
+    connection.close();
     logger.info(`Inserted ${data.length} records into DuckDB file ${filepath}`);
     return true;
   } catch (error) {
