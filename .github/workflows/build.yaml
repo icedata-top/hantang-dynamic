@@ -16,22 +16,19 @@ jobs:
           - os: windows-latest
             platform: win
             arch: x64
-            duckdb_lib_name: duckdb.dll
+            ext: .exe
             start: start.bat
           - os: ubuntu-latest
             platform: linux
             arch: x64
-            duckdb_lib_name: libduckdb.so
             start: start.sh
           - os: ubuntu-22.04-arm
             platform: linux
             arch: arm64
-            duckdb_lib_name: libduckdb.so
             start: start.sh
           - os: macos-latest
             platform: macos
             arch: arm64
-            duckdb_lib_name: libduckdb.dylib
             start: start.sh
 
     runs-on: ${{ matrix.os }}
@@ -41,7 +38,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '20'
+          node-version: "20"
 
       - uses: pnpm/action-setup@v4
         with:
@@ -61,15 +58,10 @@ jobs:
       - name: Package project with pkg
         run: pnpm run package
 
-      - name: Renaming and moving artifacts for Windows
-        if: ${{ matrix.platform == 'win' }}
+      - name: Renaming and moving artifacts
         run: |
-          mv dist/executables/index-win-x64.exe dist/bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }}.exe
-
-      - name: Renaming and moving artifacts for Other platforms
-        if: ${{ matrix.platform != 'win' }}
-        run: |
-          mv dist/executables/index-${{ matrix.platform }}-${{ matrix.arch }} dist/bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }}
+          mv dist/executables/index-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.ext }} dist/bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.ext }}
+          rm -r dist/executables
 
       - name: Prepare distribution files
         run: |
@@ -122,4 +114,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: "true"
         with:
-          artifacts: "bundle-linux-x64.zip,bundle-linux-arm64.zip,bundle-macos-arm64.zip,bundle-win-x64.exe"
+          artifacts: bilibili-dynamic-subscribe-*
