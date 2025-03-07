@@ -110,8 +110,8 @@ jobs:
         uses: actions/download-artifact@v4
       - name: zip artifact for all platforms
         run: |
-          for f in dist/*; do
-            zip -r $f.zip $f
+          for folder in dist/*; do
+            zip -r $folder.zip $folder
           done
       - name: Publish Release
         uses: ncipollo/release-action@v1
