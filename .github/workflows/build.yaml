@@ -10,7 +10,28 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+            arch: x64
+            ext: .exe
+            start: start.bat
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+            start: start.sh
+          - os: ubuntu-22.04-arm
+            platform: linux
+            arch: arm64
+            start: start.sh
+          - os: macos-latest
+            platform: macos
+            arch: arm64
+            start: start.sh
+
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
 
@@ -26,6 +47,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - uses: MOZGIII/install-ldid-action@v1
+        if: ${{ matrix.platform == 'macos' }}
+        with:
+          tag: v2.1.5-procursus7
+
       - name: Build project
         run: pnpm run build
 
@@ -34,63 +60,58 @@ jobs:
 
       - name: Renaming and moving artifacts
         run: |
-          mv dist/executables/index-linux dist/bilibili-dynamic-subscribe-linux
-          mv dist/executables/index-macos dist/bilibili-dynamic-subscribe-macos
-          mv dist/executables/index-win.exe dist/bilibili-dynamic-subscribe-win.exe
+          mv dist/executables/index-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.ext }} dist/bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.ext }}
+          rm -r dist/executables
 
       - name: Prepare distribution files
         run: |
           cp .env.example dist/.env.example
           cp README.md dist/README.md
-          cp start.* dist/
 
-      - name: Create platform bundles
+      - name: Write start script
+        if: ${{ matrix.platform != 'win' }}
         run: |
-          cd dist
-          for platform in linux macos win; do
-            case $platform in
-              linux)
-                bin="bilibili-dynamic-subscribe-linux"
-                start="start.sh"
-                lib="libduckdb.so"
-                ;;
-              macos)
-                bin="bilibili-dynamic-subscribe-macos"
-                start="start.sh"
-                lib="libduckdb.dylib"
-                ;;
-              win)
-                bin="bilibili-dynamic-subscribe-win.exe"
-                start="start.bat"
-                lib="duckdb.dll"
-                ;;
-            esac
-            zip -r "bundle-$platform.zip" "$bin" .env.example README.md "$start" duckdb.node "$lib"
-          done
-      
-      - name: Upload artifacts for linux
-        uses: actions/upload-artifact@v4
-        with:
-          path: dist/bundle-linux.zip
-          name: bilibili-dynamic-subscribe-linux
-      
-      - name: Upload artifacts for macos
-        uses: actions/upload-artifact@v4
-        with:
-          path: dist/bundle-macos.zip
-          name: bilibili-dynamic-subscribe-macos
+          echo '#!/bin/bash
+          if [ ! -f "$(dirname "$0")/.env" ]; then
+          echo "Error: .env file not found!"
+          echo "Please create a .env file with your configuration"
+          cp "$(dirname "$0")/.env.example" "$(dirname "$0")/.env"
+          exit 1
+          fi
+          exec "$(dirname "$0")/bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }}" "$@"' > dist/${{ matrix.start }}
+          chmod +x dist/${{ matrix.start }}
+          cp dist/${{ matrix.start }} dist/start
 
-      - name: Upload artifacts for windows
+      - name: Write start script for Windows
+        if: ${{ matrix.platform == 'win' }}
+        run: |
+          echo '@echo off
+          if not exist ".env" (
+            echo Error: .env file not found!
+            echo Please create a .env file with your configuration
+            copy ".env.example" ".env"
+            exit /b 1
+          )
+          start "" /B "bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }}.exe" %*' > dist/start.bat
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          path: dist/bundle-win.zip
-          name: bilibili-dynamic-subscribe-win
-        
+          name: bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/*
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Download artifact
+        uses: actions/download-artifact@v4
       - name: Publish Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: ncipollo/release-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: "true"
         with:
-          artifacts: "dist/bundle-*.zip"
+          artifacts: bilibili-dynamic-subscribe-*
