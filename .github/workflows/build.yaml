@@ -110,8 +110,11 @@ jobs:
         uses: actions/download-artifact@v4
       - name: zip artifact for all platforms
         run: |
-          for folder in dist/*; do
-            zip -r $folder.zip $folder
+          for folder in bilibili-dynamic-subscribe-*; do
+            if [ -d "$folder" ]; then
+              zip -r "${folder}.zip" "$folder"
+              echo "Created ${folder}.zip"
+            fi
           done
       - name: Publish Release
         uses: ncipollo/release-action@v1
