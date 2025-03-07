@@ -100,3 +100,5 @@ EMAIL_TO = "recipient@example.com"
 No configuration required. Automatically enabled.
 
 ## 2.8.1 Fix DuckDB runtime
+
+## 2.8.4 Build updates
