@@ -1,4 +1,4 @@
-import { videoClient } from "./client";
+import { xClient } from "./client";
 import { VideoTagResponse } from "../core/types";
 import { logger } from "../utils/logger";
 
@@ -6,7 +6,7 @@ export const fetchVideoTags = async (
   bvid: string,
 ): Promise<VideoTagResponse> => {
   try {
-    const response = await videoClient.get<VideoTagResponse>(
+    const response = await xClient.get<VideoTagResponse>(
       "/tag/archive/tags",
       { params: { bvid } },
     );

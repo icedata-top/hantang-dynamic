@@ -76,4 +76,4 @@ const createClient = (baseURL: string) => {
 export const dynamicClient = createClient(
   "https://api.vc.bilibili.com/dynamic_svr/v1/dynamic_svr",
 );
-export const videoClient = createClient("https://api.bilibili.com/x");
+export const xClient = createClient("https://api.bilibili.com/x");
