@@ -111,3 +111,7 @@ fix: log error stack for better debugging in API and state management
 ## 2.9.0
 
 Feat: Add support for Batch Follow
+
+## 2.10.0
+
+feat: add content blacklist configuration and filtering logic

@@ -41,6 +41,22 @@ export const processDynamic = async (
     }
   }
 
+  // Check content blacklist
+  if (Array.isArray(config.CONTENT_BLACKLIST) && config.CONTENT_BLACKLIST.length > 0) {
+    const contentToCheck = [
+      card.title.toLowerCase(),
+      card.desc.toLowerCase(),
+      tagString.toLowerCase()
+    ].join(" ");
+    
+    for (const keyword of config.CONTENT_BLACKLIST) {
+      if (contentToCheck.includes(keyword.toLowerCase())) {
+        logger.info(`忽略包含黑名单关键字 "${keyword}": ${card.title}`);
+        return null;
+      }
+    }
+  }
+
   return {
     aid: card.aid,
     bvid: dynamiccard.desc.bvid,
@@ -83,6 +99,22 @@ export const processCard = async (
         `标签获取失败 ${dynamiccard.desc.bvid}:`,
         error instanceof Error ? error.message : "未知错误",
       );
+    }
+  }
+
+  // Check content blacklist
+  if (Array.isArray(config.CONTENT_BLACKLIST) && config.CONTENT_BLACKLIST.length > 0) {
+    const contentToCheck = [
+      card.title.toLowerCase(), 
+      card.desc.toLowerCase(), 
+      tagString.toLowerCase()
+    ].join(" ");
+    
+    for (const keyword of config.CONTENT_BLACKLIST) {
+      if (contentToCheck.includes(keyword.toLowerCase())) {
+        logger.debug(`忽略包含黑名单关键字 "${keyword}": ${card.title}`);
+        return null;
+      }
     }
   }
 
