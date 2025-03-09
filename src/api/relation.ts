@@ -151,6 +151,16 @@ export const batchModifyUserRelation = async (
     };
   }
 
+  if (fids.length === 1) {
+    logger.warn("Single user ID provided for batch modification, using single operation");
+    const singleResponse = await modifyUserRelation(fids[0], act, reSource, useAccessKey, useCsrf);
+    return {
+      ...singleResponse,
+      data: {
+        failed_fids: singleResponse.code === 0 ? [] : [fids[0]]
+      }
+    };
+  }
   try {
     const formData = new URLSearchParams();
     formData.append("fids", fids.join(","));
@@ -183,6 +193,7 @@ export const batchModifyUserRelation = async (
       logger.warn(
         `Failed to modify relation for ${response.data.data.failed_fids.length} users: ${response.data.data.failed_fids.join(", ")}`
       );
+      logger.warn(`API Message: ${JSON.stringify(response.data)}`);
     }
 
     return response.data;
