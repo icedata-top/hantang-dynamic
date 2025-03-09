@@ -99,11 +99,15 @@ EMAIL_TO = "recipient@example.com"
 
 No configuration required. Automatically enabled.
 
-## 2.8.1 Fix DuckDB runtime
+### 2.8.1 Fix DuckDB runtime
 
-## 2.8.4 Build updates
+### 2.8.4 Build updates
 
-## 2.8.5 
+### 2.8.5 
 
 fix: update .gitignore to include data directory
 fix: log error stack for better debugging in API and state management
+
+## 2.9.0
+
+Feat: Add support for Batch Follow
