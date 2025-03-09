@@ -1,23 +1,7 @@
 import { xClient, accountClient } from "./client";
 import { VideoTagResponse } from "../core/types";
 import { logger } from "../utils/logger";
-
-export const fetchVideoTags = async (
-  bvid: string
-): Promise<VideoTagResponse> => {
-  try {
-    const response = await xClient.get<VideoTagResponse>("/tag/archive/tags", {
-      params: { bvid },
-    });
-    return response.data;
-  } catch (error) {
-    logger.error("API Error:", error);
-    if (error instanceof Error) {
-      logger.error(error.stack);
-    }
-    throw new Error("API Error: Fetch video tags failed");
-  }
-};
+import { config } from "../core/config";
 
 // User relationship operation types
 export enum UserRelationAction {
@@ -55,11 +39,12 @@ interface BatchRelationModifyResponse {
 
 /**
  * Modify relationship with a single user (follow, unfollow, block, etc.)
+ * Uses configuration values for authentication if specific credentials aren't provided
  * @param fid Target user's mid
  * @param act Action code (see UserRelationAction enum)
  * @param reSource Source of the operation (see RelationSource enum)
- * @param accessKey APP login token (required for app authentication)
- * @param csrf CSRF token (required for cookie authentication)
+ * @param accessKey Optional override for APP login token
+ * @param csrf Optional override for CSRF token
  * @returns API response
  */
 export const modifyUserRelation = async (
@@ -69,9 +54,18 @@ export const modifyUserRelation = async (
   accessKey?: string,
   csrf?: string
 ): Promise<RelationModifyResponse> => {
-  if (!accessKey && !csrf) {
+  // Check if feature is enabled in config
+  if (!config.ENABLE_USER_RELATION) {
+    throw new Error("User relation operations are disabled in configuration");
+  }
+
+  // Use provided credentials or fall back to config values
+  const useAccessKey = accessKey || config.BILI_ACCESS_KEY;
+  const useCsrf = csrf || config.BILI_JCT;
+
+  if (!useAccessKey && !useCsrf) {
     throw new Error(
-      "Authentication required: provide either accessKey or csrf"
+      "Authentication required: provide either accessKey or csrf in function call or configuration"
     );
   }
 
@@ -81,12 +75,12 @@ export const modifyUserRelation = async (
     formData.append("act", act.toString());
     formData.append("re_src", reSource.toString());
 
-    if (accessKey) {
-      formData.append("access_key", accessKey);
+    if (useAccessKey) {
+      formData.append("access_key", useAccessKey);
     }
 
-    if (csrf) {
-      formData.append("csrf", csrf);
+    if (useCsrf) {
+      formData.append("csrf", useCsrf);
     }
 
     const response = await xClient.post<RelationModifyResponse>(
@@ -111,11 +105,12 @@ export const modifyUserRelation = async (
 
 /**
  * Batch modify user relationships (follow or block multiple users at once)
+ * Uses configuration values for authentication if specific credentials aren't provided
  * @param fids Array of target user mids
  * @param act Action code (only UserRelationAction.Follow or UserRelationAction.Block)
  * @param reSource Source of the operation (see RelationSource enum)
- * @param accessKey APP login token (required for app authentication)
- * @param csrf CSRF token (required for cookie authentication)
+ * @param accessKey Optional override for APP login token
+ * @param csrf Optional override for CSRF token
  * @returns API response with list of failed operations
  */
 export const batchModifyUserRelation = async (
@@ -125,14 +120,35 @@ export const batchModifyUserRelation = async (
   accessKey?: string,
   csrf?: string
 ): Promise<BatchRelationModifyResponse> => {
-  if (!accessKey && !csrf) {
+  // Check if feature is enabled in config
+  if (!config.ENABLE_USER_RELATION) {
+    throw new Error("User relation operations are disabled in configuration");
+  }
+
+  // Use provided credentials or fall back to config values
+  const useAccessKey = accessKey || config.BILI_ACCESS_KEY;
+  const useCsrf = csrf || config.BILI_JCT;
+
+  if (!useAccessKey && !useCsrf) {
     throw new Error(
-      "Authentication required: provide either accessKey or csrf"
+      "Authentication required: provide either accessKey or csrf in function call or configuration"
     );
   }
 
   if (act !== UserRelationAction.Follow && act !== UserRelationAction.Block) {
     throw new Error("Batch operation only supports Follow (1) or Block (5)");
+  }
+
+  if (fids.length === 0) {
+    logger.warn("Empty user ID list provided for batch modification");
+    return {
+      code: 0,
+      message: "No users to process",
+      ttl: 1,
+      data: {
+        failed_fids: [],
+      },
+    };
   }
 
   try {
@@ -141,14 +157,17 @@ export const batchModifyUserRelation = async (
     formData.append("act", act.toString());
     formData.append("re_src", reSource.toString());
 
-    if (accessKey) {
-      formData.append("access_key", accessKey);
+    if (useAccessKey) {
+      formData.append("access_key", useAccessKey);
     }
 
-    if (csrf) {
-      formData.append("csrf", csrf);
+    if (useCsrf) {
+      formData.append("csrf", useCsrf);
     }
 
+    logger.debug(
+      `Batch modifying user relations: ${fids.length} users, Action ${act}`
+    );
     const response = await xClient.post<BatchRelationModifyResponse>(
       "/relation/batch/modify",
       formData,
@@ -158,6 +177,13 @@ export const batchModifyUserRelation = async (
         },
       }
     );
+
+    // Log failed operations if any
+    if (response.data.data?.failed_fids?.length > 0) {
+      logger.warn(
+        `Failed to modify relation for ${response.data.data.failed_fids.length} users: ${response.data.data.failed_fids.join(", ")}`
+      );
+    }
 
     return response.data;
   } catch (error) {
@@ -169,6 +195,11 @@ export const batchModifyUserRelation = async (
   }
 };
 
+/**
+ * Fetch a list of users that the specified user follows
+ * @param userid User's mid to get the following list for
+ * @returns Object containing array of user IDs that are followed by the specified user
+ */
 export const fetchUserRelation = async (
   userid: string
 ): Promise<{ attentions: bigint[] }> => {
@@ -202,4 +233,34 @@ export const fetchUserRelation = async (
     }
     throw new Error("API Error: Failed to fetch user relation");
   }
+};
+
+/**
+ * Check if the user relation modification feature is enabled and properly configured
+ * @returns Object with status and any missing configuration details
+ */
+export const checkUserRelationConfig = (): {
+  enabled: boolean;
+  hasAuth: boolean;
+  missingConfig: string[];
+} => {
+  const missingConfig: string[] = [];
+
+  if (!config.ENABLE_USER_RELATION) {
+    return {
+      enabled: false,
+      hasAuth: false,
+      missingConfig: ["ENABLE_USER_RELATION"],
+    };
+  }
+
+  if (!config.BILI_JCT && !config.BILI_ACCESS_KEY) {
+    missingConfig.push("BILI_JCT or BILI_ACCESS_KEY");
+  }
+
+  return {
+    enabled: true,
+    hasAuth: !missingConfig.includes("BILI_JCT or BILI_ACCESS_KEY"),
+    missingConfig,
+  };
 };
