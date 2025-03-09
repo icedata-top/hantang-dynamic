@@ -1,4 +1,4 @@
-import { xClient } from "./client";
+import { xClient, accountClient } from "./client";
 import { VideoTagResponse } from "../core/types";
 import { logger } from "../utils/logger";
 
@@ -166,5 +166,40 @@ export const batchModifyUserRelation = async (
       logger.error(error.stack);
     }
     throw new Error("API Error: Failed to batch modify user relations");
+  }
+};
+
+export const fetchUserRelation = async (
+  userid: string
+): Promise<{ attentions: bigint[] }> => {
+  try {
+    const response = await accountClient.get<{
+      ts: number;
+      code: number;
+      card: {
+        mid: string;
+        name: string;
+        face: string;
+        attention: number; // Total number of people user follows
+        fans: number; // Total number of user's followers
+        friend: number; // Total number of mutual follows
+        attentions: bigint[]; // Array of user IDs that this user follows
+      };
+    }>("/member/getCardByMid", {
+      params: { mid: userid },
+    });
+
+    if (response.data.code !== 0) {
+      throw new Error(`API Error: ${response.data.code}`);
+    }
+
+    // Return the relationship data with focus on attentions
+    return { attentions: response.data.card.attentions || [] };
+  } catch (error) {
+    logger.error("API Error:", error);
+    if (error instanceof Error) {
+      logger.error(error.stack);
+    }
+    throw new Error("API Error: Failed to fetch user relation");
   }
 };
