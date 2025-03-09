@@ -41,6 +41,7 @@ export async function processFollows(
   const records = parse(fileContent, {
     columns: true,
     skip_empty_lines: true,
+    delimiter: '\t',
     cast: (value, context) => {
       if (context.column === "user_id" || context.column === "video_count") {
         return parseInt(value, 10);
