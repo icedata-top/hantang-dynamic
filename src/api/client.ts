@@ -1,6 +1,6 @@
 import axios, { InternalAxiosRequestConfig, AxiosResponse } from "axios";
 import { config } from "../core/config";
-import { retryDelay } from "../utils/datetime";
+import { sleep, getRandomDelay, retryDelay } from "../utils/datetime";
 import { notify } from "../utils/notifier/notifier";
 import { StateManager } from "../core/state";
 import { logger } from "../utils/logger";
@@ -12,6 +12,28 @@ interface RequestConfig extends InternalAxiosRequestConfig {
 }
 
 const state = new StateManager();
+
+/**
+ * Simulate a browser visit to a specific page with appropriate referrer
+ * @param url The URL to visit
+ * @param referrer The referrer to set in headers
+ */
+export const simulateBrowserVisit = async (url: string, referrer?: string): Promise<void> => {
+  try {
+    await sleep(getRandomDelay(500, 1000));
+    
+    await axios.get(url, {
+      headers: {
+        'User-Agent': state.lastUA,
+        'Referer': referrer || 'https://www.bilibili.com/'
+      }
+    });
+    
+    logger.debug(`Simulated visit to ${url}`);
+  } catch (error) {
+    logger.warn(`Failed to simulate visit to ${url}: ${error}`);
+  }
+};
 
 const createClient = (baseURL: string) => {
   const instance = axios.create({

@@ -1,6 +1,7 @@
-import { xClient, accountClient } from "./client";
+import { xClient, accountClient, simulateBrowserVisit } from "./client";
 import { VideoTagResponse } from "../core/types";
 import { logger } from "../utils/logger";
+import { sleep, getRandomDelay } from "../utils/datetime";
 import { config } from "../core/config";
 
 // User relationship operation types
@@ -37,6 +38,32 @@ interface BatchRelationModifyResponse {
   };
 }
 
+/**
+ * Simulate a visit to a user's space page with appropriate referrer
+ * @param fid Target user's mid
+ * @param reSource Source of the operation
+ */
+const simulateUserPageVisit = async (
+  fid: number,
+  reSource: RelationSource
+): Promise<void> => {
+  const url = `https://space.bilibili.com/${fid}`;
+
+  let referrer = "https://www.bilibili.com/";
+  switch (reSource) {
+    case RelationSource.Video:
+      referrer = `https://www.bilibili.com/video/av${getRandomDelay(10000, 999999)}`;
+      break;
+    case RelationSource.Article:
+      referrer = `https://www.bilibili.com/read/cv${getRandomDelay(10000, 999999)}`;
+      break;
+    case RelationSource.ActivityPage:
+      referrer = "https://t.bilibili.com/";
+      break;
+  }
+
+  await simulateBrowserVisit(url, referrer);
+};
 /**
  * Modify relationship with a single user (follow, unfollow, block, etc.)
  * Uses configuration values for authentication if specific credentials aren't provided
