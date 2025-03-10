@@ -19,16 +19,19 @@ interface UserFollowData {
 /**
  * Process batch following of users from a CSV file
  * @param csvPath Optional path to CSV file, defaults to /data/follow.csv
- * @param batchSize Number of users to process in each batch (default: 5)
+ * @param batchSize Number of users to process in each batch (default: 50)
  * @param waitTime Time to wait between batches in ms (default: 40000)
+ * @param follow Toggle for follow or block (default: true(follow))
  */
 export async function processFollows(
   csvPath?: string,
   batchSize = 50,
-  waitTime = 40000
+  waitTime = 40000,
+  follow = true
 ): Promise<void> {
   // Default path or use provided path
-  const filePath = csvPath || join(process.cwd(), "data", "follow.csv");
+  const defaultFileName = follow ? "follow.csv" : "block.csv";
+  const filePath = csvPath || join(process.cwd(), "data", defaultFileName);
 
   if (!existsSync(filePath)) {
     logger.error(`CSV file not found at ${filePath}`);
@@ -36,12 +39,12 @@ export async function processFollows(
   }
 
   // Read CSV file
-  logger.info(`Reading user follow data from ${filePath}`);
+  logger.info(`Reading user data from ${filePath}`);
   const fileContent = readFileSync(filePath, "utf-8");
   const records = parse(fileContent, {
     columns: true,
     skip_empty_lines: true,
-    delimiter: '\t',
+    delimiter: "\t",
     cast: (value, context) => {
       if (context.column === "user_id" || context.column === "video_count") {
         return parseInt(value, 10);
@@ -51,6 +54,7 @@ export async function processFollows(
   }) as UserFollowData[];
 
   logger.info(`Found ${records.length} users in CSV file`);
+  const action = follow ? "follow" : "block";
 
   // Get current follows to avoid duplicates
   try {
@@ -65,34 +69,48 @@ export async function processFollows(
     );
     logger.info(`Currently following ${currentFollowIds.size} users`);
 
-    // Filter out users that are already being followed
-    const usersToFollow = records.filter(
-      (record) => !currentFollowIds.has(record.user_id)
-    );
-    if (usersToFollow.length > 4999 - currentFollowIds.size) {
-      logger.warn(
-        `Exceeding the maximum number of users that can be followed: ${usersToFollow.length} > ${
-          4999 - currentFollowIds.size
-        }`
+    // Filter users based on action
+    let usersToProcess = records;
+
+    if (follow) {
+      // For follow action, filter out users that are already being followed
+      usersToProcess = records.filter(
+        (record) => !currentFollowIds.has(record.user_id)
       );
-      usersToFollow.splice(4999 - currentFollowIds.size);
+
+      // Check if exceeding max follow limit
+      if (usersToProcess.length > 4999 - currentFollowIds.size) {
+        logger.warn(
+          `Exceeding the maximum number of users that can be followed: ${usersToProcess.length} > ${
+            4999 - currentFollowIds.size
+          }`
+        );
+        usersToProcess.splice(4999 - currentFollowIds.size);
+      }
     }
-    logger.info(`Found ${usersToFollow.length} new users to follow`);
+
+    logger.info(`Found ${usersToProcess.length} users to ${action}`);
 
     // Process in batches
-    for (let i = 0; i < usersToFollow.length; i += batchSize) {
-      const batchUsers = usersToFollow.slice(i, i + batchSize);
+    for (let i = 0; i < usersToProcess.length; i += batchSize) {
+      const batchUsers = usersToProcess.slice(i, i + batchSize);
       const userIds = batchUsers.map((u) => u.user_id);
 
       logger.info(
-        `Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(usersToFollow.length / batchSize)}`
+        `Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(usersToProcess.length / batchSize)}`
       );
-      logger.debug(`Following user IDs: ${userIds.join(", ")}`);
+      logger.debug(
+        `${action === "follow" ? "Following" : "Blocking"} user IDs: ${userIds.join(", ")}`
+      );
 
       try {
+        const actionType = follow
+          ? UserRelationAction.Follow
+          : UserRelationAction.Block;
+
         const result = await batchModifyUserRelation(
           userIds,
-          UserRelationAction.Follow,
+          actionType,
           RelationSource.Profile,
           undefined,
           undefined
@@ -100,23 +118,25 @@ export async function processFollows(
 
         if (result.code === 0) {
           if (result.data.failed_fids.length === 0) {
-            logger.info(`Successfully followed ${userIds.length} users`);
+            logger.info(
+              `Successfully ${action === "follow" ? "followed" : "blocked"} ${userIds.length} users`
+            );
           } else {
             logger.warn(
-              `Failed to follow ${result.data.failed_fids.length} users: ${result.data.failed_fids.join(", ")}`
+              `Failed to ${action} ${result.data.failed_fids.length} users: ${result.data.failed_fids.join(", ")}`
             );
           }
         } else {
           logger.error(`API Error: ${result.code} - ${result.message}`);
         }
       } catch (error) {
-        logger.error("Failed to follow users:", error);
+        logger.error(`Failed to ${action} users:`, error);
         if (error instanceof Error) {
           logger.error(error.stack);
         }
       }
 
-      if (i + batchSize < usersToFollow.length) {
+      if (i + batchSize < usersToProcess.length) {
         let waitTime_thistime = waitTime * (0.5 + Math.random());
         logger.info(
           `Waiting ${waitTime_thistime / 1000} seconds before next batch...`
@@ -125,9 +145,9 @@ export async function processFollows(
       }
     }
 
-    logger.info("Follow process completed");
+    logger.info(`${follow ? "Follow" : "Block"} process completed`);
   } catch (error) {
-    logger.error("Failed to process follows:", error);
+    logger.error(`Failed to process ${follow ? "follows" : "blocks"}:`, error);
     if (error instanceof Error) {
       logger.error(error.stack);
     }
