@@ -120,3 +120,5 @@ pnpm format
 # Package executables
 pnpm package
 ```
+
+Thanks a lot for the [bilibili-API-collect](https://github.com/SocialSisterYi/bilibili-API-collect) project.
