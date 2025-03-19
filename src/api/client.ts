@@ -80,7 +80,8 @@ const createClient = (baseURL: string) => {
 
       if (response.status == ApiErrorResponseCode.IpBanned) {
         logger.error(
-          "CRITICAL ERROR: IP has been banned! Terminating process."
+          "CRITICAL ERROR: IP has been banned! Terminating process." +
+            "致命错误：IP 被封禁！正在终止进程。"
         );
         process.exit(2);
       }
@@ -97,7 +98,8 @@ const createClient = (baseURL: string) => {
 
         if (response.data.code === ApiErrorCode.CookieExpired) {
           logger.error(
-            "CRITICAL ERROR: Cookie has expired! Authentication required. Terminating process."
+            "CRITICAL ERROR: Cookie has expired! Authentication required. Terminating process.\n" +
+              "致命错误：Cookie 已过期！请重新登录。正在终止进程。"
           );
           process.exit(1);
         }
