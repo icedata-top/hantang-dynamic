@@ -9,7 +9,7 @@
     "lint": "eslint . --ext .ts",
     "format": "prettier --write . --ignore-path .prettierignore",
     "package": "pkg dist/index.js --out-path dist/executables/ --compress Gzip --targets node20-win-x64,node20-macos-x64,node20-macos-arm64,node20-linux-x64,node20-linux-arm64 --no-bytecode --public",
-    "follow": "tsx src/scripts/follow-users.ts"
+    "relation": "tsx src/scripts/manage-relations.ts"
   },
   "dependencies": {
     "@ahmedrangel/rand-user-agent": "^2.0.23",

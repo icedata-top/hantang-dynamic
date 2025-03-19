@@ -5,74 +5,143 @@ import {
   RelationSource,
   batchModifyUserRelation,
   fetchUserRelation,
+  checkUserRelationConfig,
 } from "../api/relation";
 import { sleep, retryDelay } from "./datetime";
 import { logger } from "./logger";
 import { config } from "../core/config";
 import { join } from "path";
 
-interface UserFollowData {
+interface UserRelationData {
   user_id: number;
-  video_count: number;
+  video_count?: number;
+  reason?: string;
 }
 
 /**
- * Process batch following of users from a CSV file
- * @param csvPath Optional path to CSV file, defaults to /data/follow.csv
- * @param batchSize Number of users to process in each batch (default: 50)
- * @param waitTime Time to wait between batches in ms (default: 40000)
- * @param follow Toggle for follow or block (default: true(follow))
+ * User relation manager for following, unfollowing, blocking and unblocking operations
  */
-export async function processFollows(
-  csvPath?: string,
-  batchSize = 50,
-  waitTime = 40000,
-  follow = true
-): Promise<void> {
-  // Default path or use provided path
-  const defaultFileName = follow ? "follow.csv" : "block.csv";
-  const filePath = csvPath || join(process.cwd(), "data", defaultFileName);
-
-  if (!existsSync(filePath)) {
-    logger.error(`CSV file not found at ${filePath}`);
-    return;
+export class UserRelationManager {
+  /**
+   * Get user-friendly name for a relation action
+   */
+  static getActionName(action: UserRelationAction): string {
+    switch (action) {
+      case UserRelationAction.Follow:
+        return "follow";
+      case UserRelationAction.Unfollow:
+        return "unfollow";
+      case UserRelationAction.Block:
+        return "block";
+      case UserRelationAction.Unblock:
+        return "unblock";
+      case UserRelationAction.RemoveFollower:
+        return "remove follower";
+      default:
+        return "unknown action";
+    }
   }
 
-  // Read CSV file
-  logger.info(`Reading user data from ${filePath}`);
-  const fileContent = readFileSync(filePath, "utf-8");
-  const records = parse(fileContent, {
-    columns: true,
-    skip_empty_lines: true,
-    delimiter: "\t",
-    cast: (value, context) => {
-      if (context.column === "user_id" || context.column === "video_count") {
-        return parseInt(value, 10);
+  /**
+   * Get default CSV filename for a relation action
+   */
+  static getDefaultFilename(action: UserRelationAction): string {
+    switch (action) {
+      case UserRelationAction.Follow:
+        return "follow.csv";
+      case UserRelationAction.Unfollow:
+        return "unfollow.csv";
+      case UserRelationAction.Block:
+        return "block.csv";
+      case UserRelationAction.Unblock:
+        return "unblock.csv";
+      case UserRelationAction.RemoveFollower:
+        return "remove-followers.csv";
+      default:
+        return "users.csv";
+    }
+  }
+
+  /**
+   * Process user relations based on specified action type
+   * @param actionType The relation action to perform
+   * @param csvPath Optional path to CSV file, defaults based on action type
+   * @param batchSize Number of users to process in each batch
+   * @param waitTime Base time to wait between batches in ms
+   */
+  static async processUserRelations(
+    actionType: UserRelationAction,
+    csvPath?: string,
+    batchSize = 50,
+    waitTime = 40000
+  ): Promise<void> {
+    // Validate configuration
+    const configStatus = checkUserRelationConfig();
+    if (!configStatus.enabled || !configStatus.hasAuth) {
+      logger.error(
+        `User relation feature is not properly configured: ${configStatus.missingConfig.join(", ")}`
+      );
+      return;
+    }
+
+    const actionName = this.getActionName(actionType);
+    const defaultFileName = this.getDefaultFilename(actionType);
+
+    // Default path or use provided path
+    const filePath = csvPath || join(process.cwd(), "data", defaultFileName);
+
+    if (!existsSync(filePath)) {
+      logger.error(`CSV file not found at ${filePath}`);
+      return;
+    }
+
+    // Read CSV file
+    logger.info(
+      `Reading user data for ${actionName} operation from ${filePath}`
+    );
+    const fileContent = readFileSync(filePath, "utf-8");
+    const records = parse(fileContent, {
+      columns: true,
+      skip_empty_lines: true,
+      delimiter: "\t",
+      cast: (value, context) => {
+        if (context.column === "user_id" || context.column === "video_count") {
+          return parseInt(value, 10);
+        }
+        return value;
+      },
+    }) as UserRelationData[];
+
+    logger.info(`Found ${records.length} users in CSV file`);
+
+    // Get current follows if needed for filtering
+    let currentFollowIds: Set<number> = new Set();
+
+    if (
+      actionType === UserRelationAction.Follow ||
+      actionType === UserRelationAction.Unfollow
+    ) {
+      try {
+        const currentFollows = await retryDelay(
+          () => fetchUserRelation(config.BILIBILI_UID),
+          config.API_RETRY_TIMES,
+          config.API_WAIT_TIME
+        );
+
+        currentFollowIds = new Set(
+          currentFollows.attentions.map((id) => Number(id))
+        );
+        logger.info(`Currently following ${currentFollowIds.size} users`);
+      } catch (error) {
+        logger.error("Failed to fetch current follow list:", error);
+        return;
       }
-      return value;
-    },
-  }) as UserFollowData[];
-
-  logger.info(`Found ${records.length} users in CSV file`);
-  const action = follow ? "follow" : "block";
-
-  // Get current follows to avoid duplicates
-  try {
-    const currentFollows = await retryDelay(
-      () => fetchUserRelation(config.BILIBILI_UID),
-      config.API_RETRY_TIMES,
-      config.API_WAIT_TIME
-    );
-
-    const currentFollowIds = new Set(
-      currentFollows.attentions.map((id) => Number(id))
-    );
-    logger.info(`Currently following ${currentFollowIds.size} users`);
+    }
 
     // Filter users based on action
     let usersToProcess = records;
 
-    if (follow) {
+    if (actionType === UserRelationAction.Follow) {
       // For follow action, filter out users that are already being followed
       usersToProcess = records.filter(
         (record) => !currentFollowIds.has(record.user_id)
@@ -85,11 +154,20 @@ export async function processFollows(
             4999 - currentFollowIds.size
           }`
         );
-        usersToProcess.splice(4999 - currentFollowIds.size);
+        usersToProcess = usersToProcess.slice(0, 4999 - currentFollowIds.size);
       }
+    } else if (actionType === UserRelationAction.Unfollow) {
+      // For unfollow action, only process users that are currently being followed
+      usersToProcess = records.filter((record) =>
+        currentFollowIds.has(record.user_id)
+      );
     }
 
-    logger.info(`Found ${usersToProcess.length} users to ${action}`);
+    logger.info(`Found ${usersToProcess.length} users to ${actionName}`);
+    if (usersToProcess.length === 0) {
+      logger.info(`No users to ${actionName}, operation completed`);
+      return;
+    }
 
     // Process in batches
     for (let i = 0; i < usersToProcess.length; i += batchSize) {
@@ -100,14 +178,10 @@ export async function processFollows(
         `Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(usersToProcess.length / batchSize)}`
       );
       logger.debug(
-        `${action === "follow" ? "Following" : "Blocking"} user IDs: ${userIds.join(", ")}`
+        `${actionName.charAt(0).toUpperCase() + actionName.slice(1)}ing user IDs: ${userIds.join(", ")}`
       );
 
       try {
-        const actionType = follow
-          ? UserRelationAction.Follow
-          : UserRelationAction.Block;
-
         const result = await batchModifyUserRelation(
           userIds,
           actionType,
@@ -118,38 +192,33 @@ export async function processFollows(
 
         if (result.code === 0) {
           if (result.data.failed_fids.length === 0) {
-            logger.info(
-              `Successfully ${action === "follow" ? "followed" : "blocked"} ${userIds.length} users`
-            );
+            logger.info(`Successfully ${actionName}ed ${userIds.length} users`);
           } else {
             logger.warn(
-              `Failed to ${action} ${result.data.failed_fids.length} users: ${result.data.failed_fids.join(", ")}`
+              `Failed to ${actionName} ${result.data.failed_fids.length} users: ${result.data.failed_fids.join(", ")}`
             );
           }
         } else {
           logger.error(`API Error: ${result.code} - ${result.message}`);
         }
       } catch (error) {
-        logger.error(`Failed to ${action} users:`, error);
+        logger.error(`Failed to ${actionName} users:`, error);
         if (error instanceof Error) {
           logger.error(error.stack);
         }
       }
 
       if (i + batchSize < usersToProcess.length) {
-        let waitTime_thistime = waitTime * (0.5 + Math.random());
+        let waitTimeThisBatch = waitTime * (0.5 + Math.random());
         logger.info(
-          `Waiting ${waitTime_thistime / 1000} seconds before next batch...`
+          `Waiting ${Math.round(waitTimeThisBatch / 1000)} seconds before next batch...`
         );
-        await sleep(waitTime_thistime);
+        await sleep(waitTimeThisBatch);
       }
     }
 
-    logger.info(`${follow ? "Follow" : "Block"} process completed`);
-  } catch (error) {
-    logger.error(`Failed to process ${follow ? "follows" : "blocks"}:`, error);
-    if (error instanceof Error) {
-      logger.error(error.stack);
-    }
+    logger.info(
+      `${actionName.charAt(0).toUpperCase() + actionName.slice(1)} process completed`
+    );
   }
 }
