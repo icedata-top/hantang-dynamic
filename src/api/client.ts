@@ -14,6 +14,7 @@ interface RequestConfig extends InternalAxiosRequestConfig {
 export enum ApiErrorCode {
   Success = 0,
   CookieExpired = 4100000, // Cookie/authentication expired
+  RiskControlFailed = -352, // 风控失败
 }
 
 export enum ApiErrorResponseCode {
@@ -102,6 +103,14 @@ const createClient = (baseURL: string) => {
               "致命错误：Cookie 已过期！请重新登录。正在终止进程。"
           );
           process.exit(1);
+        }
+
+        if (response.data.code === ApiErrorCode.RiskControlFailed) {
+          logger.error(
+            "CRITICAL ERROR: Risk control failed! Terminating process.\n" +
+              "致命错误：风控失败！正在终止进程。"
+          );
+          process.exit(3);
         }
 
         return Promise.reject(
