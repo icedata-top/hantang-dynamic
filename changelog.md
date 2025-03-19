@@ -119,3 +119,13 @@ feat: add content blacklist configuration and filtering logic
 ## 2.11.0
 
 feat: add support for relation management, including following, unfollowing, and banning users in batch
+
+## 2.12.0
+
+feat: implement WBI key management and signing for API requests
+feat: implement BiliTicket generation and management for API requests
+refactor: streamline card processing logic and enhance content filtering
+chore: add risk control error handling
+fix: add error logging in multiple languages for cookie expiration
+feat: add API error handling for cookie expiration and IP banning
+feat: add content whitelist and update blacklist handling in configuration
