@@ -1,6 +1,7 @@
-import { writeFileSync, existsSync, mkdirSync } from "fs";
+import { writeFileSync, existsSync, mkdirSync, readFileSync } from "fs";
 import { dirname } from "path";
-import { parse } from "json2csv";
+import { Parser } from '@json2csv/plainjs';
+import { parse as parseCSV } from "csv-parse/sync"; // 新增导入
 import { VideoData } from "../../core/types";
 import { logger } from "../logger";
 import { config } from "../../core/config";
@@ -27,9 +28,43 @@ export const saveAsCSV = (data: VideoData[]) => {
       mkdirSync(dirPath, { recursive: true });
     }
 
-    const csv = parse(data, { fields });
+    let allData: VideoData[] = [...data];
+
+    if (existsSync(filepath)) {
+      const existingContent = readFileSync(filepath, 'utf-8');
+      const contentWithoutBOM = existingContent.charCodeAt(0) === 0xFEFF 
+        ? existingContent.substring(1) 
+        : existingContent;
+      
+      if (contentWithoutBOM.trim()) {
+        try {
+          const existingData = parseCSV(contentWithoutBOM, {
+            columns: true,
+            skip_empty_lines: true
+          }) as VideoData[];
+          
+          const dataMap = new Map<string, VideoData>();
+          
+          existingData.forEach(item => {
+            if (item.bvid) {
+              dataMap.set(item.bvid, item);
+            }
+          });
+          
+          data.forEach(item => {
+            dataMap.set(item.bvid, item);
+          });
+          
+          allData = Array.from(dataMap.values());
+        } catch (parseError) {
+          logger.error("解析现有CSV文件失败:", parseError);
+        }
+      }
+    }
+    const parser = new Parser({ fields });
+    const csv = parser.parse(allData);
     writeFileSync(filepath, `\ufeff${csv}`, "utf-8");
-    logger.info(`已保存 ${data.length} 条记录到 ${filepath}`);
+    logger.info(`已累加保存 ${data.length} 条新记录，共 ${allData.length} 条记录到 ${filepath}`);
     return true;
   } catch (error) {
     logger.error("CSV 保存失败:", error);

@@ -14,10 +14,10 @@
   "dependencies": {
     "@ahmedrangel/rand-user-agent": "^2.0.23",
     "@duckdb/node-api": "1.2.1-alpha.16",
-    "axios": "^1.8.2",
+    "@json2csv/plainjs": "^7.0.6",
+    "axios": "^1.8.3",
     "csv-parse": "^5.6.0",
     "dotenv": "^16.4.7",
-    "json2csv": "6.0.0-alpha.2",
     "mysql2": "^3.13.0",
     "nodemailer": "^6.10.0",
     "zod": "^3.24.2"
@@ -26,8 +26,8 @@
     "@types/json2csv": "^5.0.7",
     "@types/node": "^20.17.24",
     "@types/nodemailer": "^6.4.17",
-    "@typescript-eslint/eslint-plugin": "^8.26.0",
-    "@typescript-eslint/parser": "^8.26.0",
+    "@typescript-eslint/eslint-plugin": "^8.26.1",
+    "@typescript-eslint/parser": "^8.26.1",
     "@vercel/ncc": "^0.38.3",
     "@yao-pkg/pkg": "^6.3.2",
     "eslint": "^9.22.0",
