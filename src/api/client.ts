@@ -9,6 +9,7 @@ import { notify } from "../utils/notifier/notifier";
 import { StateManager } from "../core/state";
 import { logger } from "../utils/logger";
 import { generateBiliTicket } from "../utils/biliTicket";
+import { buildSignedQuery } from "../utils/wbiSignature";
 
 interface RequestConfig extends InternalAxiosRequestConfig {
   metadata?: {
@@ -84,7 +85,7 @@ export function createClient(baseURL: string): AxiosInstance {
         (response.config as RequestConfig).metadata?.startTime ?? 0;
       const timeUsed = endTime - startTime;
       const params = response.config.params
-        ? ` params=${JSON.stringify(response.config.params)}`
+        ? ` params=${buildSignedQuery(response.config.params)}`
         : "";
       const data = response.config.data
         ? ` data=${JSON.stringify(response.config.data)}`

@@ -9,6 +9,9 @@ interface State {
   lastUA: string;
   biliTicket?: string;
   ticketExpiresAt?: number;
+  imgKey?: string;
+  subKey?: string;
+  wbiKeysExpiresAt?: number;
 }
 
 const defaultState: State = {
@@ -53,6 +56,9 @@ export class StateManager {
         lastUA: loadedState.lastUA || randUA(),
         biliTicket: loadedState.biliTicket,
         ticketExpiresAt: loadedState.ticketExpiresAt,
+        imgKey: loadedState.imgKey,
+        subKey: loadedState.subKey,
+        wbiKeysExpiresAt: loadedState.wbiKeysExpiresAt,
       };
     } catch (error) {
       logger.error("Error loading state:", error);
@@ -90,6 +96,18 @@ export class StateManager {
     return this.state.ticketExpiresAt;
   }
 
+  get imgKey() {
+    return this.state.imgKey;
+  }
+
+  get subKey() {
+    return this.state.subKey;
+  }
+
+  get wbiKeysExpiresAt() {
+    return this.state.wbiKeysExpiresAt;
+  }
+
   updateUA() {
     this.state.lastUA = randUA();
     this.saveState();
@@ -114,9 +132,24 @@ export class StateManager {
     return (this.state.ticketExpiresAt - 3600) > Math.floor(Date.now() / 1000); // 1 hour buffer
   }
 
+  isWbiKeysValid(): boolean {
+    if (!this.state.imgKey || !this.state.subKey || !this.state.wbiKeysExpiresAt) {
+      return false;
+    }
+    return Date.now() / 1000 < this.state.wbiKeysExpiresAt;
+  }
+
   updateTicket(ticket: string, expiresAt: number) {
     this.state.biliTicket = ticket;
     this.state.ticketExpiresAt = expiresAt;
     this.saveState();
+  }
+
+  updateWbiKeys(imgKey: string, subKey: string, expiresAt: number) {
+    this.state.imgKey = imgKey;
+    this.state.subKey = subKey;
+    this.state.wbiKeysExpiresAt = expiresAt;
+    this.saveState();
+    logger.debug(`WBI keys updated, expires at: ${new Date(expiresAt * 1000).toLocaleString()}`);
   }
 }
