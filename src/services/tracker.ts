@@ -5,6 +5,7 @@ import { config } from "../core/config";
 import { sleep } from "../utils/datetime";
 import { logger } from "../utils/logger";
 import { filterAndProcessDynamics } from "../utils/dynamic";
+import { generateBiliTicket } from "../utils/biliTicket";
 import type { BiliDynamicCard } from "../core/types";
 
 export class DynamicTracker {
@@ -14,6 +15,20 @@ export class DynamicTracker {
   async start() {
     if (this.isRunning) return;
     this.isRunning = true;
+
+    const stateManager = new StateManager();
+    if (!stateManager.isTicketValid()) {
+      logger.debug("Generating initial BiliTicket...");
+      const ticketData = await generateBiliTicket();
+      if (ticketData) {
+        stateManager.updateTicket(ticketData.ticket, ticketData.expiresAt);
+        logger.info("BiliTicket initialized successfully");
+      } else {
+        logger.debug("Failed to initialize BiliTicket, continuing without it");
+      }
+    } else {
+      logger.debug("Using existing valid BiliTicket");
+    }
 
     while (this.isRunning) {
       try {
@@ -45,7 +60,7 @@ export class DynamicTracker {
     if (Dynamics.length) {
       await this.processDynamics(Dynamics);
       this.state.updateLastDynamicId(
-        Math.max(...Dynamics.map((d) => Number(d.desc.dynamic_id))),
+        Math.max(...Dynamics.map((d) => Number(d.desc.dynamic_id)))
       );
     }
   }

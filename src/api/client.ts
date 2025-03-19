@@ -1,9 +1,14 @@
-import axios, { InternalAxiosRequestConfig, AxiosResponse } from "axios";
+import axios, {
+  AxiosInstance,
+  InternalAxiosRequestConfig,
+  AxiosResponse,
+} from "axios";
 import { config } from "../core/config";
 import { sleep, getRandomDelay, retryDelay } from "../utils/datetime";
 import { notify } from "../utils/notifier/notifier";
 import { StateManager } from "../core/state";
 import { logger } from "../utils/logger";
+import { generateBiliTicket } from "../utils/biliTicket";
 
 interface RequestConfig extends InternalAxiosRequestConfig {
   metadata?: {
@@ -48,21 +53,31 @@ export const simulateBrowserVisit = async (
   }
 };
 
-const createClient = (baseURL: string) => {
-  const instance = axios.create({
+export function createClient(baseURL: string): AxiosInstance {
+  const stateManager = new StateManager();
+  const ua = stateManager.lastUA;
+
+  const client = axios.create({
     baseURL,
     headers: {
-      Referer: `https://space.bilibili.com/${config.BILIBILI_UID}/`,
-      Cookie: `SESSDATA=${config.SESSDATA}`,
-      "User-Agent": state.lastUA,
+      "User-Agent": ua,
+      Cookie: getCookieString(stateManager),
     },
   });
 
-  instance.interceptors.request.use((config: RequestConfig) => {
-    config.metadata = { startTime: Date.now() };
+  client.interceptors.request.use(async (config) => {
+    if (!stateManager.isTicketValid()) {
+      logger.info("BiliTicket expired or not set, requesting a new one");
+      const ticketData = await generateBiliTicket();
+      if (ticketData) {
+        stateManager.updateTicket(ticketData.ticket, ticketData.expiresAt);
+        config.headers.Cookie = getCookieString(stateManager);
+      }
+    }
     return config;
   });
-  instance.interceptors.response.use(
+
+  client.interceptors.response.use(
     (response: AxiosResponse) => {
       const endTime = Date.now();
       const startTime =
@@ -123,7 +138,7 @@ const createClient = (baseURL: string) => {
     async (error) => {
       if (!error.response) {
         return retryDelay(
-          () => instance(error.config),
+          () => client(error.config),
           config.API_RETRY_TIMES,
           config.API_WAIT_TIME
         );
@@ -136,8 +151,22 @@ const createClient = (baseURL: string) => {
     }
   );
 
-  return instance;
-};
+  return client;
+}
+
+function getCookieString(stateManager: StateManager): string {
+  let cookie = `SESSDATA=${config.SESSDATA}`;
+
+  if (config.BILI_JCT) {
+    cookie += `; bili_jct=${config.BILI_JCT}`;
+  }
+
+  if (stateManager.biliTicket) {
+    cookie += `; bili_ticket=${stateManager.biliTicket}`;
+  }
+
+  return cookie;
+}
 
 export const dynamicClient = createClient(
   "https://api.vc.bilibili.com/dynamic_svr/v1/dynamic_svr"
