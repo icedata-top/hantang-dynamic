@@ -235,3 +235,131 @@ export interface VideoData {
   type_id: number;
   user_id: bigint;
 }
+
+export interface BiliVideoOwner {
+  mid: number;
+  name: string;
+  face: string;
+}
+
+export interface BiliVideoStat {
+  aid: number;
+  view: number;
+  danmaku: number;
+  reply: number;
+  favorite: number;
+  coin: number;
+  share: number;
+  like: number;
+  dislike: number;
+  now_rank: number;
+  his_rank: number;
+  evaluation?: string;
+  vt?: number;
+}
+
+export interface BiliVideoDimension {
+  width: number;
+  height: number;
+  rotate: number;
+}
+
+export interface BiliVideoRights {
+  bp: number;
+  elec: number;
+  download: number;
+  movie: number;
+  pay: number;
+  hd5: number;
+  no_reprint: number;
+  autoplay: number;
+  ugc_pay: number;
+  is_cooperation: number;
+  ugc_pay_preview: number;
+  no_background: number;
+  clean_mode: number;
+  is_stein_gate: number;
+  is_360: number;
+  no_share: number;
+  arc_pay: number;
+  free_watch: number;
+}
+
+export interface BiliVideoPage {
+  cid: number;
+  page: number;
+  from: string;
+  part: string;
+  duration: number;
+  vid: string;
+  weblink: string;
+  dimension: BiliVideoDimension;
+  first_frame?: string;
+}
+
+export interface BiliVideoDetailResponse {
+  code: number;
+  message: string;
+  ttl: number;
+  data: {
+    bvid: string;
+    aid: number;
+    videos: number;
+    tid: number;
+    tname: string;
+    copyright: number;
+    pic: string;
+    title: string;
+    pubdate: number;
+    ctime: number;
+    desc: string;
+    desc_v2?: Array<{
+      raw_text: string;
+      type: number;
+      biz_id: number;
+    }>;
+    state: number;
+    duration: number;
+    rights: BiliVideoRights;
+    owner: BiliVideoOwner;
+    stat: BiliVideoStat;
+    dynamic: string;
+    cid: number;
+    dimension: BiliVideoDimension;
+    pages: BiliVideoPage[];
+    subtitle?: {
+      allow_submit: boolean;
+      list: any[];
+    };
+    staff?: any[];
+    user_garb?: {
+      url_image_ani_cut: string;
+    };
+    honor_reply?: {
+      honor: any[];
+    };
+    like_icon?: string;
+    need_jump_bv?: boolean;
+    disable_show_up_info?: boolean;
+    is_story_play?: boolean;
+    argue_info?: {
+      argue_msg: string;
+      argue_link: string;
+      argue_type: number;
+    };
+  };
+}
+
+export interface BiliVideoDescResponse {
+  code: number;
+  message: string;
+  ttl: number;
+  data: string;
+}
+
+export interface BiliVideoPageListResponse {
+  code: number;
+  message: string;
+  ttl: number;
+  data: BiliVideoPage[];
+}
