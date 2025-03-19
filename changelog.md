@@ -129,3 +129,12 @@ chore: add risk control error handling
 fix: add error logging in multiple languages for cookie expiration
 feat: add API error handling for cookie expiration and IP banning
 feat: add content whitelist and update blacklist handling in configuration
+
+### 2.12.1
+
+fix: fix duckdb timestamp issue
+fix: csv are now growing but not overwriting
+
+### 2.12.2
+
+feat: add support for detailed video information
