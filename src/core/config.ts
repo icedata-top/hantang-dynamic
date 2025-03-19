@@ -17,7 +17,8 @@ const envSchema = z.object({
   ENABLE_TAG_FETCH: z.coerce.boolean().default(false),
   ENABLE_USER_RELATION: z.coerce.boolean().default(false), // Toggle for user relation features
   TYPE_ID_WHITE_LIST: z.array(z.number()).default([]),
-  CONTENT_BLACKLIST: z.array(z.string()).default([]), // Add content blacklist keywords
+  CONTENT_BLACK_LIST: z.array(z.string()).default([]), // Add content blacklist keywords
+  CONTENT_WHITE_LIST: z.array(z.string()).default([]), // Add content whitelist keywords
 
   MYSQL_IP: z.string().optional(),
   MYSQL_PORT: z.coerce.number().optional(),
@@ -63,8 +64,11 @@ export const config: EnvConfig = envSchema.parse({
   TYPE_ID_WHITE_LIST: process.env.TYPE_ID_WHITE_LIST
     ? process.env.TYPE_ID_WHITE_LIST.split(",").map(Number)
     : [],
-  CONTENT_BLACKLIST: process.env.CONTENT_BLACKLIST
-    ? process.env.CONTENT_BLACKLIST.split(",").map(s => s.trim())
+  CONTENT_BLACK_LIST: process.env.CONTENT_BLACK_LIST
+    ? process.env.CONTENT_BLACK_LIST.split(",").map(s => s.trim())
+    : [],
+  CONTENT_WHITE_LIST: process.env.CONTENT_WHITE_LIST
+    ? process.env.CONTENT_WHITE_LIST.split(",").map(s => s.trim())
     : [],
   MYSQL_IP: process.env.MYSQL_IP,
   MYSQL_PORT: process.env.MYSQL_PORT,
