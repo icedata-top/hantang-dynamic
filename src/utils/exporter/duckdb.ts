@@ -44,7 +44,7 @@ export const saveToDuckDB = async (data: VideoData[]) => {
       appender.appendBigInt(BigInt(record.aid));
       appender.appendVarchar(record.bvid);
       appender.appendTimestamp(
-        new DuckDBTimestampValue(BigInt(record.pubdate) * 1000n),
+        new DuckDBTimestampValue(BigInt(record.pubdate * 1000000)),
       );
       appender.appendVarchar(record.title);
       appender.appendVarchar(record.description);
