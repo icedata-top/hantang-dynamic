@@ -38,7 +38,7 @@ export const saveToDuckDB = async (data: VideoData[]) => {
       await connection.run(`DELETE FROM videos WHERE aid IN (${aids})`);
     }
 
-    const appender = await connection.createAppender("main", "videos");
+    const appender = await connection.createAppender("videos");
 
     for (const record of data) {
       appender.appendBigInt(BigInt(record.aid));
