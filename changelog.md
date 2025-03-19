@@ -115,3 +115,7 @@ Feat: Add support for Batch Follow
 ## 2.10.0
 
 feat: add content blacklist configuration and filtering logic
+
+## 2.11.0
+
+feat: add support for relation management, including following, unfollowing, and banning users in batch
