@@ -43,6 +43,9 @@ const envSchema = z.object({
   DUCKDB_PATH: z
     .string()
     .default("./data/uid" + process.env.BILIBILI_UID + ".duckdb"),
+  AIDS_DUCKDB_PATH: z
+    .string()
+    .default("./data/aids.duckdb"),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
@@ -89,4 +92,5 @@ export const config: EnvConfig = envSchema.parse({
 
   CSV_PATH: process.env.CSV_PATH,
   DUCKDB_PATH: process.env.DUCKDB_PATH,
+  AIDS_DUCKDB_PATH: process.env.AIDS_DUCKDB_PATH,
 });
