@@ -2,7 +2,8 @@ import { BiliDynamicCard, VideoData } from "../core/types";
 import { getDynamic } from "../api/dynamic";
 import { sleep } from "./datetime";
 import { config } from "../core/config";
-import { processCard } from "./helpers";
+import { processCard } from "./processCard";
+import { filterVideo } from "./filter";
 import { logger } from "./logger";
 
 export async function filterAndProcessDynamics(
@@ -18,13 +19,13 @@ export async function filterAndProcessDynamics(
   videoDynamics = removeDuplicateDynamics(videoDynamics);
   logger.info(`Processing ${videoDynamics.length} unique dynamics`);
 
-  // Process each dynamic into video data
   for (const dynamic of videoDynamics) {
-    const processedData = await processCard(dynamic);
-    if (!processedData) continue;
-    logger.debug(`Processed ${processedData.bvid}: ${processedData.title}`);
-    videoData.push(processedData);
+    videoData.push(await processCard(dynamic));
   }
+
+  videoData = (await Promise.all(videoData.map(filterVideo))).filter(
+    (video): video is VideoData => video !== null,
+  );
 
   return videoData;
 }
