@@ -1,8 +1,8 @@
 import crypto from "crypto";
 import axios from "axios";
-import { logger } from "./logger";
-import { StateManager } from "../core/state";
-import { config } from "../core/config";
+import { logger } from "../../utils/logger";
+import { StateManager } from "../../core/state";
+import { config } from "../../core/config";
 
 // Mixing key encoding table for WBI signature
 const MIXIN_KEY_ENC_TAB = [

@@ -8,8 +8,8 @@ import { sleep, getRandomDelay, retryDelay } from "../utils/datetime";
 import { notify } from "../utils/notifier/notifier";
 import { StateManager } from "../core/state";
 import { logger } from "../utils/logger";
-import { generateBiliTicket } from "../utils/biliTicket";
-import { buildSignedQuery } from "../utils/wbiSignature";
+import { generateBiliTicket } from "./signatures/biliTicket";
+import { buildSignedQuery } from "./signatures/wbiSignature";
 
 interface RequestConfig extends InternalAxiosRequestConfig {
   metadata?: {

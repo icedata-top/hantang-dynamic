@@ -5,7 +5,7 @@ import { config } from "../core/config";
 import { sleep } from "../utils/datetime";
 import { logger } from "../utils/logger";
 import { filterAndProcessDynamics } from "../utils/dynamic";
-import { generateBiliTicket } from "../utils/biliTicket";
+import { generateBiliTicket } from "../api/signatures/biliTicket";
 import type { BiliDynamicCard } from "../core/types";
 
 export class DynamicTracker {
