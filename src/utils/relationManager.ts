@@ -73,13 +73,13 @@ export class UserRelationManager {
     actionType: UserRelationAction,
     csvPath?: string,
     batchSize = 50,
-    waitTime = 40000
+    waitTime = 40000,
   ): Promise<void> {
     // Validate configuration
     const configStatus = checkUserRelationConfig();
     if (!configStatus.enabled || !configStatus.hasAuth) {
       logger.error(
-        `User relation feature is not properly configured: ${configStatus.missingConfig.join(", ")}`
+        `User relation feature is not properly configured: ${configStatus.missingConfig.join(", ")}`,
       );
       return;
     }
@@ -97,7 +97,7 @@ export class UserRelationManager {
 
     // Read CSV file
     logger.info(
-      `Reading user data for ${actionName} operation from ${filePath}`
+      `Reading user data for ${actionName} operation from ${filePath}`,
     );
     const fileContent = readFileSync(filePath, "utf-8");
     const records = parse(fileContent, {
@@ -125,11 +125,11 @@ export class UserRelationManager {
         const currentFollows = await retryDelay(
           () => fetchUserRelation(config.BILIBILI_UID),
           config.API_RETRY_TIMES,
-          config.API_WAIT_TIME
+          config.API_WAIT_TIME,
         );
 
         currentFollowIds = new Set(
-          currentFollows.attentions.map((id) => Number(id))
+          currentFollows.attentions.map((id) => Number(id)),
         );
         logger.info(`Currently following ${currentFollowIds.size} users`);
       } catch (error) {
@@ -144,7 +144,7 @@ export class UserRelationManager {
     if (actionType === UserRelationAction.Follow) {
       // For follow action, filter out users that are already being followed
       usersToProcess = records.filter(
-        (record) => !currentFollowIds.has(record.user_id)
+        (record) => !currentFollowIds.has(record.user_id),
       );
 
       // Check if exceeding max follow limit
@@ -152,14 +152,14 @@ export class UserRelationManager {
         logger.warn(
           `Exceeding the maximum number of users that can be followed: ${usersToProcess.length} > ${
             4999 - currentFollowIds.size
-          }`
+          }`,
         );
         usersToProcess = usersToProcess.slice(0, 4999 - currentFollowIds.size);
       }
     } else if (actionType === UserRelationAction.Unfollow) {
       // For unfollow action, only process users that are currently being followed
       usersToProcess = records.filter((record) =>
-        currentFollowIds.has(record.user_id)
+        currentFollowIds.has(record.user_id),
       );
     }
 
@@ -175,10 +175,10 @@ export class UserRelationManager {
       const userIds = batchUsers.map((u) => u.user_id);
 
       logger.info(
-        `Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(usersToProcess.length / batchSize)}`
+        `Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(usersToProcess.length / batchSize)}`,
       );
       logger.debug(
-        `${actionName.charAt(0).toUpperCase() + actionName.slice(1)}ing user IDs: ${userIds.join(", ")}`
+        `${actionName.charAt(0).toUpperCase() + actionName.slice(1)}ing user IDs: ${userIds.join(", ")}`,
       );
 
       try {
@@ -187,7 +187,7 @@ export class UserRelationManager {
           actionType,
           RelationSource.Profile,
           undefined,
-          undefined
+          undefined,
         );
 
         if (result.code === 0) {
@@ -195,7 +195,7 @@ export class UserRelationManager {
             logger.info(`Successfully ${actionName}ed ${userIds.length} users`);
           } else {
             logger.warn(
-              `Failed to ${actionName} ${result.data.failed_fids.length} users: ${result.data.failed_fids.join(", ")}`
+              `Failed to ${actionName} ${result.data.failed_fids.length} users: ${result.data.failed_fids.join(", ")}`,
             );
           }
         } else {
@@ -211,14 +211,14 @@ export class UserRelationManager {
       if (i + batchSize < usersToProcess.length) {
         let waitTimeThisBatch = waitTime * (0.5 + Math.random());
         logger.info(
-          `Waiting ${Math.round(waitTimeThisBatch / 1000)} seconds before next batch...`
+          `Waiting ${Math.round(waitTimeThisBatch / 1000)} seconds before next batch...`,
         );
         await sleep(waitTimeThisBatch);
       }
     }
 
     logger.info(
-      `${actionName.charAt(0).toUpperCase() + actionName.slice(1)} process completed`
+      `${actionName.charAt(0).toUpperCase() + actionName.slice(1)} process completed`,
     );
   }
 }

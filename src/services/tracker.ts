@@ -60,7 +60,7 @@ export class DynamicTracker {
     if (Dynamics.length) {
       await this.processDynamics(Dynamics);
       this.state.updateLastDynamicId(
-        Math.max(...Dynamics.map((d) => Number(d.desc.dynamic_id)))
+        Math.max(...Dynamics.map((d) => Number(d.desc.dynamic_id))),
       );
     }
   }

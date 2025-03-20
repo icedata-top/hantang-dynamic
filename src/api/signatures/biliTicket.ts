@@ -37,16 +37,14 @@ function hmacSha256(key: string, message: string): string {
  * @param csrf CSRF token (bili_jct) from cookies, can be empty
  * @returns The BiliTicket and its expiration timestamp
  */
-export async function generateBiliTicket(
-  csrf: string = ""
-): Promise<{
+export async function generateBiliTicket(csrf: string = ""): Promise<{
   ticket: string;
   expiresAt: number;
 } | null> {
   try {
     const stateManager = new StateManager();
     const userAgent = stateManager.lastUA;
-    
+
     const timestamp = Math.floor(Date.now() / 1000);
     const hexSign = hmacSha256("XgwSnGZ1p", `ts${timestamp}`);
 
@@ -60,7 +58,7 @@ export async function generateBiliTicket(
     };
 
     const headers: Record<string, string> = {
-      "User-Agent": userAgent
+      "User-Agent": userAgent,
     };
 
     const response = await axios.post<BiliTicketResponse>(url, null, {
@@ -75,7 +73,7 @@ export async function generateBiliTicket(
       const expiresAt = createdAt + ttl;
 
       logger.info(
-        `BiliTicket generated successfully, expires in ${Math.floor(ttl / 86400)} days`
+        `BiliTicket generated successfully, expires in ${Math.floor(ttl / 86400)} days`,
       );
       return { ticket, expiresAt };
     } else {

@@ -129,11 +129,15 @@ export class StateManager {
     if (!this.state.biliTicket || !this.state.ticketExpiresAt) {
       return false;
     }
-    return (this.state.ticketExpiresAt - 3600) > Math.floor(Date.now() / 1000); // 1 hour buffer
+    return this.state.ticketExpiresAt - 3600 > Math.floor(Date.now() / 1000); // 1 hour buffer
   }
 
   isWbiKeysValid(): boolean {
-    if (!this.state.imgKey || !this.state.subKey || !this.state.wbiKeysExpiresAt) {
+    if (
+      !this.state.imgKey ||
+      !this.state.subKey ||
+      !this.state.wbiKeysExpiresAt
+    ) {
       return false;
     }
     return Date.now() / 1000 < this.state.wbiKeysExpiresAt;
@@ -150,6 +154,8 @@ export class StateManager {
     this.state.subKey = subKey;
     this.state.wbiKeysExpiresAt = expiresAt;
     this.saveState();
-    logger.debug(`WBI keys updated, expires at: ${new Date(expiresAt * 1000).toLocaleString()}`);
+    logger.debug(
+      `WBI keys updated, expires at: ${new Date(expiresAt * 1000).toLocaleString()}`,
+    );
   }
 }

@@ -60,7 +60,7 @@ interface BatchRelationModifyResponse {
  */
 const simulateUserPageVisit = async (
   fid: number,
-  reSource: RelationSource
+  reSource: RelationSource,
 ): Promise<void> => {
   const url = `https://space.bilibili.com/${fid}`;
 
@@ -128,18 +128,18 @@ const autoUnblockUser = async (
   fid: number,
   reSource: RelationSource,
   accessKey?: string,
-  csrf?: string
+  csrf?: string,
 ): Promise<boolean> => {
   try {
     logger.info(
-      `User ${fid} is in blacklist. Attempting to unblock before following...`
+      `User ${fid} is in blacklist. Attempting to unblock before following...`,
     );
     const unblockResponse = await modifyUserRelation(
       fid,
       UserRelationAction.Unblock,
       reSource,
       accessKey,
-      csrf
+      csrf,
     );
 
     if (unblockResponse.code === RelationErrorCode.Success) {
@@ -148,7 +148,7 @@ const autoUnblockUser = async (
       return true;
     } else {
       logger.warn(
-        `Failed to unblock user ${fid}: ${getErrorMessage(unblockResponse.code)}`
+        `Failed to unblock user ${fid}: ${getErrorMessage(unblockResponse.code)}`,
       );
       return false;
     }
@@ -173,7 +173,7 @@ export const modifyUserRelation = async (
   act: UserRelationAction,
   reSource: RelationSource = RelationSource.Profile,
   accessKey?: string,
-  csrf?: string
+  csrf?: string,
 ): Promise<RelationModifyResponse> => {
   // Check if feature is enabled in config
   if (!config.ENABLE_USER_RELATION) {
@@ -228,7 +228,7 @@ export const modifyUserRelation = async (
           headers: {
             "Content-Type": "application/x-www-form-urlencoded",
           },
-        }
+        },
       );
 
       // Auto-unblock handling: if trying to follow and user is blacklisted (code 22003)
@@ -240,7 +240,7 @@ export const modifyUserRelation = async (
           fid,
           reSource,
           useAccessKey,
-          useCsrf
+          useCsrf,
         );
         if (unblocked) {
           // Retry the follow operation after unblocking
@@ -255,7 +255,7 @@ export const modifyUserRelation = async (
         response.data.code === RelationErrorCode.AlreadyFollowing
       ) {
         logger.info(
-          `User ${fid} is already being followed, treating as success`
+          `User ${fid} is already being followed, treating as success`,
         );
         return {
           code: RelationErrorCode.Success,
@@ -272,7 +272,7 @@ export const modifyUserRelation = async (
           response.data.code === RelationErrorCode.AccountDeleted)
       ) {
         logger.info(
-          `Cannot change non-existent user ${fid}, treating as success`
+          `Cannot change non-existent user ${fid}, treating as success`,
         );
         return {
           code: RelationErrorCode.Success,
@@ -284,20 +284,19 @@ export const modifyUserRelation = async (
       // Log error codes and messages for debugging
       if (response.data.code !== RelationErrorCode.Success) {
         logger.warn(
-          `Relation action ${act} on user ${fid} returned error: ${getErrorMessage(response.data.code)}`
+          `Relation action ${act} on user ${fid} returned error: ${getErrorMessage(response.data.code)}`,
         );
       } else {
         logger.debug(
-          `Successfully performed relation action ${act} on user ${fid}`
+          `Successfully performed relation action ${act} on user ${fid}`,
         );
       }
 
       return response.data;
     } catch (error) {
-
       logger.error(
         `Network error during relation modification for user ${fid}:`,
-        error
+        error,
       );
       return {
         code: RelationErrorCode.RequestError,
@@ -333,7 +332,7 @@ export const batchModifyUserRelation = async (
   act: UserRelationAction,
   reSource: RelationSource = RelationSource.Profile,
   accessKey?: string,
-  csrf?: string
+  csrf?: string,
 ): Promise<BatchRelationModifyResponse> => {
   // Check if feature is enabled in config
   if (!config.ENABLE_USER_RELATION) {
@@ -370,14 +369,14 @@ export const batchModifyUserRelation = async (
 
   if (fids.length === 1) {
     logger.warn(
-      "Single user ID provided for batch modification, using single operation"
+      "Single user ID provided for batch modification, using single operation",
     );
     const singleResponse = await modifyUserRelation(
       fids[0],
       act,
       reSource,
       useAccessKey,
-      useCsrf
+      useCsrf,
     );
     return {
       ...singleResponse,
@@ -405,7 +404,7 @@ export const batchModifyUserRelation = async (
       }
 
       logger.debug(
-        `Batch modifying user relations: ${fids.length} users, Action ${act}`
+        `Batch modifying user relations: ${fids.length} users, Action ${act}`,
       );
 
       try {
@@ -416,13 +415,13 @@ export const batchModifyUserRelation = async (
             headers: {
               "Content-Type": "application/x-www-form-urlencoded",
             },
-          }
+          },
         );
 
         // Log failed operations if any
         if (response.data.data?.failed_fids?.length > 0) {
           logger.warn(
-            `Failed to modify relation for ${response.data.data.failed_fids.length} users: ${response.data.data.failed_fids.join(", ")}`
+            `Failed to modify relation for ${response.data.data.failed_fids.length} users: ${response.data.data.failed_fids.join(", ")}`,
           );
           logger.warn(`API Message: ${getErrorMessage(response.data.code)}`);
         }
@@ -431,7 +430,7 @@ export const batchModifyUserRelation = async (
       } catch (error) {
         // Handle network errors gracefully by falling back to individual operations
         logger.warn(
-          `Batch operation failed, falling back to individual requests: ${error}`
+          `Batch operation failed, falling back to individual requests: ${error}`,
         );
         return processIndividually(fids, act, reSource, useAccessKey, useCsrf);
       }
@@ -452,7 +451,7 @@ export const batchModifyUserRelation = async (
   } else {
     // For other actions that don't support batch operations, perform individual operations
     logger.info(
-      `Operation ${act} doesn't support batching, falling back to individual requests`
+      `Operation ${act} doesn't support batching, falling back to individual requests`,
     );
     return processIndividually(fids, act, reSource, useAccessKey, useCsrf);
   }
@@ -466,7 +465,7 @@ const processIndividually = async (
   act: UserRelationAction,
   reSource: RelationSource,
   accessKey?: string,
-  csrf?: string
+  csrf?: string,
 ): Promise<BatchRelationModifyResponse> => {
   const results = {
     code: RelationErrorCode.Success,
@@ -492,12 +491,12 @@ const processIndividually = async (
         act,
         reSource,
         accessKey,
-        csrf
+        csrf,
       );
 
       if (response.code !== RelationErrorCode.Success) {
         logger.warn(
-          `Failed to modify relation for user ${fid}: ${getErrorMessage(response.code)}`
+          `Failed to modify relation for user ${fid}: ${getErrorMessage(response.code)}`,
         );
         results.data.failed_fids.push(fid);
       } else {
@@ -524,7 +523,7 @@ const processIndividually = async (
  * @returns Object containing array of user IDs that are followed by the specified user
  */
 export const fetchUserRelation = async (
-  userid: string
+  userid: string,
 ): Promise<{ attentions: bigint[] }> => {
   try {
     try {
@@ -546,7 +545,7 @@ export const fetchUserRelation = async (
 
       if (response.data.code !== RelationErrorCode.Success) {
         logger.warn(
-          `Failed to fetch user relations: ${getErrorMessage(response.data.code)}`
+          `Failed to fetch user relations: ${getErrorMessage(response.data.code)}`,
         );
         return { attentions: [] };
       }
@@ -557,7 +556,7 @@ export const fetchUserRelation = async (
       // Handle network errors gracefully
       logger.error(
         `Network error while fetching user relations for ${userid}:`,
-        error
+        error,
       );
       return { attentions: [] };
     }

@@ -36,7 +36,7 @@ const state = new StateManager();
  */
 export const simulateBrowserVisit = async (
   url: string,
-  referrer?: string
+  referrer?: string,
 ): Promise<void> => {
   try {
     await sleep(getRandomDelay(500, 1000));
@@ -92,13 +92,13 @@ export function createClient(baseURL: string): AxiosInstance {
         : "";
 
       logger.debug(
-        `[${new Date().toISOString()}] ${baseURL}${response.config.url}${params}${data} (${timeUsed}ms)`
+        `[${new Date().toISOString()}] ${baseURL}${response.config.url}${params}${data} (${timeUsed}ms)`,
       );
 
       if (response.status == ApiErrorResponseCode.IpBanned) {
         logger.error(
           "CRITICAL ERROR: IP has been banned! Terminating process." +
-            "致命错误：IP 被封禁！正在终止进程。"
+            "致命错误：IP 被封禁！正在终止进程。",
         );
         process.exit(2);
       }
@@ -116,7 +116,7 @@ export function createClient(baseURL: string): AxiosInstance {
         if (response.data.code === ApiErrorCode.CookieExpired) {
           logger.error(
             "CRITICAL ERROR: Cookie has expired! Authentication required. Terminating process.\n" +
-              "致命错误：Cookie 已过期！请重新登录。正在终止进程。"
+              "致命错误：Cookie 已过期！请重新登录。正在终止进程。",
           );
           process.exit(1);
         }
@@ -124,13 +124,13 @@ export function createClient(baseURL: string): AxiosInstance {
         if (response.data.code === ApiErrorCode.RiskControlFailed) {
           logger.error(
             "CRITICAL ERROR: Risk control failed! Terminating process.\n" +
-              "致命错误：风控失败！正在终止进程。"
+              "致命错误：风控失败！正在终止进程。",
           );
           process.exit(3);
         }
 
         return Promise.reject(
-          new Error(`API Error: code ${response.data.code}`)
+          new Error(`API Error: code ${response.data.code}`),
         );
       }
 
@@ -141,7 +141,7 @@ export function createClient(baseURL: string): AxiosInstance {
         return retryDelay(
           () => client(error.config),
           config.API_RETRY_TIMES,
-          config.API_WAIT_TIME
+          config.API_WAIT_TIME,
         );
       }
       return Promise.reject({
@@ -149,7 +149,7 @@ export function createClient(baseURL: string): AxiosInstance {
         code: error.response?.status,
         data: error.response?.data,
       });
-    }
+    },
   );
 
   return client;
@@ -170,7 +170,7 @@ function getCookieString(stateManager: StateManager): string {
 }
 
 export const dynamicClient = createClient(
-  "https://api.vc.bilibili.com/dynamic_svr/v1/dynamic_svr"
+  "https://api.vc.bilibili.com/dynamic_svr/v1/dynamic_svr",
 );
 export const xClient = createClient("https://api.bilibili.com/x");
 export const accountClient = createClient("https://account.bilibili.com/api");

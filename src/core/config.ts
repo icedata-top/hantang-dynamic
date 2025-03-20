@@ -65,10 +65,10 @@ export const config: EnvConfig = envSchema.parse({
     ? process.env.TYPE_ID_WHITE_LIST.split(",").map(Number)
     : [],
   CONTENT_BLACK_LIST: process.env.CONTENT_BLACK_LIST
-    ? process.env.CONTENT_BLACK_LIST.split(",").map(s => s.trim())
+    ? process.env.CONTENT_BLACK_LIST.split(",").map((s) => s.trim())
     : [],
   CONTENT_WHITE_LIST: process.env.CONTENT_WHITE_LIST
-    ? process.env.CONTENT_WHITE_LIST.split(",").map(s => s.trim())
+    ? process.env.CONTENT_WHITE_LIST.split(",").map((s) => s.trim())
     : [],
   MYSQL_IP: process.env.MYSQL_IP,
   MYSQL_PORT: process.env.MYSQL_PORT,

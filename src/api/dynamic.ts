@@ -63,7 +63,10 @@ export const getNewDynamic = (type: number) =>
     type,
   });
 
-export const getHistoryDynamic = (type: number, offset: number | string | BigInt) =>
+export const getHistoryDynamic = (
+  type: number,
+  offset: number | string | BigInt,
+) =>
   fetchDynamicsAPI("/dynamic_history", {
     uid: config.BILIBILI_UID,
     type,

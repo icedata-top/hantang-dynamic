@@ -10,7 +10,7 @@ import { fetchVideoTags } from "../api/video";
 import { sleep } from "./datetime";
 
 export const processCard = async (
-  dynamiccard: BiliDynamicCard
+  dynamiccard: BiliDynamicCard,
 ): Promise<VideoData | null> => {
   const card: BiliVideoCard = JSON.parse(dynamiccard.card);
   let tagString = "";
@@ -33,7 +33,7 @@ export const processCard = async (
         for (const keyword of config.CONTENT_WHITE_LIST) {
           if (contentToCheck.includes(keyword.toLowerCase())) {
             logger.info(
-              `包含白名单关键字 "${keyword}"，忽略类型检查: ${card.title}`
+              `包含白名单关键字 "${keyword}"，忽略类型检查: ${card.title}`,
             );
             inwhite = true;
             break;
@@ -50,7 +50,7 @@ export const processCard = async (
   if (config.ENABLE_TAG_FETCH) {
     try {
       const { data: VideoTagResponse } = await fetchVideoTags(
-        dynamiccard.desc.bvid
+        dynamiccard.desc.bvid,
       );
       tagString = VideoTagResponse.map((t) => t.tag_name).join(";");
       logger.debug(`标签获取成功 ${dynamiccard.desc.bvid}:`, tagString);
@@ -58,7 +58,7 @@ export const processCard = async (
     } catch (error) {
       logger.error(
         `标签获取失败 ${dynamiccard.desc.bvid}:`,
-        error instanceof Error ? error.message : "未知错误"
+        error instanceof Error ? error.message : "未知错误",
       );
     }
   }

@@ -8,7 +8,7 @@ import {
 } from "../core/types";
 
 export const fetchVideoTags = async (
-  bvid: string
+  bvid: string,
 ): Promise<VideoTagResponse> => {
   try {
     const response = await xClient.get<VideoTagResponse>("/tag/archive/tags", {
@@ -31,7 +31,7 @@ export const fetchVideoDetail = async (params: {
   try {
     const response = await xClient.get<BiliVideoDetailResponse>(
       "/x/web-interface/view",
-      { params }
+      { params },
     );
     return response.data;
   } catch (error) {
@@ -68,7 +68,7 @@ export const fetchVideoDescription = async (params: {
   try {
     const response = await xClient.get<BiliVideoDescResponse>(
       "/x/web-interface/archive/desc",
-      { params }
+      { params },
     );
     return response.data;
   } catch (error) {
@@ -87,7 +87,7 @@ export const fetchVideoPageList = async (params: {
   try {
     const response = await xClient.get<BiliVideoPageListResponse>(
       "/x/player/pagelist",
-      { params }
+      { params },
     );
     return response.data;
   } catch (error) {

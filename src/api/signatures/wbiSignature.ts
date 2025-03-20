@@ -28,7 +28,7 @@ function getMixinKey(orig: string): string {
  * @returns The img_key and sub_key
  */
 async function fetchWbiKeys(
-  stateManager: StateManager
+  stateManager: StateManager,
 ): Promise<{ imgKey: string; subKey: string }> {
   try {
     const userAgent = stateManager.lastUA;
@@ -51,11 +51,11 @@ async function fetchWbiKeys(
 
       const imgKey = imgUrl.substring(
         imgUrl.lastIndexOf("/") + 1,
-        imgUrl.lastIndexOf(".")
+        imgUrl.lastIndexOf("."),
       );
       const subKey = subUrl.substring(
         subUrl.lastIndexOf("/") + 1,
-        subUrl.lastIndexOf(".")
+        subUrl.lastIndexOf("."),
       );
 
       // Keys are valid for 8 hours
@@ -99,7 +99,7 @@ async function getWbiKeys(): Promise<{ imgKey: string; subKey: string }> {
  * @returns Parameters with WBI signature added
  */
 export async function signWithWbi<T extends Record<string, any>>(
-  params: T
+  params: T,
 ): Promise<T & { w_rid: string; wts: number }> {
   const { imgKey, subKey } = await getWbiKeys();
   const mixinKey = getMixinKey(imgKey + subKey);
@@ -122,7 +122,7 @@ export async function signWithWbi<T extends Record<string, any>>(
   const query = Object.entries(sortedParams)
     .map(
       ([key, value]) =>
-        `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
+        `${encodeURIComponent(key)}=${encodeURIComponent(value)}`,
     )
     .join("&");
 
@@ -140,14 +140,14 @@ export async function signWithWbi<T extends Record<string, any>>(
  * @returns Query string with WBI signature
  */
 export async function buildSignedQuery(
-  params: Record<string, any>
+  params: Record<string, any>,
 ): Promise<string> {
   const signedParams = await signWithWbi(params);
 
   return Object.entries(signedParams)
     .map(
       ([key, value]) =>
-        `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
+        `${encodeURIComponent(key)}=${encodeURIComponent(value)}`,
     )
     .join("&");
 }
