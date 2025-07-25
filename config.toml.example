@@ -2,7 +2,7 @@
 # Copy this file to config.toml and fill in your values
 # Data flow: Input → Processing → Output
 
-[input.bilibili]
+[bilibili]
 # Required: Your Bilibili user ID and session data
 uid = "12345678"               # Your Bilibili user ID
 sessdata = "your_sessdata"     # Your Bilibili session data
@@ -11,8 +11,8 @@ sessdata = "your_sessdata"     # Your Bilibili session data
 csrf_token = ""                # BILI_JCT - CSRF token for user relation operations
 access_key = ""                # BILI_ACCESS_KEY - Access key for app authentication
 
-[input.application]
-# Application input behavior settings
+[application]
+# Application behavior settings
 log_level = "info"             # Log level: debug, info, warn, error
 fetch_interval = 900000        # Fetch interval in milliseconds (default: 15 minutes)
 api_retry_times = 3            # Number of API retry attempts
@@ -20,10 +20,11 @@ api_wait_time = 2000           # Wait time between API calls in milliseconds
 max_history_days = 7           # Maximum days of history to fetch
 max_item = 0                   # Maximum number of items to fetch (0 for unlimited)
 
+[processing]
 [processing.features]
 # Feature toggles
 enable_tag_fetch = false       # Whether to fetch video tags
-enable_user_relation = false  # Toggle for user relation features
+enable_user_relation = false   # Toggle for user relation features
 
 [processing.filtering]
 # Content filtering settings
@@ -34,15 +35,16 @@ content_whitelist = []         # Array of content whitelist keywords
 [processing.deduplication]
 aids_duckdb_path = ""          # AIDS tracking DuckDB (default: "./data/aids.duckdb")
 
-[output.csv]
+[export]
+[export.csv]
 # CSV file export settings
 path = ""                      # CSV file path (default: "./data/uid{BILIBILI_UID}.csv")
 
-[output.duckdb]
+[export.duckdb]
 # DuckDB file export settings
 path = ""                      # DuckDB file path (default: "./data/uid{BILIBILI_UID}.duckdb")
 
-[output.database]
+[export.mysql]
 # MySQL export settings (all optional)
 host = ""                      # MySQL server IP
 port = 3306                    # MySQL server port
@@ -51,12 +53,13 @@ password = ""                  # MySQL password
 database = ""                  # MySQL database name
 table = ""                     # MySQL table name
 
-[output.notifications.telegram]
+[notifications]
+[notifications.telegram]
 # Telegram notification settings (both required if using Telegram)
 bot_token = ""                 # Telegram bot token
 chat_id = ""                   # Telegram chat ID
 
-[output.notifications.email]
+[notifications.email]
 # Email notification settings (all required if using email)
 host = ""                      # SMTP server host (e.g., "smtp.gmail.com")
 port = 587                     # SMTP server port

@@ -55,10 +55,7 @@ const configSchema = z.object({
 });
 
 // Generate default paths based on UID
-const bilibiliUid = getConfigValue(
-  ["input", "bilibili", "uid"],
-  "BILIBILI_UID",
-);
+const bilibiliUid = getConfigValue(["bilibili", "uid"], "BILIBILI_UID");
 const defaultCsvPath = bilibiliUid
   ? `./data/uid${bilibiliUid}.csv`
   : "./data/uid.csv";
@@ -69,38 +66,30 @@ const defaultAidsDuckdbPath = "./data/aids.duckdb";
 
 export const config = configSchema.parse({
   app: {
-    logLevel: getConfigValue(
-      ["input", "application", "log_level"],
-      "LOGLEVEL",
-      "info",
-    ),
+    logLevel: getConfigValue(["application", "log_level"], "LOGLEVEL", "info"),
     fetchInterval: getConfigValue(
-      ["input", "application", "fetch_interval"],
+      ["application", "fetch_interval"],
       "FETCH_INTERVAL",
       900_000,
     ),
     apiRetry: {
       times: getConfigValue(
-        ["input", "application", "api_retry_times"],
+        ["application", "api_retry_times"],
         "API_RETRY_TIMES",
         3,
       ),
       waitTime: getConfigValue(
-        ["input", "application", "api_wait_time"],
+        ["application", "api_wait_time"],
         "API_WAIT_TIME",
         2000,
       ),
     },
     maxHistoryDays: getConfigValue(
-      ["input", "application", "max_history_days"],
+      ["application", "max_history_days"],
       "MAX_HISTORY_DAYS",
       7,
     ),
-    maxItem: getConfigValue(
-      ["input", "application", "max_item"],
-      "MAX_ITEM",
-      0,
-    ),
+    maxItem: getConfigValue(["application", "max_item"], "MAX_ITEM", 0),
     features: {
       enableTagFetch: getConfigValue(
         ["processing", "features", "enable_tag_fetch"],
@@ -145,43 +134,40 @@ export const config = configSchema.parse({
     },
   },
   bilibili: {
-    uid: getConfigValue(["input", "bilibili", "uid"], "BILIBILI_UID"),
-    sessdata: getConfigValue(["input", "bilibili", "sessdata"], "SESSDATA"),
-    csrfToken: getConfigValue(["input", "bilibili", "csrf_token"], "BILI_JCT"),
-    accessKey: getConfigValue(
-      ["input", "bilibili", "access_key"],
-      "BILI_ACCESS_KEY",
-    ),
+    uid: getConfigValue(["bilibili", "uid"], "BILIBILI_UID"),
+    sessdata: getConfigValue(["bilibili", "sessdata"], "SESSDATA"),
+    csrfToken: getConfigValue(["bilibili", "csrf_token"], "BILI_JCT"),
+    accessKey: getConfigValue(["bilibili", "access_key"], "BILI_ACCESS_KEY"),
   },
   outputs: {
     database: {
       mysql: {
-        host: getConfigValue(["output", "database", "host"], "MYSQL_IP"),
-        port: getConfigValue(["output", "database", "port"], "MYSQL_PORT"),
+        host: getConfigValue(["export", "mysql", "host"], "MYSQL_IP"),
+        port: getConfigValue(["export", "mysql", "port"], "MYSQL_PORT"),
         username: getConfigValue(
-          ["output", "database", "username"],
+          ["export", "mysql", "username"],
           "MYSQL_USERNAME",
         ),
         password: getConfigValue(
-          ["output", "database", "password"],
+          ["export", "mysql", "password"],
           "MYSQL_PASSWORD",
         ),
-        table: getConfigValue(["output", "database", "table"], "MYSQL_TABLE"),
+        table: getConfigValue(["export", "mysql", "table"], "MYSQL_TABLE"),
         database: getConfigValue(
-          ["output", "database", "database"],
+          ["export", "mysql", "database"],
           "MYSQL_DATABASE",
         ),
       },
       csv: {
         path: getConfigValue(
-          ["output", "csv", "path"],
+          ["export", "csv", "path"],
           "CSV_PATH",
           defaultCsvPath,
         ),
       },
       duckdb: {
         path: getConfigValue(
-          ["output", "duckdb", "path"],
+          ["export", "duckdb", "path"],
           "DUCKDB_PATH",
           defaultDuckdbPath,
         ),
@@ -189,38 +175,26 @@ export const config = configSchema.parse({
     },
     notification: {
       email: {
-        host: getConfigValue(
-          ["output", "notifications", "email", "host"],
-          "EMAIL_HOST",
-        ),
-        port: getConfigValue(
-          ["output", "notifications", "email", "port"],
-          "EMAIL_PORT",
-        ),
+        host: getConfigValue(["notifications", "email", "host"], "EMAIL_HOST"),
+        port: getConfigValue(["notifications", "email", "port"], "EMAIL_PORT"),
         user: getConfigValue(
-          ["output", "notifications", "email", "username"],
+          ["notifications", "email", "username"],
           "EMAIL_USER",
         ),
         pass: getConfigValue(
-          ["output", "notifications", "email", "password"],
+          ["notifications", "email", "password"],
           "EMAIL_PASS",
         ),
-        from: getConfigValue(
-          ["output", "notifications", "email", "from"],
-          "EMAIL_FROM",
-        ),
-        to: getConfigValue(
-          ["output", "notifications", "email", "to"],
-          "EMAIL_TO",
-        ),
+        from: getConfigValue(["notifications", "email", "from"], "EMAIL_FROM"),
+        to: getConfigValue(["notifications", "email", "to"], "EMAIL_TO"),
       },
       telegram: {
         botToken: getConfigValue(
-          ["output", "notifications", "telegram", "bot_token"],
+          ["notifications", "telegram", "bot_token"],
           "TELEGRAM_BOT_TOKEN",
         ),
         chatId: getConfigValue(
-          ["output", "notifications", "telegram", "chat_id"],
+          ["notifications", "telegram", "chat_id"],
           "TELEGRAM_CHAT_ID",
         ),
       },
