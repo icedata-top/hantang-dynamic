@@ -44,7 +44,7 @@ export const saveToDuckDB = async (data: VideoData[]) => {
       appender.appendBigInt(BigInt(record.aid));
       appender.appendVarchar(record.bvid);
       appender.appendTimestamp(
-        new DuckDBTimestampValue(BigInt(record.pubdate * 1000000))
+        new DuckDBTimestampValue(BigInt(record.pubdate * 1000000)),
       );
       appender.appendVarchar(record.title);
       appender.appendVarchar(record.description);
@@ -75,7 +75,7 @@ export const saveToDuckDB = async (data: VideoData[]) => {
  * @returns videoData[] Array of video data with only new AIDs
  */
 export const filterAndSaveNewAIDsToDuckDB = async (
-  videoData: VideoData[]
+  videoData: VideoData[],
 ): Promise<VideoData[]> => {
   let aids = videoData.map((d) => d.aid);
   let newAids = await filterNewAIDs(aids);
@@ -116,7 +116,7 @@ export const filterNewAIDs = async (aids: bigint[]): Promise<bigint[]> => {
         SELECT aid FROM input_aids
         ON CONFLICT DO NOTHING
         RETURNING aid
-        `
+        `,
       )
       .then((res) => res.getColumns()[0])) as bigint[];
     connection.close();
