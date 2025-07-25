@@ -1,7 +1,18 @@
-import dotenv from "dotenv";
+import { readFileSync } from "fs";
+import { resolve } from "path";
+import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 
-dotenv.config();
+let tomlData: any = {};
+try {
+  const configPath = resolve(process.cwd(), "config.toml");
+  const tomlString = readFileSync(configPath, "utf-8");
+  tomlData = parseToml(tomlString);
+} catch (error) {
+  console.warn(
+    "Warning: config.toml not found or invalid. Using environment variables as fallback.",
+  );
+}
 
 const envSchema = z.object({
   BILIBILI_UID: z.string().min(1),
@@ -37,60 +48,187 @@ const envSchema = z.object({
   EMAIL_FROM: z.string().optional(),
   EMAIL_TO: z.string().optional(),
 
-  CSV_PATH: z
-    .string()
-    .default("./data/uid" + process.env.BILIBILI_UID + ".csv"),
-  DUCKDB_PATH: z
-    .string()
-    .default("./data/uid" + process.env.BILIBILI_UID + ".duckdb"),
-  AIDS_DUCKDB_PATH: z
-    .string()
-    .default("./data/aids.duckdb"),
+  CSV_PATH: z.string(),
+  DUCKDB_PATH: z.string(),
+  AIDS_DUCKDB_PATH: z.string(),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
 
+// Helper function to get configuration value from TOML or environment variable
+function getConfigValue(
+  tomlPath: string[],
+  envKey: string,
+  defaultValue?: any,
+): any {
+  try {
+    // Try to get value from TOML first
+    let value = tomlData;
+    for (const key of tomlPath) {
+      value = value?.[key];
+    }
+
+    // If found in TOML and not empty string, return it
+    if (value !== undefined && value !== "") {
+      return value;
+    }
+  } catch (e) {
+    // Ignore TOML parsing errors for individual values
+  }
+
+  // Fallback to environment variable
+  const envValue = process.env[envKey];
+  if (envValue !== undefined && envValue !== "") {
+    return envValue;
+  }
+
+  // Return default value
+  return defaultValue;
+}
+
+// Generate default paths based on UID
+const bilibiliUid = getConfigValue(
+  ["input", "bilibili", "uid"],
+  "BILIBILI_UID",
+);
+const defaultCsvPath = bilibiliUid
+  ? `./data/uid${bilibiliUid}.csv`
+  : "./data/uid.csv";
+const defaultDuckdbPath = bilibiliUid
+  ? `./data/uid${bilibiliUid}.duckdb`
+  : "./data/uid.duckdb";
+const defaultAidsDuckdbPath = "./data/aids.duckdb";
+
 export const config: EnvConfig = envSchema.parse({
-  BILIBILI_UID: process.env.BILIBILI_UID,
-  SESSDATA: process.env.SESSDATA,
-  BILI_JCT: process.env.BILI_JCT, // Parse CSRF token from env
-  BILI_ACCESS_KEY: process.env.BILI_ACCESS_KEY, // Parse access key from env
+  BILIBILI_UID: getConfigValue(["input", "bilibili", "uid"], "BILIBILI_UID"),
+  SESSDATA: getConfigValue(["input", "bilibili", "sessdata"], "SESSDATA"),
+  BILI_JCT: getConfigValue(["input", "bilibili", "csrf_token"], "BILI_JCT"),
+  BILI_ACCESS_KEY: getConfigValue(
+    ["input", "bilibili", "access_key"],
+    "BILI_ACCESS_KEY",
+  ),
 
-  LOGLEVEL: process.env.LOGLEVEL?.toLowerCase(),
-  FETCH_INTERVAL: process.env.FETCH_INTERVAL,
-  API_RETRY_TIMES: process.env.API_RETRY_TIMES,
-  API_WAIT_TIME: process.env.API_WAIT_TIME,
-  MAX_HISTORY_DAYS: process.env.MAX_HISTORY_DAYS,
-  MAX_ITEM: process.env.MAX_ITEM,
-  ENABLE_TAG_FETCH: process.env.ENABLE_TAG_FETCH,
-  ENABLE_USER_RELATION: process.env.ENABLE_USER_RELATION,
-  TYPE_ID_WHITE_LIST: process.env.TYPE_ID_WHITE_LIST
-    ? process.env.TYPE_ID_WHITE_LIST.split(",").map(Number)
-    : [],
-  CONTENT_BLACK_LIST: process.env.CONTENT_BLACK_LIST
-    ? process.env.CONTENT_BLACK_LIST.split(",").map((s) => s.trim())
-    : [],
-  CONTENT_WHITE_LIST: process.env.CONTENT_WHITE_LIST
-    ? process.env.CONTENT_WHITE_LIST.split(",").map((s) => s.trim())
-    : [],
-  MYSQL_IP: process.env.MYSQL_IP,
-  MYSQL_PORT: process.env.MYSQL_PORT,
-  MYSQL_USERNAME: process.env.MYSQL_USERNAME,
-  MYSQL_PASSWORD: process.env.MYSQL_PASSWORD,
-  MYSQL_TABLE: process.env.MYSQL_TABLE,
-  MYSQL_DATABASE: process.env.MYSQL_DATABASE,
+  LOGLEVEL: getConfigValue(
+    ["input", "application", "log_level"],
+    "LOGLEVEL",
+    "info",
+  ),
+  FETCH_INTERVAL: getConfigValue(
+    ["input", "application", "fetch_interval"],
+    "FETCH_INTERVAL",
+    900_000,
+  ),
+  API_RETRY_TIMES: getConfigValue(
+    ["input", "application", "api_retry_times"],
+    "API_RETRY_TIMES",
+    3,
+  ),
+  API_WAIT_TIME: getConfigValue(
+    ["input", "application", "api_wait_time"],
+    "API_WAIT_TIME",
+    2000,
+  ),
+  MAX_HISTORY_DAYS: getConfigValue(
+    ["input", "application", "max_history_days"],
+    "MAX_HISTORY_DAYS",
+    7,
+  ),
+  MAX_ITEM: getConfigValue(["input", "application", "max_item"], "MAX_ITEM", 0),
+  ENABLE_TAG_FETCH: getConfigValue(
+    ["processing", "features", "enable_tag_fetch"],
+    "ENABLE_TAG_FETCH",
+    false,
+  ),
+  ENABLE_USER_RELATION: getConfigValue(
+    ["processing", "features", "enable_user_relation"],
+    "ENABLE_USER_RELATION",
+    false,
+  ),
+  TYPE_ID_WHITE_LIST:
+    getConfigValue(
+      ["processing", "filtering", "type_id_whitelist"],
+      "TYPE_ID_WHITE_LIST",
+    ) ||
+    process.env.TYPE_ID_WHITE_LIST?.split(",").map(Number) ||
+    [],
+  CONTENT_BLACK_LIST:
+    getConfigValue(
+      ["processing", "filtering", "content_blacklist"],
+      "CONTENT_BLACK_LIST",
+    ) ||
+    process.env.CONTENT_BLACK_LIST?.split(",").map((s) => s.trim()) ||
+    [],
+  CONTENT_WHITE_LIST:
+    getConfigValue(
+      ["processing", "filtering", "content_whitelist"],
+      "CONTENT_WHITE_LIST",
+    ) ||
+    process.env.CONTENT_WHITE_LIST?.split(",").map((s) => s.trim()) ||
+    [],
 
-  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
-  TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID,
+  MYSQL_IP: getConfigValue(["output", "database", "host"], "MYSQL_IP"),
+  MYSQL_PORT: getConfigValue(["output", "database", "port"], "MYSQL_PORT"),
+  MYSQL_USERNAME: getConfigValue(
+    ["output", "database", "username"],
+    "MYSQL_USERNAME",
+  ),
+  MYSQL_PASSWORD: getConfigValue(
+    ["output", "database", "password"],
+    "MYSQL_PASSWORD",
+  ),
+  MYSQL_TABLE: getConfigValue(["output", "database", "table"], "MYSQL_TABLE"),
+  MYSQL_DATABASE: getConfigValue(
+    ["output", "database", "database"],
+    "MYSQL_DATABASE",
+  ),
 
-  EMAIL_HOST: process.env.EMAIL_HOST,
-  EMAIL_PORT: process.env.EMAIL_PORT,
-  EMAIL_USER: process.env.EMAIL_USER,
-  EMAIL_PASS: process.env.EMAIL_PASS,
-  EMAIL_FROM: process.env.EMAIL_FROM,
-  EMAIL_TO: process.env.EMAIL_TO,
+  TELEGRAM_BOT_TOKEN: getConfigValue(
+    ["output", "notifications", "telegram", "bot_token"],
+    "TELEGRAM_BOT_TOKEN",
+  ),
+  TELEGRAM_CHAT_ID: getConfigValue(
+    ["output", "notifications", "telegram", "chat_id"],
+    "TELEGRAM_CHAT_ID",
+  ),
 
-  CSV_PATH: process.env.CSV_PATH,
-  DUCKDB_PATH: process.env.DUCKDB_PATH,
-  AIDS_DUCKDB_PATH: process.env.AIDS_DUCKDB_PATH,
+  EMAIL_HOST: getConfigValue(
+    ["output", "notifications", "email", "host"],
+    "EMAIL_HOST",
+  ),
+  EMAIL_PORT: getConfigValue(
+    ["output", "notifications", "email", "port"],
+    "EMAIL_PORT",
+  ),
+  EMAIL_USER: getConfigValue(
+    ["output", "notifications", "email", "username"],
+    "EMAIL_USER",
+  ),
+  EMAIL_PASS: getConfigValue(
+    ["output", "notifications", "email", "password"],
+    "EMAIL_PASS",
+  ),
+  EMAIL_FROM: getConfigValue(
+    ["output", "notifications", "email", "from"],
+    "EMAIL_FROM",
+  ),
+  EMAIL_TO: getConfigValue(
+    ["output", "notifications", "email", "to"],
+    "EMAIL_TO",
+  ),
+
+  CSV_PATH: getConfigValue(
+    ["output", "csv", "path"],
+    "CSV_PATH",
+    defaultCsvPath,
+  ),
+  DUCKDB_PATH: getConfigValue(
+    ["output", "duckdb", "path"],
+    "DUCKDB_PATH",
+    defaultDuckdbPath,
+  ),
+  AIDS_DUCKDB_PATH: getConfigValue(
+    ["processing", "deduplication", "aids_duckdb_path"],
+    "AIDS_DUCKDB_PATH",
+    defaultAidsDuckdbPath,
+  ),
 });

@@ -18,29 +18,20 @@ Choose one of these installation methods:
    chmod +x bilibili-dynamic-subscribe-linux
    ```
 
-3. Init the configuration file:
+3. Create your configuration file:
 
    ```bash
-   cp .env.example .env
+   cp config.toml.example config.toml
    ```
 
-4. Edit the `.env` file with your settings.
+4. Edit the `config.toml` file with your settings.
 
 5. Run the executable:
    ```bash
    ./bilibili-dynamic-subscribe-linux
    ```
 
-### 2. Docker(Coming Soon)
-
-Pull and run the latest Docker image:
-
-```bash
-docker pull ghcr.io/icedata-top/hantang-dynamic:latest
-docker run -v ./config.env:/app/.env ghcr.io/icedata-top/hantang-dynamic:latest
-```
-
-### 3. From Source
+### 2. From Source
 
 ```bash
 # Install dependencies
@@ -55,51 +46,75 @@ pnpm start
 
 ## Configuration
 
-Create a `.env` file in the same directory as the executable with your settings:
+Create a `config.toml` file in the same directory as the executable. The TOML format is much cleaner and more organized than `.env` files:
 
-```env
-# Required Settings
-SESSDATA = ""                # Your Bilibili session data
-BILIBILI_UID = ""           # Your Bilibili user ID
+```toml
+# Data flow: Input → Processing → Output
 
-# Optional Settings
-LOGLEVEL = "info"          # Log level (debug, info, warn, error)
-FETCH_INTERVAL = 900000    # Fetch interval in ms (default: 900000 = 15 minutes)
-API_WAIT_TIME = 2000       # Wait time between API calls (default: 2000ms)
-API_RETRY_TIMES = 3        # Number of API retry attempts (default: 3)
-MAX_HISTORY_DAYS = 7       # Maximum days of history to fetch (default: 7)
-MAX_ITEM = 0               # Maximum number of items to fetch (0 for unlimited)
-ENABLE_TAG_FETCH = false   # Whether to fetch video tags (default: false)
+[input.bilibili]
+# Required: Your Bilibili user ID and session data
+uid = "12345678"               # Your Bilibili user ID
+sessdata = "your_sessdata"     # Your Bilibili session data
 
-# Video Type Filtering
-TYPE_ID_WHITE_LIST = 28,30,130  # Comma-separated video type IDs
-                                # 28: Original Music
-                                # 30: VOCALOID
-                                # 130: Music Misc
+# Optional: Additional authentication tokens
+csrf_token = ""                # CSRF token for user relation operations
+access_key = ""                # Access key for app authentication
 
-# Data Storage Settings
-CSV_PATH = "./data/uid{BILIBILI_UID}.csv"      # CSV file path (optional)
-DUCKDB_PATH = "./data/uid{BILIBILI_UID}.duckdb" # DuckDB file path (optional)
+[input.application]
+# Application input behavior settings
+log_level = "info"             # Log level: debug, info, warn, error
+fetch_interval = 900000        # Fetch interval in milliseconds (15 minutes)
+api_retry_times = 3            # Number of API retry attempts
+api_wait_time = 2000           # Wait time between API calls in milliseconds
+max_history_days = 7           # Maximum days of history to fetch
+max_item = 0                   # Maximum number of items to fetch (0 for unlimited)
 
-# MySQL Export Settings (Optional)
-MYSQL_IP = ""              # MySQL server IP
-MYSQL_PORT = 3306          # MySQL server port
-MYSQL_USERNAME = ""        # MySQL username
-MYSQL_PASSWORD = ""        # MySQL password
-MYSQL_DATABASE = ""        # MySQL database name
-MYSQL_TABLE = ""           # MySQL table name
+[processing.features]
+# Feature toggles
+enable_tag_fetch = false       # Whether to fetch video tags
+enable_user_relation = false  # Toggle for user relation features
 
-# Telegram Bot Settings (Optional)
-TELEGRAM_BOT_TOKEN = ""    # Telegram bot token
-TELEGRAM_CHAT_ID = ""      # Telegram chat ID
+[processing.filtering]
+# Content filtering settings
+type_id_whitelist = [28, 30, 130]  # Video type IDs to include
+                                   # 28 = Original Music, 30 = VOCALOID, 130 = Music Misc
+content_blacklist = []             # Content blacklist keywords
+content_whitelist = []             # Content whitelist keywords
 
-# Email Notification Settings (Optional)
-EMAIL_HOST = "smtp.example.com"
-EMAIL_PORT = 587
-EMAIL_USER = "your-email@example.com"
-EMAIL_PASS = "your-password"
-EMAIL_FROM = "your-email@example.com"
-EMAIL_TO = "recipient@example.com"
+[processing.deduplication]
+# AIDS tracking for deduplication
+aids_duckdb_path = ""          # AIDS tracking DuckDB (auto-generated if empty)
+
+[output.csv]
+# CSV file export settings
+path = ""                      # CSV file path (auto-generated if empty)
+
+[output.duckdb]
+# DuckDB file export settings
+path = ""                      # DuckDB file path (auto-generated if empty)
+
+[output.database]
+# MySQL export settings (all optional)
+host = ""                      # MySQL server IP
+port = 3306                    # MySQL server port
+username = ""                  # MySQL username
+password = ""                  # MySQL password
+database = ""                  # MySQL database name
+table = ""                     # MySQL table name
+
+[output.notifications.telegram]
+# Telegram notification settings
+bot_token = ""                 # Telegram bot token
+chat_id = ""                   # Telegram chat ID
+
+[output.notifications.email]
+# Email notification settings
+host = ""                      # SMTP server host (e.g., "smtp.gmail.com")
+port = 587                     # SMTP server port
+username = ""                  # Email username
+password = ""                  # Email password
+from = ""                      # Sender email address
+to = ""                        # Recipient email address
 ```
 
 ## Development
