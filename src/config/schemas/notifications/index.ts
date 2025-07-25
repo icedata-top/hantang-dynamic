@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { emailSchema, createEmailConfig } from "./email";
-import { telegramSchema, createTelegramConfig } from "./telegram";
+import { createEmailConfig, emailSchema } from "./email";
+import { createTelegramConfig, telegramSchema } from "./telegram";
 
 // Combined notifications configuration
 export const notificationsSchema = z.object({

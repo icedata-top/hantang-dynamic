@@ -1,9 +1,9 @@
 import { DuckDBInstance, DuckDBTimestampValue } from "@duckdb/node-api";
-import { VideoData } from "../../core/types";
-import { logger } from "../logger";
-import { config } from "../../config";
 import { existsSync, mkdirSync } from "fs";
 import { dirname } from "path";
+import { config } from "../../config";
+import type { VideoData } from "../../core/types";
+import { logger } from "../logger";
 
 export const saveToDuckDB = async (data: VideoData[]) => {
   try {
@@ -77,9 +77,9 @@ export const saveToDuckDB = async (data: VideoData[]) => {
 export const filterAndSaveNewAIDsToDuckDB = async (
   videoData: VideoData[],
 ): Promise<VideoData[]> => {
-  let aids = videoData.map((d) => d.aid);
-  let newAids = await filterNewAIDs(aids);
-  let newVideoData = videoData.filter((d) => newAids.includes(d.aid));
+  const aids = videoData.map((d) => d.aid);
+  const newAids = await filterNewAIDs(aids);
+  const newVideoData = videoData.filter((d) => newAids.includes(d.aid));
   return newVideoData;
 };
 

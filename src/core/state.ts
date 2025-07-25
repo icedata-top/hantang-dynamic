@@ -1,6 +1,6 @@
+import { randUA } from "@ahmedrangel/rand-user-agent";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { config } from "../config";
-import { randUA } from "@ahmedrangel/rand-user-agent";
 import { logger } from "../utils/logger";
 
 interface State {

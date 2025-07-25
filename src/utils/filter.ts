@@ -1,11 +1,11 @@
 import { config } from "../config";
-import { logger } from "./logger";
 import type { VideoData } from "../core/types";
+import { logger } from "./logger";
 
 export const filterVideo = async (
   videoData: VideoData,
 ): Promise<VideoData | null> => {
-  let contentToCheck = [
+  const contentToCheck = [
     videoData.title.toLowerCase(),
     videoData.description.toLowerCase(),
     videoData.tag.toLowerCase(),

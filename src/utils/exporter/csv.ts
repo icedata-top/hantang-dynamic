@@ -1,10 +1,10 @@
-import { writeFileSync, existsSync, mkdirSync, readFileSync } from "fs";
-import { dirname } from "path";
 import { Parser } from "@json2csv/plainjs";
 import { parse as parseCSV } from "csv-parse/sync"; // 新增导入
-import { VideoData } from "../../core/types";
-import { logger } from "../logger";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { dirname } from "path";
 import { config } from "../../config";
+import type { VideoData } from "../../core/types";
+import { logger } from "../logger";
 
 const fields = [
   { label: "AID", value: "aid" },

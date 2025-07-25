@@ -1,16 +1,16 @@
-import { readFileSync, existsSync } from "fs";
 import { parse } from "csv-parse/sync";
-import {
-  UserRelationAction,
-  RelationSource,
-  batchModifyUserRelation,
-  fetchUserRelation,
-  checkUserRelationConfig,
-} from "../api/relation";
-import { sleep, retryDelay } from "./datetime";
-import { logger } from "./logger";
-import { config } from "../config";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
+import {
+  batchModifyUserRelation,
+  checkUserRelationConfig,
+  fetchUserRelation,
+  RelationSource,
+  UserRelationAction,
+} from "../api/relation";
+import { config } from "../config";
+import { retryDelay, sleep } from "./datetime";
+import { logger } from "./logger";
 
 interface UserRelationData {
   user_id: number;
@@ -84,8 +84,8 @@ export class UserRelationManager {
       return;
     }
 
-    const actionName = this.getActionName(actionType);
-    const defaultFileName = this.getDefaultFilename(actionType);
+    const actionName = UserRelationManager.getActionName(actionType);
+    const defaultFileName = UserRelationManager.getDefaultFilename(actionType);
 
     // Default path or use provided path
     const filePath = csvPath || join(process.cwd(), "data", defaultFileName);
@@ -209,7 +209,7 @@ export class UserRelationManager {
       }
 
       if (i + batchSize < usersToProcess.length) {
-        let waitTimeThisBatch = waitTime * (0.5 + Math.random());
+        const waitTimeThisBatch = waitTime * (0.5 + Math.random());
         logger.info(
           `Waiting ${Math.round(waitTimeThisBatch / 1000)} seconds before next batch...`,
         );

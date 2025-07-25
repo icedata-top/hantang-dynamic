@@ -1,8 +1,8 @@
-import { config } from "../config";
-import { logger } from "./logger";
-import type { BiliDynamicCard, VideoData, BiliVideoCard } from "../core/types";
 import { fetchVideoTags } from "../api/video";
+import { config } from "../config";
+import type { BiliDynamicCard, BiliVideoCard, VideoData } from "../core/types";
 import { sleep } from "./datetime";
+import { logger } from "./logger";
 
 export const processCard = async (
   dynamiccard: BiliDynamicCard,

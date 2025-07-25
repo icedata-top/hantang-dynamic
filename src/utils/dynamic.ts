@@ -1,10 +1,10 @@
-import { BiliDynamicCard, VideoData } from "../core/types";
 import { getDynamic } from "../api/dynamic";
-import { sleep } from "./datetime";
 import { config } from "../config";
-import { processCard } from "./processCard";
+import type { BiliDynamicCard, VideoData } from "../core/types";
+import { sleep } from "./datetime";
 import { filterVideo } from "./filter";
 import { logger } from "./logger";
+import { processCard } from "./processCard";
 
 export async function filterAndProcessDynamics(
   dynamics: BiliDynamicCard[],

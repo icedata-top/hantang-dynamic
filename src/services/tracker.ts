@@ -1,12 +1,12 @@
-import { StateManager } from "../core/state";
 import { fetchDynamics } from "../api/dynamic";
-import { exportData } from "../utils/exporter/exporter";
-import { config } from "../config";
-import { sleep } from "../utils/datetime";
-import { logger } from "../utils/logger";
-import { filterAndProcessDynamics } from "../utils/dynamic";
 import { generateBiliTicket } from "../api/signatures/biliTicket";
+import { config } from "../config";
+import { StateManager } from "../core/state";
 import type { BiliDynamicCard } from "../core/types";
+import { sleep } from "../utils/datetime";
+import { filterAndProcessDynamics } from "../utils/dynamic";
+import { exportData } from "../utils/exporter/exporter";
+import { logger } from "../utils/logger";
 
 export class DynamicTracker {
   private state = new StateManager();

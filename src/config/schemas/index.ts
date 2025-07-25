@@ -1,28 +1,22 @@
-// Re-export all schema types for easy importing
-export type { BilibiliConfig } from "./bilibili";
 export type { ApplicationConfig } from "./application";
-export type { ProcessingConfig } from "./processing";
+export { applicationSchema, createApplicationConfig } from "./application";
+export type { BilibiliConfig } from "./bilibili";
+export { bilibiliSchema, createBilibiliConfig } from "./bilibili";
 export type {
-  ExportConfig,
   CsvConfig,
   DuckdbConfig,
+  ExportConfig,
   MysqlConfig,
 } from "./export";
+export { createExportConfig, exportSchema } from "./export";
 export type {
-  NotificationsConfig,
   EmailConfig,
+  NotificationsConfig,
   TelegramConfig,
 } from "./notifications";
-
-// Re-export all schemas
-export { bilibiliSchema } from "./bilibili";
-export { applicationSchema } from "./application";
-export { processingSchema } from "./processing";
-export { exportSchema } from "./export";
-export { notificationsSchema } from "./notifications";
-
-export { createBilibiliConfig } from "./bilibili";
-export { createApplicationConfig } from "./application";
-export { createProcessingConfig } from "./processing";
-export { createExportConfig } from "./export";
-export { createNotificationsConfig } from "./notifications";
+export {
+  createNotificationsConfig,
+  notificationsSchema,
+} from "./notifications";
+export type { ProcessingConfig } from "./processing";
+export { createProcessingConfig, processingSchema } from "./processing";

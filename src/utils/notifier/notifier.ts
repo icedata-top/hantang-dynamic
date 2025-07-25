@@ -1,7 +1,7 @@
-import { sendTelegramMessage } from "./telegram";
-import { sendEmailMessage } from "./email";
 import { config } from "../../config";
 import { logger } from "../logger";
+import { sendEmailMessage } from "./email";
+import { sendTelegramMessage } from "./telegram";
 
 export async function notify(message: string) {
   const promises: Promise<void>[] = [];

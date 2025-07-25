@@ -1,6 +1,6 @@
 import mysql from "mysql2/promise";
 import { config } from "../../config";
-import { VideoData } from "../../core/types";
+import type { VideoData } from "../../core/types";
 import { logger } from "../logger";
 
 export const saveToMysql = async (data: VideoData[]) => {

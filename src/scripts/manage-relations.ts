@@ -1,7 +1,7 @@
-import { UserRelationManager } from "../utils/relationManager";
+import * as readline from "readline";
 import { UserRelationAction } from "../api/relation";
 import { logger } from "../utils/logger";
-import * as readline from "readline";
+import { UserRelationManager } from "../utils/relationManager";
 
 /**
  * Display help information

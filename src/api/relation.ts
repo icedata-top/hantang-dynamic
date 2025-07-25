@@ -1,8 +1,8 @@
-import { xClient, accountClient, simulateBrowserVisit } from "./client";
-import { VideoTagResponse } from "../core/types";
-import { logger } from "../utils/logger";
-import { sleep, getRandomDelay } from "../utils/datetime";
 import { config } from "../config";
+import { VideoTagResponse } from "../core/types";
+import { getRandomDelay, sleep } from "../utils/datetime";
+import { logger } from "../utils/logger";
+import { accountClient, simulateBrowserVisit, xClient } from "./client";
 
 // User relationship operation types
 export enum UserRelationAction {

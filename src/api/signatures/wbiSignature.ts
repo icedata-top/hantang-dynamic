@@ -1,8 +1,8 @@
-import crypto from "crypto";
 import axios from "axios";
-import { logger } from "../../utils/logger";
-import { StateManager } from "../../core/state";
+import crypto from "crypto";
 import { config } from "../../config";
+import { StateManager } from "../../core/state";
+import { logger } from "../../utils/logger";
 
 // Mixing key encoding table for WBI signature
 const MIXIN_KEY_ENC_TAB = [
@@ -81,7 +81,7 @@ async function fetchWbiKeys(
  * @returns Valid WBI keys
  */
 async function getWbiKeys(): Promise<{ imgKey: string; subKey: string }> {
-  let stateManager = new StateManager();
+  const stateManager = new StateManager();
   if (stateManager.isWbiKeysValid()) {
     return {
       imgKey: stateManager.imgKey!,

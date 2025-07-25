@@ -1,8 +1,8 @@
-import crypto from "crypto";
+import crypto from "node:crypto";
 import axios from "axios";
-import { logger } from "../../utils/logger";
 import { config } from "../../config";
 import { StateManager } from "../../core/state";
+import { logger } from "../../utils/logger";
 
 interface BiliTicketResponse {
   code: number;

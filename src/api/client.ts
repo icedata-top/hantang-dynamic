@@ -1,13 +1,13 @@
 import axios, {
-  AxiosInstance,
-  InternalAxiosRequestConfig,
-  AxiosResponse,
+  type AxiosInstance,
+  type AxiosResponse,
+  type InternalAxiosRequestConfig,
 } from "axios";
 import { config } from "../config";
-import { sleep, getRandomDelay, retryDelay } from "../utils/datetime";
-import { notify } from "../utils/notifier/notifier";
 import { StateManager } from "../core/state";
+import { getRandomDelay, retryDelay, sleep } from "../utils/datetime";
 import { logger } from "../utils/logger";
+import { notify } from "../utils/notifier/notifier";
 import { generateBiliTicket } from "./signatures/biliTicket";
 import { buildSignedQuery } from "./signatures/wbiSignature";
 

@@ -1,8 +1,8 @@
-import { saveToMysql } from "./mysql";
-import { saveAsCSV } from "./csv";
-import { saveToDuckDB } from "./duckdb";
 import { config } from "../../config";
 import type { VideoData } from "../../core/types";
+import { saveAsCSV } from "./csv";
+import { saveToDuckDB } from "./duckdb";
+import { saveToMysql } from "./mysql";
 
 export async function exportData(data: VideoData[]) {
   const timestamp = Date.now();

@@ -1,11 +1,11 @@
-import { xClient } from "./client";
-import { logger } from "../utils/logger";
-import {
-  VideoTagResponse,
-  BiliVideoDetailResponse,
+import type {
   BiliVideoDescResponse,
+  BiliVideoDetailResponse,
   BiliVideoPageListResponse,
+  VideoTagResponse,
 } from "../core/types";
+import { logger } from "../utils/logger";
+import { xClient } from "./client";
 
 export const fetchVideoTags = async (
   bvid: string,

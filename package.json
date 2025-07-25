@@ -6,8 +6,8 @@
     "build": "ncc build src/index.ts -o dist",
     "start": "tsx dist/index.js",
     "dev": "tsx src/index.ts",
-    "lint": "eslint . --ext .ts",
-    "format": "prettier --write . --ignore-path .prettierignore",
+    "lint": "biome lint --write",
+    "format": "biome format --write",
     "package": "pkg dist/index.js --out-path dist/executables/ --compress Gzip --targets node20-win-x64,node20-macos-x64,node20-macos-arm64,node20-linux-x64,node20-linux-arm64 --no-bytecode --public",
     "relation": "tsx src/scripts/manage-relations.ts"
   },
@@ -23,16 +23,12 @@
     "zod": "^3.25.62"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.1.2",
     "@types/json2csv": "^5.0.7",
     "@types/node": "^20.19.0",
     "@types/nodemailer": "^6.4.17",
-    "@typescript-eslint/eslint-plugin": "^8.34.0",
-    "@typescript-eslint/parser": "^8.34.0",
     "@vercel/ncc": "^0.38.3",
     "@yao-pkg/pkg": "^6.5.1",
-    "eslint": "^9.28.0",
-    "eslint-config-prettier": "^10.1.5",
-    "prettier": "^3.5.3",
     "tsx": "^4.20.1",
     "typescript": "^5.8.3"
   }

@@ -1,13 +1,13 @@
-import { dynamicClient } from "./client";
-import { logger } from "../utils/logger";
-import {
-  BiliDynamicNewResponse,
-  BiliDynamicHistoryResponse,
-  BiliDynamicDetailResponse,
-  BiliDynamicCard,
-} from "../core/types";
 import { config } from "../config";
+import type {
+  BiliDynamicCard,
+  BiliDynamicDetailResponse,
+  BiliDynamicHistoryResponse,
+  BiliDynamicNewResponse,
+} from "../core/types";
 import { sleep } from "../utils/datetime";
+import { logger } from "../utils/logger";
+import { dynamicClient } from "./client";
 
 type DynamicType = "video" | "forward";
 
@@ -65,7 +65,7 @@ export const getNewDynamic = (type: number) =>
 
 export const getHistoryDynamic = (
   type: number,
-  offset: number | string | BigInt,
+  offset: number | string | bigint,
 ) =>
   fetchDynamicsAPI("/dynamic_history", {
     uid: config.bilibili.uid,

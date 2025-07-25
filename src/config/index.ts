@@ -5,14 +5,14 @@ import { z } from "zod";
 import {
   applicationSchema,
   bilibiliSchema,
-  exportSchema,
-  notificationsSchema,
-  processingSchema,
   createApplicationConfig,
   createBilibiliConfig,
   createExportConfig,
   createNotificationsConfig,
   createProcessingConfig,
+  exportSchema,
+  notificationsSchema,
+  processingSchema,
 } from "./schemas";
 
 let tomlData: any = {};
