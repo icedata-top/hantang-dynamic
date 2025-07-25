@@ -1,4 +1,4 @@
-import { config } from "./core/config";
+import { config } from "./config";
 import { DynamicTracker } from "./services/tracker";
 import { sleep } from "./utils/datetime";
 import { logger } from "./utils/logger";
@@ -15,7 +15,7 @@ async function main() {
   // Setup periodic execution
   const interval = setInterval(
     () => tracker.start().catch((err) => logger.error(err)),
-    config.FETCH_INTERVAL,
+    config.app.fetchInterval,
   );
 
   // Graceful shutdown

@@ -4,7 +4,7 @@ import { Parser } from "@json2csv/plainjs";
 import { parse as parseCSV } from "csv-parse/sync"; // 新增导入
 import { VideoData } from "../../core/types";
 import { logger } from "../logger";
-import { config } from "../../core/config";
+import { config } from "../../config";
 
 const fields = [
   { label: "AID", value: "aid" },
@@ -20,8 +20,8 @@ const fields = [
 
 export const saveAsCSV = (data: VideoData[]) => {
   try {
-    const filepath = config.CSV_PATH;
-    const dirPath = dirname(config.CSV_PATH);
+    const filepath = config.outputs.database.csv.path;
+    const dirPath = dirname(config.outputs.database.csv.path);
 
     // Ensure directory exists
     if (!existsSync(dirPath)) {

@@ -3,7 +3,7 @@ import axios, {
   InternalAxiosRequestConfig,
   AxiosResponse,
 } from "axios";
-import { config } from "../core/config";
+import { config } from "../config";
 import { sleep, getRandomDelay, retryDelay } from "../utils/datetime";
 import { notify } from "../utils/notifier/notifier";
 import { StateManager } from "../core/state";
@@ -140,8 +140,8 @@ export function createClient(baseURL: string): AxiosInstance {
       if (!error.response) {
         return retryDelay(
           () => client(error.config),
-          config.API_RETRY_TIMES,
-          config.API_WAIT_TIME,
+          config.app.apiRetry.times,
+          config.app.apiRetry.waitTime,
         );
       }
       return Promise.reject({
@@ -156,10 +156,10 @@ export function createClient(baseURL: string): AxiosInstance {
 }
 
 function getCookieString(stateManager: StateManager): string {
-  let cookie = `SESSDATA=${config.SESSDATA}`;
+  let cookie = `SESSDATA=${config.bilibili.sessdata}`;
 
-  if (config.BILI_JCT) {
-    cookie += `; bili_jct=${config.BILI_JCT}`;
+  if (config.bilibili.csrfToken) {
+    cookie += `; bili_jct=${config.bilibili.csrfToken}`;
   }
 
   if (stateManager.biliTicket) {

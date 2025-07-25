@@ -1,13 +1,13 @@
 import { DuckDBInstance, DuckDBTimestampValue } from "@duckdb/node-api";
 import { VideoData } from "../../core/types";
 import { logger } from "../logger";
-import { config } from "../../core/config";
+import { config } from "../../config";
 import { existsSync, mkdirSync } from "fs";
 import { dirname } from "path";
 
 export const saveToDuckDB = async (data: VideoData[]) => {
   try {
-    const filepath = config.DUCKDB_PATH;
+    const filepath = config.outputs.database.duckdb.path;
     const dirPath = dirname(filepath);
 
     // Ensure directory exists
@@ -93,7 +93,7 @@ export const filterNewAIDs = async (aids: bigint[]): Promise<bigint[]> => {
     if (aids.length === 0) {
       return [];
     }
-    const filepath = config.AIDS_DUCKDB_PATH;
+    const filepath = config.app.deduplication.aidsDuckdbPath;
     const dirPath = dirname(filepath);
     if (!existsSync(dirPath)) {
       mkdirSync(dirPath, { recursive: true });
@@ -137,7 +137,7 @@ export const filterNewAIDs = async (aids: bigint[]): Promise<bigint[]> => {
  */
 export const saveAIDsToDuckDB = async (aids: bigint[]) => {
   try {
-    const filepath = config.AIDS_DUCKDB_PATH;
+    const filepath = config.app.deduplication.aidsDuckdbPath;
     const dirPath = dirname(filepath);
 
     // Ensure directory exists

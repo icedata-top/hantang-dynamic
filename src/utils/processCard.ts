@@ -1,4 +1,4 @@
-import { config } from "../core/config";
+import { config } from "../config";
 import { logger } from "./logger";
 import type { BiliDynamicCard, VideoData, BiliVideoCard } from "../core/types";
 import { fetchVideoTags } from "../api/video";
@@ -10,14 +10,14 @@ export const processCard = async (
   const card: BiliVideoCard = JSON.parse(dynamiccard.card);
   let tagString = "";
 
-  if (config.ENABLE_TAG_FETCH) {
+  if (config.app.features.enableTagFetch) {
     try {
       const { data: VideoTagResponse } = await fetchVideoTags(
         dynamiccard.desc.bvid,
       );
       tagString = VideoTagResponse.map((t) => t.tag_name).join(";");
       logger.debug(`标签获取成功 ${dynamiccard.desc.bvid}:`, tagString);
-      await sleep(config.API_WAIT_TIME);
+      await sleep(config.app.apiRetry.waitTime);
     } catch (error) {
       logger.error(
         `标签获取失败 ${dynamiccard.desc.bvid}:`,

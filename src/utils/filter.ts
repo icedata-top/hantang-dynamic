@@ -1,4 +1,4 @@
-import { config } from "../core/config";
+import { config } from "../config";
 import { logger } from "./logger";
 import type { VideoData } from "../core/types";
 
@@ -12,16 +12,16 @@ export const filterVideo = async (
   ].join(" ");
 
   if (
-    Array.isArray(config.TYPE_ID_WHITE_LIST) &&
-    config.TYPE_ID_WHITE_LIST.length > 0
+    Array.isArray(config.app.filtering.typeIdWhitelist) &&
+    config.app.filtering.typeIdWhitelist.length > 0
   ) {
-    if (!config.TYPE_ID_WHITE_LIST.includes(videoData.type_id)) {
+    if (!config.app.filtering.typeIdWhitelist.includes(videoData.type_id)) {
       let inwhite = false;
       if (
-        Array.isArray(config.CONTENT_WHITE_LIST) &&
-        config.CONTENT_WHITE_LIST.length > 0
+        Array.isArray(config.app.filtering.contentWhitelist) &&
+        config.app.filtering.contentWhitelist.length > 0
       ) {
-        for (const keyword of config.CONTENT_WHITE_LIST) {
+        for (const keyword of config.app.filtering.contentWhitelist) {
           if (contentToCheck.includes(keyword.toLowerCase())) {
             logger.info(
               `包含白名单关键字 "${keyword}"，忽略类型检查: ${videoData.title}`,
@@ -40,10 +40,10 @@ export const filterVideo = async (
 
   // Check content blacklist
   if (
-    Array.isArray(config.CONTENT_BLACK_LIST) &&
-    config.CONTENT_BLACK_LIST.length > 0
+    Array.isArray(config.app.filtering.contentBlacklist) &&
+    config.app.filtering.contentBlacklist.length > 0
   ) {
-    for (const keyword of config.CONTENT_BLACK_LIST) {
+    for (const keyword of config.app.filtering.contentBlacklist) {
       if (contentToCheck.includes(keyword.toLowerCase())) {
         logger.debug(`忽略包含黑名单关键字 "${keyword}": ${videoData.title}`);
         return null;

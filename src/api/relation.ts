@@ -2,7 +2,7 @@ import { xClient, accountClient, simulateBrowserVisit } from "./client";
 import { VideoTagResponse } from "../core/types";
 import { logger } from "../utils/logger";
 import { sleep, getRandomDelay } from "../utils/datetime";
-import { config } from "../core/config";
+import { config } from "../config";
 
 // User relationship operation types
 export enum UserRelationAction {
@@ -176,7 +176,7 @@ export const modifyUserRelation = async (
   csrf?: string,
 ): Promise<RelationModifyResponse> => {
   // Check if feature is enabled in config
-  if (!config.ENABLE_USER_RELATION) {
+  if (!config.app.features.enableUserRelation) {
     return {
       code: RelationErrorCode.RequestError,
       message: "User relation operations are disabled in configuration",
@@ -185,8 +185,8 @@ export const modifyUserRelation = async (
   }
 
   // Use provided credentials or fall back to config values
-  const useAccessKey = accessKey || config.BILI_ACCESS_KEY;
-  const useCsrf = csrf || config.BILI_JCT;
+  const useAccessKey = accessKey || config.bilibili.accessKey;
+  const useCsrf = csrf || config.bilibili.csrfToken;
 
   if (!useAccessKey && !useCsrf) {
     return {
@@ -335,7 +335,7 @@ export const batchModifyUserRelation = async (
   csrf?: string,
 ): Promise<BatchRelationModifyResponse> => {
   // Check if feature is enabled in config
-  if (!config.ENABLE_USER_RELATION) {
+  if (!config.app.features.enableUserRelation) {
     return {
       code: RelationErrorCode.RequestError,
       message: "User relation operations are disabled in configuration",
@@ -345,8 +345,8 @@ export const batchModifyUserRelation = async (
   }
 
   // Use provided credentials or fall back to config values
-  const useAccessKey = accessKey || config.BILI_ACCESS_KEY;
-  const useCsrf = csrf || config.BILI_JCT;
+  const useAccessKey = accessKey || config.bilibili.accessKey;
+  const useCsrf = csrf || config.bilibili.csrfToken;
 
   if (!useAccessKey && !useCsrf) {
     return {
@@ -581,7 +581,7 @@ export const checkUserRelationConfig = (): {
 } => {
   const missingConfig: string[] = [];
 
-  if (!config.ENABLE_USER_RELATION) {
+  if (!config.app.features.enableUserRelation) {
     return {
       enabled: false,
       hasAuth: false,
@@ -589,7 +589,7 @@ export const checkUserRelationConfig = (): {
     };
   }
 
-  if (!config.BILI_JCT && !config.BILI_ACCESS_KEY) {
+  if (!config.bilibili.csrfToken && !config.bilibili.accessKey) {
     missingConfig.push("BILI_JCT or BILI_ACCESS_KEY");
   }
 

@@ -1,16 +1,23 @@
 import { sendTelegramMessage } from "./telegram";
 import { sendEmailMessage } from "./email";
-import { config } from "../../core/config";
+import { config } from "../../config";
 import { logger } from "../logger";
 
 export async function notify(message: string) {
   const promises: Promise<void>[] = [];
 
-  if (config.TELEGRAM_BOT_TOKEN && config.TELEGRAM_CHAT_ID) {
+  if (
+    config.outputs.notification.telegram.botToken &&
+    config.outputs.notification.telegram.chatId
+  ) {
     promises.push(sendTelegramMessage(message));
   }
 
-  if (config.EMAIL_HOST && config.EMAIL_USER && config.EMAIL_TO) {
+  if (
+    config.outputs.notification.email.host &&
+    config.outputs.notification.email.user &&
+    config.outputs.notification.email.to
+  ) {
     promises.push(sendEmailMessage(message));
   }
 

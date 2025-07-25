@@ -1,26 +1,30 @@
 import nodemailer from "nodemailer";
-import { config } from "../../core/config";
+import { config } from "../../config";
 import { logger } from "../logger";
 
 export async function sendEmailMessage(message: string) {
-  if (!config.EMAIL_HOST || !config.EMAIL_USER || !config.EMAIL_TO) {
+  if (
+    !config.outputs.notification.email.host ||
+    !config.outputs.notification.email.user ||
+    !config.outputs.notification.email.to
+  ) {
     return;
   }
 
   try {
     const transporter = nodemailer.createTransport({
-      host: config.EMAIL_HOST,
-      port: config.EMAIL_PORT || 587,
-      secure: config.EMAIL_PORT === 465,
+      host: config.outputs.notification.email.host,
+      port: config.outputs.notification.email.port || 587,
+      secure: config.outputs.notification.email.port === 465,
       auth: {
-        user: config.EMAIL_USER,
-        pass: config.EMAIL_PASS,
+        user: config.outputs.notification.email.user,
+        pass: config.outputs.notification.email.pass,
       },
     });
 
     await transporter.sendMail({
-      from: config.EMAIL_FROM || config.EMAIL_USER,
-      to: config.EMAIL_TO,
+      from: config.outputs.notification.email.from,
+      to: config.outputs.notification.email.to,
       subject: "Bilibili Dynamic Notification",
       html: message,
     });

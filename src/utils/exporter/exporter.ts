@@ -1,7 +1,7 @@
 import { saveToMysql } from "./mysql";
 import { saveAsCSV } from "./csv";
 import { saveToDuckDB } from "./duckdb";
-import { config } from "../../core/config";
+import { config } from "../../config";
 import type { VideoData } from "../../core/types";
 
 export async function exportData(data: VideoData[]) {
@@ -9,11 +9,11 @@ export async function exportData(data: VideoData[]) {
   const results = [];
 
   if (
-    config.MYSQL_IP &&
-    config.MYSQL_PORT &&
-    config.MYSQL_USERNAME &&
-    config.MYSQL_PASSWORD &&
-    config.MYSQL_TABLE
+    config.outputs.database.mysql.host &&
+    config.outputs.database.mysql.port &&
+    config.outputs.database.mysql.username &&
+    config.outputs.database.mysql.password &&
+    config.outputs.database.mysql.table
   ) {
     const mysqlResult = await saveToMysql(data);
     results.push({ type: "mysql", success: mysqlResult });

@@ -9,7 +9,7 @@ import {
 } from "../api/relation";
 import { sleep, retryDelay } from "./datetime";
 import { logger } from "./logger";
-import { config } from "../core/config";
+import { config } from "../config";
 import { join } from "path";
 
 interface UserRelationData {
@@ -123,9 +123,9 @@ export class UserRelationManager {
     ) {
       try {
         const currentFollows = await retryDelay(
-          () => fetchUserRelation(config.BILIBILI_UID),
-          config.API_RETRY_TIMES,
-          config.API_WAIT_TIME,
+          () => fetchUserRelation(config.bilibili.uid),
+          config.app.apiRetry.times,
+          config.app.apiRetry.waitTime,
         );
 
         currentFollowIds = new Set(

@@ -2,7 +2,7 @@ import crypto from "crypto";
 import axios from "axios";
 import { logger } from "../../utils/logger";
 import { StateManager } from "../../core/state";
-import { config } from "../../core/config";
+import { config } from "../../config";
 
 // Mixing key encoding table for WBI signature
 const MIXIN_KEY_ENC_TAB = [
@@ -39,8 +39,8 @@ async function fetchWbiKeys(
     };
 
     // Add SESSDATA if available
-    if (config.SESSDATA) {
-      headers.Cookie = `SESSDATA=${config.SESSDATA}`;
+    if (config.bilibili.sessdata) {
+      headers.Cookie = `SESSDATA=${config.bilibili.sessdata}`;
     }
 
     const response = await axios.get(url, { headers });

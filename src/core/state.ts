@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "fs";
-import { config } from "./config";
+import { config } from "../config";
 import { randUA } from "@ahmedrangel/rand-user-agent";
 import { logger } from "../utils/logger";
 
@@ -121,7 +121,7 @@ export class StateManager {
   }
 
   isWithinHistoryWindow(timestamp: number) {
-    const cutoff = Date.now() - config.MAX_HISTORY_DAYS * 86400 * 1000;
+    const cutoff = Date.now() - config.app.maxHistoryDays * 86400 * 1000;
     return timestamp * 1000 > cutoff;
   }
 

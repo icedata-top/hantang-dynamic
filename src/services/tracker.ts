@@ -1,7 +1,7 @@
 import { StateManager } from "../core/state";
 import { fetchDynamics } from "../api/dynamic";
 import { exportData } from "../utils/exporter/exporter";
-import { config } from "../core/config";
+import { config } from "../config";
 import { sleep } from "../utils/datetime";
 import { logger } from "../utils/logger";
 import { filterAndProcessDynamics } from "../utils/dynamic";
@@ -33,7 +33,7 @@ export class DynamicTracker {
     while (this.isRunning) {
       try {
         await this.checkDynamics();
-        await sleep(config.FETCH_INTERVAL);
+        await sleep(config.app.fetchInterval);
       } catch (error) {
         logger.error("Tracker error:", error);
         if (error instanceof Error) {
@@ -52,8 +52,8 @@ export class DynamicTracker {
   private async checkDynamics() {
     const Dynamics = await fetchDynamics({
       minDynamicId: this.state.lastDynamicId,
-      minTimestamp: Date.now() / 1000 - config.MAX_HISTORY_DAYS * 86400,
-      max_items: config.MAX_ITEM,
+      minTimestamp: Date.now() / 1000 - config.app.maxHistoryDays * 86400,
+      max_items: config.app.maxItem,
       types: ["video", "forward"],
     });
 

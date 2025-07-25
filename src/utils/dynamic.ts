@@ -1,7 +1,7 @@
 import { BiliDynamicCard, VideoData } from "../core/types";
 import { getDynamic } from "../api/dynamic";
 import { sleep } from "./datetime";
-import { config } from "../core/config";
+import { config } from "../config";
 import { processCard } from "./processCard";
 import { filterVideo } from "./filter";
 import { logger } from "./logger";
@@ -64,7 +64,7 @@ async function handleForwardedDynamic(
 
   logger.info(`Processing forward dynamic ${dynamic.desc.dynamic_id_str}`);
   const newDynamic = await getDynamic(dynamic.desc.origin.dynamic_id_str);
-  await sleep(config.API_WAIT_TIME);
+  await sleep(config.app.apiRetry.waitTime);
 
   return newDynamic ? newDynamic.data.card : null;
 }

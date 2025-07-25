@@ -1,4 +1,4 @@
-import { config } from "../core/config";
+import { config } from "../config";
 
 type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -14,7 +14,7 @@ class Logger {
 
   constructor() {
     this.currentLevel =
-      LOG_LEVELS[config.LOGLEVEL as LogLevel] || LOG_LEVELS.info;
+      LOG_LEVELS[config.app.logLevel as LogLevel] || LOG_LEVELS.info;
   }
 
   private shouldLog(level: LogLevel): boolean {

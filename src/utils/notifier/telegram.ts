@@ -1,17 +1,20 @@
 import axios from "axios";
-import { config } from "../../core/config";
+import { config } from "../../config";
 import { logger } from "../logger";
 
 export async function sendTelegramMessage(message: string) {
-  if (!config.TELEGRAM_BOT_TOKEN || !config.TELEGRAM_CHAT_ID) {
+  if (
+    !config.outputs.notification.telegram.botToken ||
+    !config.outputs.notification.telegram.chatId
+  ) {
     return;
   }
 
   try {
     await axios.post(
-      `https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/sendMessage`,
+      `https://api.telegram.org/bot${config.outputs.notification.telegram.botToken}/sendMessage`,
       {
-        chat_id: config.TELEGRAM_CHAT_ID,
+        chat_id: config.outputs.notification.telegram.chatId,
         text: message,
         parse_mode: "HTML",
       },

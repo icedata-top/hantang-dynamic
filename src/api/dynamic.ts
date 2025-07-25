@@ -6,7 +6,7 @@ import {
   BiliDynamicDetailResponse,
   BiliDynamicCard,
 } from "../core/types";
-import { config } from "../core/config";
+import { config } from "../config";
 import { sleep } from "../utils/datetime";
 
 type DynamicType = "video" | "forward";
@@ -59,7 +59,7 @@ export const fetchDynamicAPI = async (
 
 export const getNewDynamic = (type: number) =>
   fetchDynamicsAPI("/dynamic_new", {
-    uid: config.BILIBILI_UID,
+    uid: config.bilibili.uid,
     type,
   });
 
@@ -68,7 +68,7 @@ export const getHistoryDynamic = (
   offset: number | string | BigInt,
 ) =>
   fetchDynamicsAPI("/dynamic_history", {
-    uid: config.BILIBILI_UID,
+    uid: config.bilibili.uid,
     type,
     offset_dynamic_id: offset,
   });
@@ -80,7 +80,7 @@ export const getDynamic = (dynamicId: number | string) =>
 
 export const fetchDynamics = async ({
   minDynamicId = 0,
-  minTimestamp = Date.now() / 1000 - config.MAX_HISTORY_DAYS * 86400,
+  minTimestamp = Date.now() / 1000 - config.app.maxHistoryDays * 86400,
   max_items = 0,
   types = ["video", "forward"] as DynamicType[],
 }): Promise<BiliDynamicCard[]> => {
@@ -131,8 +131,8 @@ export const fetchDynamics = async ({
         offset = historyResponse.data.next_offset;
       }
 
-      if (config.API_WAIT_TIME > 0) {
-        await sleep(config.API_WAIT_TIME);
+      if (config.app.apiRetry.waitTime > 0) {
+        await sleep(config.app.apiRetry.waitTime);
       }
     }
   }

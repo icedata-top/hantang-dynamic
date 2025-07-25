@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import axios from "axios";
 import { logger } from "../../utils/logger";
-import { config } from "../../core/config";
+import { config } from "../../config";
 import { StateManager } from "../../core/state";
 
 interface BiliTicketResponse {
@@ -54,7 +54,7 @@ export async function generateBiliTicket(csrf: string = ""): Promise<{
       key_id: "ec02",
       hexsign: hexSign,
       "context[ts]": timestamp.toString(),
-      csrf: csrf || config.BILI_JCT || "",
+      csrf: csrf || config.bilibili.csrfToken || "",
     };
 
     const headers: Record<string, string> = {

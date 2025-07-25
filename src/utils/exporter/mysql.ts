@@ -1,15 +1,15 @@
 import mysql from "mysql2/promise";
-import { config } from "../../core/config";
+import { config } from "../../config";
 import { VideoData } from "../../core/types";
 import { logger } from "../logger";
 
 export const saveToMysql = async (data: VideoData[]) => {
   if (
-    !config.MYSQL_IP ||
-    !config.MYSQL_PORT ||
-    !config.MYSQL_USERNAME ||
-    !config.MYSQL_PASSWORD ||
-    !config.MYSQL_TABLE
+    !config.outputs.database.mysql.host ||
+    !config.outputs.database.mysql.port ||
+    !config.outputs.database.mysql.username ||
+    !config.outputs.database.mysql.password ||
+    !config.outputs.database.mysql.table
   ) {
     logger.warn("Missing MySQL configuration. Falling back to CSV export.");
     return false;
@@ -17,15 +17,15 @@ export const saveToMysql = async (data: VideoData[]) => {
 
   try {
     const connection = await mysql.createConnection({
-      host: config.MYSQL_IP,
-      port: config.MYSQL_PORT,
-      user: config.MYSQL_USERNAME,
-      password: config.MYSQL_PASSWORD,
-      database: config.MYSQL_DATABASE,
+      host: config.outputs.database.mysql.host,
+      port: config.outputs.database.mysql.port,
+      user: config.outputs.database.mysql.username,
+      password: config.outputs.database.mysql.password,
+      database: config.outputs.database.mysql.database,
     });
 
     // Insert each record into the specified table
-    const table = config.MYSQL_TABLE;
+    const table = config.outputs.database.mysql.table;
     const batchSize = 20;
     const insertQuery = `
       INSERT IGNORE INTO \`${table}\`
