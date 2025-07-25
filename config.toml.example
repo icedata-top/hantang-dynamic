@@ -25,6 +25,7 @@ max_item = 0                   # Maximum number of items to fetch (0 for unlimit
 # Feature toggles
 enable_tag_fetch = false       # Whether to fetch video tags
 enable_user_relation = false   # Toggle for user relation features
+enable_deduplication = true    # Enable AID-based deduplication (default: true)
 
 [processing.filtering]
 # Content filtering settings

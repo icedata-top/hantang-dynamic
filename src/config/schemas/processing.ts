@@ -5,6 +5,7 @@ export const processingSchema = z.object({
   features: z.object({
     enableTagFetch: z.coerce.boolean().default(false),
     enableUserRelation: z.coerce.boolean().default(false),
+    enableDeduplication: z.coerce.boolean().default(true),
   }),
   filtering: z.object({
     typeIdWhitelist: z.array(z.number()).default([]),
@@ -36,6 +37,11 @@ export function createProcessingConfig(
         ["processing", "features", "enable_user_relation"],
         "ENABLE_USER_RELATION",
         false,
+      ),
+      enableDeduplication: getConfigValue(
+        ["processing", "features", "enable_deduplication"],
+        "ENABLE_DEDUPLICATION",
+        true,
       ),
     },
     filtering: {
