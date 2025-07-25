@@ -17,3 +17,56 @@ export const processingSchema = z.object({
 });
 
 export type ProcessingConfig = z.infer<typeof processingSchema>;
+
+export function createProcessingConfig(
+  getConfigValue: (
+    tomlPath: string[],
+    envKey: string,
+    defaultValue?: any,
+  ) => any,
+): ProcessingConfig {
+  return {
+    features: {
+      enableTagFetch: getConfigValue(
+        ["processing", "features", "enable_tag_fetch"],
+        "ENABLE_TAG_FETCH",
+        false,
+      ),
+      enableUserRelation: getConfigValue(
+        ["processing", "features", "enable_user_relation"],
+        "ENABLE_USER_RELATION",
+        false,
+      ),
+    },
+    filtering: {
+      typeIdWhitelist:
+        getConfigValue(
+          ["processing", "filtering", "type_id_whitelist"],
+          "TYPE_ID_WHITE_LIST",
+        ) ||
+        process.env.TYPE_ID_WHITE_LIST?.split(",").map(Number) ||
+        [],
+      contentBlacklist:
+        getConfigValue(
+          ["processing", "filtering", "content_blacklist"],
+          "CONTENT_BLACK_LIST",
+        ) ||
+        process.env.CONTENT_BLACK_LIST?.split(",").map((s) => s.trim()) ||
+        [],
+      contentWhitelist:
+        getConfigValue(
+          ["processing", "filtering", "content_whitelist"],
+          "CONTENT_WHITE_LIST",
+        ) ||
+        process.env.CONTENT_WHITE_LIST?.split(",").map((s) => s.trim()) ||
+        [],
+    },
+    deduplication: {
+      aidsDuckdbPath: getConfigValue(
+        ["processing", "deduplication", "aids_duckdb_path"],
+        "AIDS_DUCKDB_PATH",
+        "./data/aids.duckdb",
+      ),
+    },
+  };
+}

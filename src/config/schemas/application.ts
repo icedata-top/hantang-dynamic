@@ -11,3 +11,36 @@ export const applicationSchema = z.object({
 });
 
 export type ApplicationConfig = z.infer<typeof applicationSchema>;
+
+export function createApplicationConfig(
+  getConfigValue: (
+    tomlPath: string[],
+    envKey: string,
+    defaultValue?: any,
+  ) => any,
+): ApplicationConfig {
+  return {
+    logLevel: getConfigValue(["application", "log_level"], "LOGLEVEL", "info"),
+    fetchInterval: getConfigValue(
+      ["application", "fetch_interval"],
+      "FETCH_INTERVAL",
+      900_000,
+    ),
+    apiRetryTimes: getConfigValue(
+      ["application", "api_retry_times"],
+      "API_RETRY_TIMES",
+      3,
+    ),
+    apiWaitTime: getConfigValue(
+      ["application", "api_wait_time"],
+      "API_WAIT_TIME",
+      2000,
+    ),
+    maxHistoryDays: getConfigValue(
+      ["application", "max_history_days"],
+      "MAX_HISTORY_DAYS",
+      7,
+    ),
+    maxItem: getConfigValue(["application", "max_item"], "MAX_ITEM", 0),
+  };
+}
