@@ -9,11 +9,11 @@ export async function exportData(data: VideoData[]) {
   const results = [];
 
   if (
-    config.outputs.database.mysql.host &&
-    config.outputs.database.mysql.port &&
-    config.outputs.database.mysql.username &&
-    config.outputs.database.mysql.password &&
-    config.outputs.database.mysql.table
+    config.export.mysql.host &&
+    config.export.mysql.port &&
+    config.export.mysql.username &&
+    config.export.mysql.password &&
+    config.export.mysql.table
   ) {
     const mysqlResult = await saveToMysql(data);
     results.push({ type: "mysql", success: mysqlResult });

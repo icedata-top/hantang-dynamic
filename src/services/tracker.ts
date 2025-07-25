@@ -33,7 +33,7 @@ export class DynamicTracker {
     while (this.isRunning) {
       try {
         await this.checkDynamics();
-        await sleep(config.app.fetchInterval);
+        await sleep(config.application.fetchInterval);
       } catch (error) {
         logger.error("Tracker error:", error);
         if (error instanceof Error) {
@@ -52,8 +52,9 @@ export class DynamicTracker {
   private async checkDynamics() {
     const Dynamics = await fetchDynamics({
       minDynamicId: this.state.lastDynamicId,
-      minTimestamp: Date.now() / 1000 - config.app.maxHistoryDays * 86400,
-      max_items: config.app.maxItem,
+      minTimestamp:
+        Date.now() / 1000 - config.application.maxHistoryDays * 86400,
+      max_items: config.application.maxItem,
       types: ["video", "forward"],
     });
 

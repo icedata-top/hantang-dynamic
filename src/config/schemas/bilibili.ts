@@ -1,8 +1,9 @@
 import { z } from "zod";
 
+// Bilibili authentication and API configuration
 export const bilibiliSchema = z.object({
-  uid: z.string().min(1),
-  sessdata: z.string().min(1),
+  uid: z.string(),
+  sessdata: z.string(),
   csrfToken: z.string().optional(),
   accessKey: z.string().optional(),
 });

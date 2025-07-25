@@ -64,7 +64,7 @@ async function handleForwardedDynamic(
 
   logger.info(`Processing forward dynamic ${dynamic.desc.dynamic_id_str}`);
   const newDynamic = await getDynamic(dynamic.desc.origin.dynamic_id_str);
-  await sleep(config.app.apiRetry.waitTime);
+  await sleep(config.application.apiWaitTime);
 
   return newDynamic ? newDynamic.data.card : null;
 }

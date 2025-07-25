@@ -80,7 +80,7 @@ export const getDynamic = (dynamicId: number | string) =>
 
 export const fetchDynamics = async ({
   minDynamicId = 0,
-  minTimestamp = Date.now() / 1000 - config.app.maxHistoryDays * 86400,
+  minTimestamp = Date.now() / 1000 - config.application.maxHistoryDays * 86400,
   max_items = 0,
   types = ["video", "forward"] as DynamicType[],
 }): Promise<BiliDynamicCard[]> => {
@@ -131,8 +131,8 @@ export const fetchDynamics = async ({
         offset = historyResponse.data.next_offset;
       }
 
-      if (config.app.apiRetry.waitTime > 0) {
-        await sleep(config.app.apiRetry.waitTime);
+      if (config.application.apiWaitTime > 0) {
+        await sleep(config.application.apiWaitTime);
       }
     }
   }

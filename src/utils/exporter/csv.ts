@@ -20,8 +20,8 @@ const fields = [
 
 export const saveAsCSV = (data: VideoData[]) => {
   try {
-    const filepath = config.outputs.database.csv.path;
-    const dirPath = dirname(config.outputs.database.csv.path);
+    const filepath = config.export.csv.path;
+    const dirPath = dirname(config.export.csv.path);
 
     // Ensure directory exists
     if (!existsSync(dirPath)) {

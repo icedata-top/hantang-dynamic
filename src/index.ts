@@ -15,7 +15,7 @@ async function main() {
   // Setup periodic execution
   const interval = setInterval(
     () => tracker.start().catch((err) => logger.error(err)),
-    config.app.fetchInterval,
+    config.application.fetchInterval,
   );
 
   // Graceful shutdown

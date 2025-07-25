@@ -4,17 +4,17 @@ import { logger } from "../logger";
 
 export async function sendTelegramMessage(message: string) {
   if (
-    !config.outputs.notification.telegram.botToken ||
-    !config.outputs.notification.telegram.chatId
+    !config.notifications.telegram.botToken ||
+    !config.notifications.telegram.chatId
   ) {
     return;
   }
 
   try {
     await axios.post(
-      `https://api.telegram.org/bot${config.outputs.notification.telegram.botToken}/sendMessage`,
+      `https://api.telegram.org/bot${config.notifications.telegram.botToken}/sendMessage`,
       {
-        chat_id: config.outputs.notification.telegram.chatId,
+        chat_id: config.notifications.telegram.chatId,
         text: message,
         parse_mode: "HTML",
       },

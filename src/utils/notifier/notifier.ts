@@ -7,16 +7,16 @@ export async function notify(message: string) {
   const promises: Promise<void>[] = [];
 
   if (
-    config.outputs.notification.telegram.botToken &&
-    config.outputs.notification.telegram.chatId
+    config.notifications.telegram.botToken &&
+    config.notifications.telegram.chatId
   ) {
     promises.push(sendTelegramMessage(message));
   }
 
   if (
-    config.outputs.notification.email.host &&
-    config.outputs.notification.email.user &&
-    config.outputs.notification.email.to
+    config.notifications.email.host &&
+    config.notifications.email.username &&
+    config.notifications.email.to
   ) {
     promises.push(sendEmailMessage(message));
   }

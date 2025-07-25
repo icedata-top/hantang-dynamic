@@ -10,14 +10,14 @@ export const processCard = async (
   const card: BiliVideoCard = JSON.parse(dynamiccard.card);
   let tagString = "";
 
-  if (config.app.features.enableTagFetch) {
+  if (config.processing.features.enableTagFetch) {
     try {
       const { data: VideoTagResponse } = await fetchVideoTags(
         dynamiccard.desc.bvid,
       );
       tagString = VideoTagResponse.map((t) => t.tag_name).join(";");
       logger.debug(`标签获取成功 ${dynamiccard.desc.bvid}:`, tagString);
-      await sleep(config.app.apiRetry.waitTime);
+      await sleep(config.application.apiWaitTime);
     } catch (error) {
       logger.error(
         `标签获取失败 ${dynamiccard.desc.bvid}:`,

@@ -121,7 +121,8 @@ export class StateManager {
   }
 
   isWithinHistoryWindow(timestamp: number) {
-    const cutoff = Date.now() - config.app.maxHistoryDays * 86400 * 1000;
+    const cutoff =
+      Date.now() - config.application.maxHistoryDays * 86400 * 1000;
     return timestamp * 1000 > cutoff;
   }
 

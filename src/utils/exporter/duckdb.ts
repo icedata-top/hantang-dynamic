@@ -7,7 +7,7 @@ import { dirname } from "path";
 
 export const saveToDuckDB = async (data: VideoData[]) => {
   try {
-    const filepath = config.outputs.database.duckdb.path;
+    const filepath = config.export.duckdb.path;
     const dirPath = dirname(filepath);
 
     // Ensure directory exists
@@ -93,7 +93,7 @@ export const filterNewAIDs = async (aids: bigint[]): Promise<bigint[]> => {
     if (aids.length === 0) {
       return [];
     }
-    const filepath = config.app.deduplication.aidsDuckdbPath;
+    const filepath = config.processing.deduplication.aidsDuckdbPath;
     const dirPath = dirname(filepath);
     if (!existsSync(dirPath)) {
       mkdirSync(dirPath, { recursive: true });
@@ -137,7 +137,7 @@ export const filterNewAIDs = async (aids: bigint[]): Promise<bigint[]> => {
  */
 export const saveAIDsToDuckDB = async (aids: bigint[]) => {
   try {
-    const filepath = config.app.deduplication.aidsDuckdbPath;
+    const filepath = config.processing.deduplication.aidsDuckdbPath;
     const dirPath = dirname(filepath);
 
     // Ensure directory exists

@@ -176,7 +176,7 @@ export const modifyUserRelation = async (
   csrf?: string,
 ): Promise<RelationModifyResponse> => {
   // Check if feature is enabled in config
-  if (!config.app.features.enableUserRelation) {
+  if (!config.processing.features.enableUserRelation) {
     return {
       code: RelationErrorCode.RequestError,
       message: "User relation operations are disabled in configuration",
@@ -335,7 +335,7 @@ export const batchModifyUserRelation = async (
   csrf?: string,
 ): Promise<BatchRelationModifyResponse> => {
   // Check if feature is enabled in config
-  if (!config.app.features.enableUserRelation) {
+  if (!config.processing.features.enableUserRelation) {
     return {
       code: RelationErrorCode.RequestError,
       message: "User relation operations are disabled in configuration",
@@ -581,7 +581,7 @@ export const checkUserRelationConfig = (): {
 } => {
   const missingConfig: string[] = [];
 
-  if (!config.app.features.enableUserRelation) {
+  if (!config.processing.features.enableUserRelation) {
     return {
       enabled: false,
       hasAuth: false,

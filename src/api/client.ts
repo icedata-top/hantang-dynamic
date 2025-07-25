@@ -140,8 +140,8 @@ export function createClient(baseURL: string): AxiosInstance {
       if (!error.response) {
         return retryDelay(
           () => client(error.config),
-          config.app.apiRetry.times,
-          config.app.apiRetry.waitTime,
+          config.application.apiRetryTimes,
+          config.application.apiWaitTime,
         );
       }
       return Promise.reject({

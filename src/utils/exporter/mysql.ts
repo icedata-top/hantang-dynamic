@@ -5,11 +5,11 @@ import { logger } from "../logger";
 
 export const saveToMysql = async (data: VideoData[]) => {
   if (
-    !config.outputs.database.mysql.host ||
-    !config.outputs.database.mysql.port ||
-    !config.outputs.database.mysql.username ||
-    !config.outputs.database.mysql.password ||
-    !config.outputs.database.mysql.table
+    !config.export.mysql.host ||
+    !config.export.mysql.port ||
+    !config.export.mysql.username ||
+    !config.export.mysql.password ||
+    !config.export.mysql.table
   ) {
     logger.warn("Missing MySQL configuration. Falling back to CSV export.");
     return false;
@@ -17,15 +17,15 @@ export const saveToMysql = async (data: VideoData[]) => {
 
   try {
     const connection = await mysql.createConnection({
-      host: config.outputs.database.mysql.host,
-      port: config.outputs.database.mysql.port,
-      user: config.outputs.database.mysql.username,
-      password: config.outputs.database.mysql.password,
-      database: config.outputs.database.mysql.database,
+      host: config.export.mysql.host,
+      port: config.export.mysql.port,
+      user: config.export.mysql.username,
+      password: config.export.mysql.password,
+      database: config.export.mysql.database,
     });
 
     // Insert each record into the specified table
-    const table = config.outputs.database.mysql.table;
+    const table = config.export.mysql.table;
     const batchSize = 20;
     const insertQuery = `
       INSERT IGNORE INTO \`${table}\`

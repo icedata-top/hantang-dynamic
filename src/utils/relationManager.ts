@@ -124,8 +124,8 @@ export class UserRelationManager {
       try {
         const currentFollows = await retryDelay(
           () => fetchUserRelation(config.bilibili.uid),
-          config.app.apiRetry.times,
-          config.app.apiRetry.waitTime,
+          config.application.apiRetryTimes,
+          config.application.apiWaitTime,
         );
 
         currentFollowIds = new Set(

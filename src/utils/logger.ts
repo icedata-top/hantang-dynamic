@@ -14,7 +14,7 @@ class Logger {
 
   constructor() {
     this.currentLevel =
-      LOG_LEVELS[config.app.logLevel as LogLevel] || LOG_LEVELS.info;
+      LOG_LEVELS[config.application.logLevel as LogLevel] || LOG_LEVELS.info;
   }
 
   private shouldLog(level: LogLevel): boolean {
