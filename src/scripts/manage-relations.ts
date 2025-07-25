@@ -1,4 +1,4 @@
-import * as readline from "readline";
+import * as readline from "node:readline";
 import { UserRelationAction } from "../api/relation";
 import { logger } from "../utils/logger";
 import { UserRelationManager } from "../utils/relationManager";

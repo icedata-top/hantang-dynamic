@@ -5,7 +5,7 @@ import { saveToDuckDB } from "./duckdb";
 import { saveToMysql } from "./mysql";
 
 export async function exportData(data: VideoData[]) {
-  const timestamp = Date.now();
+  const _timestamp = Date.now();
   const results = [];
 
   if (

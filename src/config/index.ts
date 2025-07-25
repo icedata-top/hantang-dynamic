@@ -1,5 +1,5 @@
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 import {
@@ -20,7 +20,7 @@ try {
   const configPath = resolve(process.cwd(), "config.toml");
   const tomlString = readFileSync(configPath, "utf-8");
   tomlData = parseToml(tomlString);
-} catch (error) {
+} catch (_error) {
   console.warn(
     "Warning: config.toml not found or invalid. Using environment variables as fallback.",
   );
@@ -43,7 +43,7 @@ function getConfigValue(
     if (value !== undefined && value !== "") {
       return value;
     }
-  } catch (e) {
+  } catch (_e) {
     // Ignore TOML parsing errors for individual values
   }
 

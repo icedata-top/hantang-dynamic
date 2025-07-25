@@ -95,7 +95,7 @@ export function createClient(baseURL: string): AxiosInstance {
         `[${new Date().toISOString()}] ${baseURL}${response.config.url}${params}${data} (${timeUsed}ms)`,
       );
 
-      if (response.status == ApiErrorResponseCode.IpBanned) {
+      if (response.status === ApiErrorResponseCode.IpBanned) {
         logger.error(
           "CRITICAL ERROR: IP has been banned! Terminating process." +
             "致命错误：IP 被封禁！正在终止进程。",

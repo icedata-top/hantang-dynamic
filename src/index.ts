@@ -1,6 +1,5 @@
 import { config } from "./config";
 import { DynamicTracker } from "./services/tracker";
-import { sleep } from "./utils/datetime";
 import { logger } from "./utils/logger";
 
 async function main() {

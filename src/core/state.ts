@@ -1,5 +1,5 @@
 import { randUA } from "@ahmedrangel/rand-user-agent";
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { config } from "../config";
 import { logger } from "../utils/logger";
 
@@ -14,7 +14,7 @@ interface State {
   wbiKeysExpiresAt?: number;
 }
 
-const defaultState: State = {
+const _defaultState: State = {
   lastDynamicId: 0,
   lastUpdate: 0,
   lastUA: randUA(),
