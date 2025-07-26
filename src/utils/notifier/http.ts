@@ -99,7 +99,16 @@ async function sendHttpRequest(
     try {
       const response = await axios(axiosConfig);
       logger.debug(
-        `HTTP notification sent successfully to ${processed.url} (attempt ${attempt}): ${response.status} ${response.statusText}`,
+        `HTTP notification sent successfully:`, 
+        { 
+          method: processed.method,
+          url: processed.url,
+          status: response.status,
+          statusText: response.statusText,
+          params: processed.params,
+          headers: processed.headers,
+          body: processed.body
+        }
       );
       return;
     } catch (error) {
