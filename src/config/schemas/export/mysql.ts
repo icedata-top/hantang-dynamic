@@ -22,7 +22,11 @@ export function createMysqlConfig(
   ) => any,
 ): MysqlConfig {
   return {
-    enabled: getConfigValue(["export", "mysql", "enabled"], "MYSQL_ENABLED", false),
+    enabled: getConfigValue(
+      ["export", "mysql", "enabled"],
+      "MYSQL_ENABLED",
+      false,
+    ),
     host: getConfigValue(["export", "mysql", "host"], "MYSQL_IP"),
     port: getConfigValue(["export", "mysql", "port"], "MYSQL_PORT"),
     username: getConfigValue(["export", "mysql", "username"], "MYSQL_USERNAME"),

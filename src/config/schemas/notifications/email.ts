@@ -22,7 +22,11 @@ export function createEmailConfig(
   ) => any,
 ): EmailConfig {
   return {
-    enabled: getConfigValue(["notifications", "email", "enabled"], "EMAIL_ENABLED", false),
+    enabled: getConfigValue(
+      ["notifications", "email", "enabled"],
+      "EMAIL_ENABLED",
+      false,
+    ),
     host: getConfigValue(["notifications", "email", "host"], "EMAIL_HOST"),
     port: getConfigValue(["notifications", "email", "port"], "EMAIL_PORT"),
     username: getConfigValue(

@@ -18,7 +18,11 @@ export function createTelegramConfig(
   ) => any,
 ): TelegramConfig {
   return {
-    enabled: getConfigValue(["notifications", "telegram", "enabled"], "TELEGRAM_ENABLED", false),
+    enabled: getConfigValue(
+      ["notifications", "telegram", "enabled"],
+      "TELEGRAM_ENABLED",
+      false,
+    ),
     botToken: getConfigValue(
       ["notifications", "telegram", "bot_token"],
       "TELEGRAM_BOT_TOKEN",

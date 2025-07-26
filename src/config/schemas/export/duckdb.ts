@@ -21,7 +21,11 @@ export function createDuckdbConfig(
     ? `/exports/duckdb/${bilibiliUid}.duckdb`
     : "/exports/duckdb/default.duckdb";
   return {
-    enabled: getConfigValue(["export", "duckdb", "enabled"], "DUCKDB_ENABLED", false),
+    enabled: getConfigValue(
+      ["export", "duckdb", "enabled"],
+      "DUCKDB_ENABLED",
+      false,
+    ),
     path: getConfigValue(
       ["export", "duckdb", "path"],
       "DUCKDB_PATH",

@@ -98,18 +98,15 @@ async function sendHttpRequest(
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const response = await axios(axiosConfig);
-      logger.debug(
-        `HTTP notification sent successfully:`, 
-        { 
-          method: processed.method,
-          url: processed.url,
-          status: response.status,
-          statusText: response.statusText,
-          params: processed.params,
-          headers: processed.headers,
-          body: processed.body
-        }
-      );
+      logger.debug(`HTTP notification sent successfully:`, {
+        method: processed.method,
+        url: processed.url,
+        status: response.status,
+        statusText: response.statusText,
+        params: processed.params,
+        headers: processed.headers,
+        body: processed.body,
+      });
       return;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
