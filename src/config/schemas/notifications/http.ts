@@ -30,6 +30,8 @@ export const httpSchema = z.object({
   timeout: z.number().optional().default(5000),
   retries: z.number().optional().default(3),
   headers: z.record(z.string()).optional(),
+  // Delay between notifications in milliseconds
+  delay: z.number().optional().default(100),
 });
 
 export type HttpMethod = z.infer<typeof httpMethodSchema>;
@@ -82,6 +84,11 @@ export function createHttpConfig(
       ["notifications", "http", "headers"],
       "HTTP_HEADERS",
       {},
+    ),
+    delay: getConfigValue(
+      ["notifications", "http", "delay"],
+      "HTTP_DELAY",
+      100,
     ),
   };
 }

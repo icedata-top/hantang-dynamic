@@ -148,14 +148,24 @@ export async function sendHttpNotification(
     ...templateData,
   };
 
-  const promises = config.notifications.http.endpoints.map((endpoint) =>
-    sendHttpRequest(endpoint, variables).catch((error) => {
+  const delay = config.notifications.http.delay ?? 100;
+
+  // Process endpoints sequentially with delay
+  for (let i = 0; i < config.notifications.http.endpoints.length; i++) {
+    const endpoint = config.notifications.http.endpoints[i];
+    
+    try {
+      await sendHttpRequest(endpoint, variables);
+    } catch (error) {
       logger.error(
         `Failed to send HTTP notification to ${endpoint.url}:`,
         error,
       );
-    }),
-  );
+    }
 
-  await Promise.allSettled(promises);
+    // Add delay between requests (except for the last one)
+    if (i < config.notifications.http.endpoints.length - 1) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
 }
