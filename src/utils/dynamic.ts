@@ -2,7 +2,6 @@ import { getDynamic } from "../api/dynamic";
 import { config } from "../config";
 import type { BiliDynamicCard, VideoData } from "../core/types";
 import { sleep } from "./datetime";
-import { aidFilter } from "./deduplication";
 import { filterVideo } from "./filter";
 import { logger } from "./logger";
 import { processCard } from "./processCard";
