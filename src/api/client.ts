@@ -84,13 +84,13 @@ export function createClient(baseURL: string): AxiosInstance {
   });
 
   client.interceptors.response.use(
-    (response: AxiosResponse) => {
+    async (response: AxiosResponse) => {
       const endTime = Date.now();
       const startTime =
         (response.config as RequestConfig).metadata?.startTime ?? 0;
       const timeUsed = endTime - startTime;
       const params = response.config.params
-        ? ` params=${buildSignedQuery(response.config.params)}`
+        ? ` params=${await buildSignedQuery(response.config.params)}`
         : "";
       const data = response.config.data
         ? ` data=${JSON.stringify(response.config.data)}`
