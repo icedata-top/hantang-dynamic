@@ -67,4 +67,75 @@ port = 587                     # SMTP server port
 username = ""                  # Email username
 password = ""                  # Email password or app password
 from = ""                      # Sender email address
-to = ""                        # Recipient email address 
+to = ""                        # Recipient email address
+
+[notifications.http]
+# HTTP notification settings
+enabled = false                # Enable HTTP notifications
+timeout = 5000                 # Request timeout in milliseconds
+retries = 3                    # Number of retry attempts
+
+# Global headers for all HTTP requests
+[notifications.http.headers]
+# "Authorization" = "Bearer your-token"
+# "User-Agent" = "hantang-dynamic/1.0"
+
+# Example: GET request with query parameters
+# [[notifications.http.endpoints]]
+# url = "https://api.example.com/notify"
+# method = "GET"
+# [notifications.http.endpoints.params]
+# message = "{{message}}"
+# video_id = "{{bvid}}"
+# title = "{{title}}"
+# author = "{{author}}"
+
+# HTTP notification endpoints (supports multiple endpoints)
+# [[notifications.http.endpoints]]
+# url = "https://api.example.com/webhook"
+# method = "POST"
+# headers = { "Content-Type" = "application/json" }
+# body = '''
+# {
+#   "message": "{{message}}",
+#   "data": {
+#     "aid": "{{aid}}",
+#     "bvid": "{{bvid}}",
+#     "title": "{{title}}",
+#     "author": "{{author}}",
+#     "url": "{{url}}",
+#     "timestamp": "{{timestamp}}"
+#   }
+# }
+# '''
+
+# Example: Discord webhook
+# [[notifications.http.endpoints]]
+# url = "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
+# method = "POST"
+# headers = { "Content-Type" = "application/json" }
+# body = '''
+# {
+#   "content": "{{message}}",
+#   "embeds": [
+#     {
+#       "title": "{{title}}",
+#       "url": "{{url}}",
+#       "color": 5814783,
+#       "fields": [
+#         {
+#           "name": "作者",
+#           "value": "{{author}}",
+#           "inline": true
+#         },
+#         {
+#           "name": "视频ID",
+#           "value": "{{bvid}}",
+#           "inline": true
+#         }
+#       ],
+#       "timestamp": "{{timestamp}}"
+#     }
+#   ]
+# }
+# '''

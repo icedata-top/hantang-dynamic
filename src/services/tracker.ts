@@ -7,6 +7,7 @@ import { sleep } from "../utils/datetime";
 import { filterAndProcessDynamics } from "../utils/dynamic";
 import { exportData } from "../utils/exporter/exporter";
 import { logger } from "../utils/logger";
+import { notifyNewVideos } from "../utils/notifier/notifier";
 
 export class DynamicTracker {
   private state = new StateManager();
@@ -70,6 +71,7 @@ export class DynamicTracker {
     const videoData = await filterAndProcessDynamics(dynamics);
     if (videoData.length) {
       exportData(videoData);
+      await notifyNewVideos(videoData);
     }
   }
 }
