@@ -67,6 +67,11 @@ export function createClient(baseURL: string): AxiosInstance {
   });
 
   client.interceptors.request.use(async (config) => {
+    // Set start time for performance tracking
+    (config as RequestConfig).metadata = {
+      startTime: Date.now()
+    };
+
     if (!stateManager.isTicketValid()) {
       logger.info("BiliTicket expired or not set, requesting a new one");
       const ticketData = await generateBiliTicket();
