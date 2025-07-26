@@ -2,6 +2,7 @@ import { z } from "zod";
 
 // DuckDB export configuration
 export const duckdbSchema = z.object({
+  enabled: z.boolean().optional().default(false),
   path: z.string(),
 });
 
@@ -20,6 +21,7 @@ export function createDuckdbConfig(
     ? `/exports/duckdb/${bilibiliUid}.duckdb`
     : "/exports/duckdb/default.duckdb";
   return {
+    enabled: getConfigValue(["export", "duckdb", "enabled"], "DUCKDB_ENABLED", false),
     path: getConfigValue(
       ["export", "duckdb", "path"],
       "DUCKDB_PATH",

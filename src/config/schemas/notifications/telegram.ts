@@ -2,6 +2,7 @@ import { z } from "zod";
 
 // Telegram notification configuration
 export const telegramSchema = z.object({
+  enabled: z.boolean().optional().default(false),
   botToken: z.string().optional(),
   chatId: z.string().optional(),
 });
@@ -17,6 +18,7 @@ export function createTelegramConfig(
   ) => any,
 ): TelegramConfig {
   return {
+    enabled: getConfigValue(["notifications", "telegram", "enabled"], "TELEGRAM_ENABLED", false),
     botToken: getConfigValue(
       ["notifications", "telegram", "bot_token"],
       "TELEGRAM_BOT_TOKEN",

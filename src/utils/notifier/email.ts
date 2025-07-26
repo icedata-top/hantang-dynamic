@@ -4,6 +4,7 @@ import { logger } from "../logger";
 
 export async function sendEmailMessage(message: string) {
   if (
+    !config.notifications.email.enabled ||
     !config.notifications.email.host ||
     !config.notifications.email.username ||
     !config.notifications.email.to

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 // Email notification configuration
 export const emailSchema = z.object({
+  enabled: z.boolean().optional().default(false),
   host: z.string().optional(),
   port: z.coerce.number().optional(),
   username: z.string().optional(),
@@ -21,6 +22,7 @@ export function createEmailConfig(
   ) => any,
 ): EmailConfig {
   return {
+    enabled: getConfigValue(["notifications", "email", "enabled"], "EMAIL_ENABLED", false),
     host: getConfigValue(["notifications", "email", "host"], "EMAIL_HOST"),
     port: getConfigValue(["notifications", "email", "port"], "EMAIL_PORT"),
     username: getConfigValue(

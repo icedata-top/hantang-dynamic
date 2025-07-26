@@ -2,6 +2,7 @@ import { z } from "zod";
 
 // CSV export configuration
 export const csvSchema = z.object({
+  enabled: z.boolean().optional().default(false),
   path: z.string(),
 });
 
@@ -20,6 +21,7 @@ export function createCsvConfig(
     ? `/exports/csv/${bilibiliUid}.csv`
     : "/exports/csv/default.csv";
   return {
+    enabled: getConfigValue(["export", "csv", "enabled"], "CSV_ENABLED", false),
     path: getConfigValue(["export", "csv", "path"], "CSV_PATH", defaultCsvPath),
   };
 }

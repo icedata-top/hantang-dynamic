@@ -25,6 +25,7 @@ export async function notify(
   const promises: Promise<void>[] = [];
 
   if (
+    config.notifications.telegram.enabled &&
     config.notifications.telegram.botToken &&
     config.notifications.telegram.chatId
   ) {
@@ -32,6 +33,7 @@ export async function notify(
   }
 
   if (
+    config.notifications.email.enabled &&
     config.notifications.email.host &&
     config.notifications.email.username &&
     config.notifications.email.to

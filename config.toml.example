@@ -39,14 +39,17 @@ aids_duckdb_path = ""          # AIDS tracking DuckDB (default: "./data/aids.duc
 [export]
 [export.csv]
 # CSV file export settings
+enabled = false                 # Enable CSV export (default: false)
 path = ""                      # CSV file path (default: "./data/uid{BILIBILI_UID}.csv")
 
 [export.duckdb]
 # DuckDB file export settings
+enabled = false                 # Enable DuckDB export (default: false)
 path = ""                      # DuckDB file path (default: "./data/uid{BILIBILI_UID}.duckdb")
 
 [export.mysql]
 # MySQL export settings (all optional)
+enabled = false                # Enable MySQL export (default: false)
 host = ""                      # MySQL server IP
 port = 3306                    # MySQL server port
 username = ""                  # MySQL username
@@ -57,11 +60,13 @@ table = ""                     # MySQL table name
 [notifications]
 [notifications.telegram]
 # Telegram notification settings (both required if using Telegram)
+enabled = false                # Enable Telegram notifications (default: false)
 bot_token = ""                 # Telegram bot token
 chat_id = ""                   # Telegram chat ID
 
 [notifications.email]
 # Email notification settings (all required if using email)
+enabled = false                # Enable email notifications (default: false)
 host = ""                      # SMTP server host (e.g., "smtp.gmail.com")
 port = 587                     # SMTP server port
 username = ""                  # Email username
