@@ -28,9 +28,9 @@ export async function filterAndProcessDynamics(
     (video): video is VideoData => video !== null,
   );
 
-  if (config.processing.features.enableDeduplication && videoData.length > 0) {
-    videoData = await aidFilter.filterNewVideoData(videoData);
-  }
+  // if (config.processing.features.enableDeduplication && videoData.length > 0) {
+  //   videoData = await aidFilter.filterNewVideoData(videoData);
+  // }
 
   return videoData;
 }
