@@ -48,37 +48,43 @@ export async function filterAndProcessDynamics(
   // Process related videos if enabled
   if (config.processing.features.enableRelatedVideos && videoData.length > 0) {
     logger.info(`Processing related videos for ${videoData.length} videos`);
-    
+
     try {
       const relatedResult = await batchProcessRelatedVideos(videoData);
-      
+
       // Filter out source videos that should be removed based on related video quality
       // This needs to happen regardless of whether related videos were found
       if (relatedResult.filteredSourceVideos.length > 0) {
         const originalCount = videoData.length;
-        videoData = videoData.filter(video => !relatedResult.filteredSourceVideos.includes(video.bvid));
+        videoData = videoData.filter(
+          (video) => !relatedResult.filteredSourceVideos.includes(video.bvid),
+        );
         logger.info(
-          `Filtered out ${originalCount - videoData.length} source videos based on related video quality`
+          `Filtered out ${originalCount - videoData.length} source videos based on related video quality`,
         );
       }
-      
+
       if (relatedResult.relatedVideos.length > 0) {
-        logger.info(`Found ${relatedResult.relatedVideos.length} related videos`);
-        
+        logger.info(
+          `Found ${relatedResult.relatedVideos.length} related videos`,
+        );
+
         // Apply deduplication to related videos if enabled
         let filteredRelatedVideos = relatedResult.relatedVideos;
         if (config.processing.features.enableDeduplication) {
-          filteredRelatedVideos = await filterNewVideoData(relatedResult.relatedVideos);
+          filteredRelatedVideos = await filterNewVideoData(
+            relatedResult.relatedVideos,
+          );
           logger.info(
-            `After deduplication: ${filteredRelatedVideos.length} new related videos`
+            `After deduplication: ${filteredRelatedVideos.length} new related videos`,
           );
         }
-        
+
         // Add related videos to final result
         videoData.push(...filteredRelatedVideos);
-        
+
         logger.info(
-          `Total videos after related video processing: ${videoData.length}`
+          `Total videos after related video processing: ${videoData.length}`,
         );
       } else {
         logger.info("No related videos found");

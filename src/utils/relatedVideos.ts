@@ -34,7 +34,10 @@ export function convertRelatedVideoToVideoData(
 /**
  * Helper function to format video info for logging
  */
-function formatVideoInfo(videoId: { aid?: number; bvid?: string }, title?: string): string {
+function formatVideoInfo(
+  videoId: { aid?: number; bvid?: string },
+  title?: string,
+): string {
   const id = videoId.bvid || videoId.aid;
   return title ? `${title} (${id})` : String(id);
 }
@@ -67,16 +70,20 @@ export async function processRelatedVideos(
 
   // Check if video is too new to have reliable related videos for source filtering
   let bypassSourceFiltering = false;
-  if (sourcePubdate && config.processing.relatedVideos.newVideoBypassHours > 0) {
+  if (
+    sourcePubdate &&
+    config.processing.relatedVideos.newVideoBypassHours > 0
+  ) {
     const currentTime = Math.floor(Date.now() / 1000); // Current time in seconds
     const videoAge = currentTime - sourcePubdate; // Age in seconds
-    const bypassThreshold = config.processing.relatedVideos.newVideoBypassHours * 3600; // Convert hours to seconds
-    
+    const bypassThreshold =
+      config.processing.relatedVideos.newVideoBypassHours * 3600; // Convert hours to seconds
+
     if (videoAge < bypassThreshold) {
       const videoInfo = formatVideoInfo(videoId, sourceTitle);
       const ageHours = (videoAge / 3600).toFixed(1);
       logger.info(
-        `Video ${videoInfo} is ${ageHours}h old (< ${config.processing.relatedVideos.newVideoBypassHours}h threshold). Will process related videos but skip source filtering.`
+        `Video ${videoInfo} is ${ageHours}h old (< ${config.processing.relatedVideos.newVideoBypassHours}h threshold). Will process related videos but skip source filtering.`,
       );
       bypassSourceFiltering = true;
     }
@@ -93,17 +100,13 @@ export async function processRelatedVideos(
 
   try {
     const videoInfo = formatVideoInfo(videoId, sourceTitle);
-    logger.debug(
-      `Fetching related videos for ${videoInfo} (depth: ${depth})`,
-    );
+    logger.debug(`Fetching related videos for ${videoInfo} (depth: ${depth})`);
 
     // Fetch related videos from API
     const relatedVideos = await fetchRelatedVideos(videoId);
 
     if (!relatedVideos.length) {
-      logger.debug(
-        `No related videos found for ${videoInfo}`,
-      );
+      logger.debug(`No related videos found for ${videoInfo}`);
       return { relatedVideos: [], shouldFilterSource: false };
     }
 
@@ -121,7 +124,7 @@ export async function processRelatedVideos(
     const videoDataList: VideoData[] = [];
     let totalProcessed = 0;
     let filteredOut = 0;
-    
+
     for (let i = 0; i < limitedRelatedVideos.length; i++) {
       const relatedVideo = limitedRelatedVideos[i];
 
@@ -156,17 +159,19 @@ export async function processRelatedVideos(
 
     // First stage: Determine if source video should be filtered based on related video filter rate
     const filterRate = totalProcessed > 0 ? filteredOut / totalProcessed : 0;
-    const shouldFilterSource = !bypassSourceFiltering && filterRate >= config.processing.relatedVideos.filterSourceThreshold;
+    const shouldFilterSource =
+      !bypassSourceFiltering &&
+      filterRate >= config.processing.relatedVideos.filterSourceThreshold;
     const sourceVideoInfo = formatVideoInfo(videoId, sourceTitle);
-    
+
     if (shouldFilterSource) {
       logger.info(
         `${filteredOut}/${totalProcessed} (${(filterRate * 100).toFixed(1)}%)  related videos were filtered. Dropping all related videos of Source video ${sourceVideoInfo} `,
       );
       // Return empty related videos since we're dropping the source
-      return { 
-        relatedVideos: [], 
-        shouldFilterSource: true 
+      return {
+        relatedVideos: [],
+        shouldFilterSource: true,
       };
     }
 
@@ -184,31 +189,35 @@ export async function processRelatedVideos(
     // Additional quality check: Even if depth limit is reached, check related videos of the passing videos
     // to ensure they are truly high quality (secondary quality gate)
     const finalVideoList: VideoData[] = [];
-    
+
     for (let i = 0; i < videoDataList.length; i++) {
       const video = videoDataList[i];
-      
+
       try {
         // Add rate limiting between secondary checks
         if (i > 0) {
           await sleep(config.processing.relatedVideos.rateLimitDelay);
         }
-        
-        logger.debug(`Secondary quality check for related video: ${video.bvid}`);
-        
+
+        logger.debug(
+          `Secondary quality check for related video: ${video.bvid}`,
+        );
+
         // Fetch related videos of this level 1 video for quality assessment
-        const secondLevelRelated = await fetchRelatedVideos({ bvid: video.bvid });
-        
+        const secondLevelRelated = await fetchRelatedVideos({
+          bvid: video.bvid,
+        });
+
         if (secondLevelRelated.length === 0) {
           // If no related videos found, assume it's acceptable
           finalVideoList.push(video);
           continue;
         }
-        
+
         // Apply filtering to a sample of second-level related videos for quality assessment
         const sampleSize = Math.min(5, secondLevelRelated.length); // Check up to 5 for efficiency
         const sample = secondLevelRelated.slice(0, sampleSize);
-        
+
         let sampleFilteredOut = 0;
         for (const sampleVideo of sample) {
           const sampleVideoData = convertRelatedVideoToVideoData(
@@ -216,7 +225,7 @@ export async function processRelatedVideos(
             video.bvid,
             depth + 2,
           );
-          
+
           if (config.processing.relatedVideos.respectMainFilters) {
             const filtered = await filterVideo(sampleVideoData);
             if (!filtered) {
@@ -224,24 +233,28 @@ export async function processRelatedVideos(
             }
           }
         }
-        
+
         // Check if this level 1 video should be kept based on its related videos quality
         const sampleFilterRate = sampleFilteredOut / sample.length;
-        if (sampleFilterRate >= config.processing.relatedVideos.filterSourceThreshold) {
+        if (
+          sampleFilterRate >=
+          config.processing.relatedVideos.filterSourceThreshold
+        ) {
           logger.debug(
             `Dropping related video ${video.bvid}: ${sampleFilteredOut}/${sample.length} (${(sampleFilterRate * 100).toFixed(1)}%) of its related videos were filtered`,
           );
         } else {
           finalVideoList.push(video);
         }
-        
       } catch (error) {
-        logger.warn(`Failed secondary quality check for ${video.bvid}, keeping video: ${error}`);
+        logger.warn(
+          `Failed secondary quality check for ${video.bvid}, keeping video: ${error}`,
+        );
         // If secondary check fails, keep the video (fail safe)
         finalVideoList.push(video);
       }
     }
-    
+
     logger.info(
       `After secondary quality check: ${finalVideoList.length}/${videoDataList.length} related videos passed from related video ${sourceVideoInfo}`,
     );
@@ -249,21 +262,27 @@ export async function processRelatedVideos(
     // Check if too many related videos failed the secondary quality check
     // If so, we should also drop the source video
     const secondaryFailedCount = videoDataList.length - finalVideoList.length;
-    const secondaryFilterRate = videoDataList.length > 0 ? secondaryFailedCount / videoDataList.length : 0;
-    
-    if (secondaryFilterRate >= config.processing.relatedVideos.filterSourceThreshold) {
+    const secondaryFilterRate =
+      videoDataList.length > 0
+        ? secondaryFailedCount / videoDataList.length
+        : 0;
+
+    if (
+      secondaryFilterRate >=
+      config.processing.relatedVideos.filterSourceThreshold
+    ) {
       logger.info(
         `Source video ${sourceVideoInfo} marked for filtering due to secondary quality check: ${secondaryFailedCount}/${videoDataList.length} (${(secondaryFilterRate * 100).toFixed(1)}%) related videos failed secondary check. Dropping source video.`,
       );
-      return { 
-        relatedVideos: [], 
-        shouldFilterSource: true 
+      return {
+        relatedVideos: [],
+        shouldFilterSource: true,
       };
     }
 
-    return { 
-      relatedVideos: finalVideoList, 
-      shouldFilterSource: false 
+    return {
+      relatedVideos: finalVideoList,
+      shouldFilterSource: false,
     };
   } catch (error) {
     const sourceVideoInfo = formatVideoInfo(videoId, sourceTitle);
@@ -296,7 +315,10 @@ export async function batchProcessRelatedVideos(
   videoDataList: VideoData[],
   depth: number = 0,
 ): Promise<BatchRelatedVideosResult> {
-  if (!config.processing.features.enableRelatedVideos || !videoDataList.length) {
+  if (
+    !config.processing.features.enableRelatedVideos ||
+    !videoDataList.length
+  ) {
     return { relatedVideos: [], filteredSourceVideos: [] };
   }
 
@@ -333,14 +355,17 @@ export async function batchProcessRelatedVideos(
       const result = batchResults[j];
       if (result.status === "fulfilled") {
         allRelatedVideos.push(...result.value.relatedVideos);
-        
+
         // Track source videos that should be filtered
         if (result.value.shouldFilterSource) {
           const sourceVideo = batch[j];
           filteredSourceVideos.push(sourceVideo.bvid);
         }
       } else {
-        logger.error("Failed to process related videos in batch:", result.reason);
+        logger.error(
+          "Failed to process related videos in batch:",
+          result.reason,
+        );
       }
     }
 
