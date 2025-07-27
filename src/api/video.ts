@@ -3,6 +3,8 @@ import type {
   BiliVideoDetailResponse,
   BiliVideoPageListResponse,
   VideoTagResponse,
+  BiliVideoFullDetailResponse,
+  BiliRelatedVideo,
 } from "../types";
 import { logger } from "../utils/logger";
 import { xClient } from "./client";
@@ -46,11 +48,14 @@ export const fetchVideoDetail = async (params: {
 export const fetchVideoFullDetail = async (params: {
   aid?: number;
   bvid?: string;
-}): Promise<any> => {
+}): Promise<BiliVideoFullDetailResponse> => {
   try {
-    const response = await xClient.get<any>("/x/web-interface/view/detail", {
-      params,
-    });
+    const response = await xClient.get<BiliVideoFullDetailResponse>(
+      "/x/web-interface/view/detail",
+      {
+        params,
+      },
+    );
     return response.data;
   } catch (error) {
     logger.error("API Error:", error);
@@ -58,6 +63,22 @@ export const fetchVideoFullDetail = async (params: {
       logger.error(error.stack);
     }
     throw new Error("API Error: Fetch video full detail failed");
+  }
+};
+
+export const fetchRelatedVideos = async (params: {
+  aid?: number;
+  bvid?: string;
+}): Promise<BiliRelatedVideo[]> => {
+  try {
+    const response = await fetchVideoFullDetail(params);
+    return response.data.Related || [];
+  } catch (error) {
+    logger.error("API Error:", error);
+    if (error instanceof Error) {
+      logger.error(error.stack);
+    }
+    throw new Error("API Error: Fetch related videos failed");
   }
 };
 

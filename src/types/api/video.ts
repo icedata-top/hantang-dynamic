@@ -117,3 +117,61 @@ export interface VideoTagResponse {
   ttl: number;
   data: VideoTag[];
 }
+
+/**
+ * Related video information (reuses existing types for consistency)
+ */
+export interface BiliRelatedVideo {
+  aid: number;
+  videos: number;
+  tid: number;
+  tname: string;
+  copyright: number;
+  pic: string;
+  title: string;
+  pubdate: number;
+  ctime: number;
+  desc: string;
+  state: number;
+  duration: number;
+  mission_id?: number;
+  rights: BiliVideoRights;
+  owner: BiliVideoOwner;
+  stat: BiliVideoStat; // Reuse existing type (now includes vv, fav_g, like_g)
+  dynamic: string;
+  cid: number;
+  dimension: BiliVideoDimension;
+  short_link_v2: string;
+  first_frame?: string;
+  pub_location?: string;
+  cover43?: string;
+  tidv2?: number;
+  tnamev2?: string;
+  pid_v2?: number;
+  pid_name_v2?: string;
+  bvid: string;
+  season_type?: number;
+  season_id?: number;
+  is_ogv: boolean;
+  ogv_info?: unknown;
+  rcmd_reason?: string;
+  enable_vt?: number;
+  ai_rcmd?: unknown;
+  up_from_v2?: number;
+}
+
+/**
+ * Response structure for video detail endpoint with related videos
+ */
+export interface BiliVideoFullDetailResponse {
+  code: number;
+  message: string;
+  ttl: number;
+  data: {
+    View: BiliVideoDetailResponse["data"];
+    Card?: unknown;
+    Tags?: VideoTag[]; // Use existing VideoTag type
+    Reply?: unknown;
+    Related?: BiliRelatedVideo[];
+  };
+}
