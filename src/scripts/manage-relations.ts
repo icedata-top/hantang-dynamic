@@ -1,11 +1,7 @@
 import * as readline from "node:readline";
 import { UserRelationAction } from "../api/relation";
 import { logger } from "../utils/logger";
-import {
-  getActionName,
-  getDefaultFilename,
-  processUserRelations,
-} from "../utils/relationManager";
+import { UserRelationManager } from "../utils/relationManager";
 
 /**
  * Display help information
@@ -152,8 +148,8 @@ async function runInteractiveMode(): Promise<{
   };
 
   const action = actionMap[actionChoice];
-  const actionName = getActionName(action);
-  const defaultFilename = getDefaultFilename(action);
+  const actionName = UserRelationManager.getActionName(action);
+  const defaultFilename = UserRelationManager.getDefaultFilename(action);
 
   // Get CSV path
   const defaultPath = `./data/${defaultFilename}`;
@@ -210,14 +206,14 @@ async function main() {
     }
 
     // Log the operation details
-    const actionName = getActionName(options.action);
+    const actionName = UserRelationManager.getActionName(options.action);
     logger.info(`Starting batch ${actionName} process`);
     logger.info(
-      `Parameters: Action=${actionName}, CSV=${options.csvPath || `data/${getDefaultFilename(options.action)}`}, Batch Size=${options.batchSize}, Wait Time=${options.waitTime}ms`,
+      `Parameters: Action=${actionName}, CSV=${options.csvPath || `data/${UserRelationManager.getDefaultFilename(options.action)}`}, Batch Size=${options.batchSize}, Wait Time=${options.waitTime}ms`,
     );
 
     // Run the appropriate action
-    await processUserRelations(
+    await UserRelationManager.processUserRelations(
       options.action,
       options.csvPath,
       options.batchSize,
