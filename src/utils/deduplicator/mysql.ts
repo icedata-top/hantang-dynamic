@@ -1,7 +1,76 @@
 import mysql from "mysql2/promise";
 import { config } from "../../config";
-import type { VideoData } from "../../core/types";
+import type { BiliDynamicCard, VideoData } from "../../core/types";
 import { logger } from "../logger";
+
+/**
+ * Filters out BiliDynamicCard that already exist in the MySQL database based on BVID
+ * This runs BEFORE processing to save CPU and API calls
+ * @param dynamics Array of dynamic cards to check for duplicates
+ * @returns Promise<BiliDynamicCard[]> Array of new dynamics not in database
+ */
+export async function filterNewDynamicsMySQL(
+  dynamics: BiliDynamicCard[],
+): Promise<BiliDynamicCard[]> {
+  if (!dynamics.length) {
+    return dynamics;
+  }
+
+  if (!isMySQLConfigured()) {
+    logger.debug("MySQL not properly configured, skipping MySQL deduplication");
+    return dynamics;
+  }
+
+  try {
+    const connection = await mysql.createConnection({
+      host: config.export.mysql.host,
+      port: config.export.mysql.port,
+      user: config.export.mysql.username,
+      password: config.export.mysql.password,
+      database: config.export.mysql.database,
+    });
+
+    const bvids = dynamics.map((dynamic) => dynamic.desc.bvid).filter(Boolean);
+    if (bvids.length === 0) {
+      await connection.end();
+      return dynamics;
+    }
+
+    const table = config.export.mysql.table;
+
+    // Query existing BVIDs from database
+    const placeholders = bvids.map(() => "?").join(",");
+    const query = `SELECT bvid FROM \`${table}\` WHERE bvid IN (${placeholders})`;
+
+    const [rows] = await connection.execute(query, bvids);
+    await connection.end();
+
+    // Extract existing BVIDs from query result
+    const existingBvids = new Set(
+      (rows as { bvid: string }[]).map((row) => row.bvid),
+    );
+
+    // Filter out dynamics that already exist in database
+    const newDynamics = dynamics.filter(
+      (dynamic) => !existingBvids.has(dynamic.desc.bvid),
+    );
+
+    logger.info(
+      `MySQL BVID deduplication: ${dynamics.length} total, ${existingBvids.size} duplicates, ${newDynamics.length} new dynamics`,
+    );
+
+    return newDynamics;
+  } catch (error) {
+    logger.error(
+      "MySQL BVID deduplication failed, proceeding with all dynamics:",
+      error,
+    );
+    if (error instanceof Error) {
+      logger.error(error.stack);
+    }
+    return dynamics;
+  }
+}
 
 /**
  * Filters out VideoData that already exist in the MySQL database based on AID

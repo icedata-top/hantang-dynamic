@@ -2,7 +2,7 @@ import { getDynamic } from "../api/dynamic";
 import { config } from "../config";
 import type { BiliDynamicCard, VideoData } from "../core/types";
 import { sleep } from "./datetime";
-import { filterNewVideoData } from "./deduplicator";
+import { filterNewDynamics, filterNewVideoData } from "./deduplicator";
 import { filterVideo } from "./filter";
 import { logger } from "./logger";
 import { processCard } from "./processCard";
@@ -20,6 +20,17 @@ export async function filterAndProcessDynamics(
   videoDynamics = removeDuplicateDynamics(videoDynamics);
   logger.info(`Processing ${videoDynamics.length} unique dynamics`);
 
+  // Early deduplication: Check database BEFORE processing to save CPU/API calls
+  if (
+    config.processing.features.enableDeduplication &&
+    videoDynamics.length > 0
+  ) {
+    videoDynamics = await filterNewDynamics(videoDynamics);
+    logger.info(
+      `After database deduplication: ${videoDynamics.length} new dynamics to process`,
+    );
+  }
+
   for (const dynamic of videoDynamics) {
     videoData.push(await processCard(dynamic));
   }
@@ -28,6 +39,7 @@ export async function filterAndProcessDynamics(
     (video): video is VideoData => video !== null,
   );
 
+  // Final safety check for any edge cases (usually unnecessary now)
   if (config.processing.features.enableDeduplication && videoData.length > 0) {
     videoData = await filterNewVideoData(videoData);
   }
