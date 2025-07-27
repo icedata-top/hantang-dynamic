@@ -65,7 +65,8 @@ export async function processRelatedVideos(
     return { relatedVideos: [], shouldFilterSource: false };
   }
 
-  // Check if video is too new to have reliable related videos
+  // Check if video is too new to have reliable related videos for source filtering
+  let bypassSourceFiltering = false;
   if (sourcePubdate && config.processing.relatedVideos.newVideoBypassHours > 0) {
     const currentTime = Math.floor(Date.now() / 1000); // Current time in seconds
     const videoAge = currentTime - sourcePubdate; // Age in seconds
@@ -75,9 +76,9 @@ export async function processRelatedVideos(
       const videoInfo = formatVideoInfo(videoId, sourceTitle);
       const ageHours = (videoAge / 3600).toFixed(1);
       logger.info(
-        `Bypassing related video filtering for new video ${videoInfo}: ${ageHours}h old (< ${config.processing.relatedVideos.newVideoBypassHours}h threshold)`
+        `Video ${videoInfo} is ${ageHours}h old (< ${config.processing.relatedVideos.newVideoBypassHours}h threshold). Will process related videos but skip source filtering.`
       );
-      return { relatedVideos: [], shouldFilterSource: false };
+      bypassSourceFiltering = true;
     }
   }
 
@@ -155,7 +156,7 @@ export async function processRelatedVideos(
 
     // First stage: Determine if source video should be filtered based on related video filter rate
     const filterRate = totalProcessed > 0 ? filteredOut / totalProcessed : 0;
-    const shouldFilterSource = filterRate >= config.processing.relatedVideos.filterSourceThreshold;
+    const shouldFilterSource = !bypassSourceFiltering && filterRate >= config.processing.relatedVideos.filterSourceThreshold;
     const sourceVideoInfo = formatVideoInfo(videoId, sourceTitle);
     
     if (shouldFilterSource) {
@@ -170,9 +171,15 @@ export async function processRelatedVideos(
     }
 
     // Second stage: Source video passed the filter rate test, process the passing related videos
-    logger.info(
-      ` ${filteredOut}/${totalProcessed} (${(filterRate * 100).toFixed(1)}%) filtered. Processing ${videoDataList.length} passing related videos. Source video ${sourceVideoInfo} will be kept.`,
-    );
+    if (bypassSourceFiltering) {
+      logger.info(
+        `Source video ${sourceVideoInfo} bypassed filtering (new video): ${filteredOut}/${totalProcessed} (${(filterRate * 100).toFixed(1)}%) filtered. Processing ${videoDataList.length} passing related videos.`,
+      );
+    } else {
+      logger.info(
+        ` ${filteredOut}/${totalProcessed} (${(filterRate * 100).toFixed(1)}%) filtered. Processing ${videoDataList.length} passing related videos. Source video ${sourceVideoInfo} will be kept.`,
+      );
+    }
 
     // Additional quality check: Even if depth limit is reached, check related videos of the passing videos
     // to ensure they are truly high quality (secondary quality gate)
