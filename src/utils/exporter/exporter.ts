@@ -8,7 +8,9 @@ export async function exportData(data: VideoData[]) {
   const _timestamp = Date.now();
   const results = [];
 
+  // MySQL export
   if (
+    config.export.mysql.enabled &&
     config.export.mysql.host &&
     config.export.mysql.port &&
     config.export.mysql.username &&
@@ -19,11 +21,17 @@ export async function exportData(data: VideoData[]) {
     results.push({ type: "mysql", success: mysqlResult });
   }
 
-  const duckdbResult = await saveToDuckDB(data);
-  results.push({ type: "duckdb", success: duckdbResult });
+  // DuckDB export
+  if (config.export.duckdb.enabled) {
+    const duckdbResult = await saveToDuckDB(data);
+    results.push({ type: "duckdb", success: duckdbResult });
+  }
 
-  saveAsCSV(data);
-  results.push({ type: "csv", success: true });
+  // CSV export
+  if (config.export.csv.enabled) {
+    const csvResult = saveAsCSV(data);
+    results.push({ type: "csv", success: csvResult });
+  }
 
   return results;
 }

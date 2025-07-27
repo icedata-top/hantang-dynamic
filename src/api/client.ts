@@ -67,6 +67,11 @@ export function createClient(baseURL: string): AxiosInstance {
   });
 
   client.interceptors.request.use(async (config) => {
+    // Set start time for performance tracking
+    (config as RequestConfig).metadata = {
+      startTime: Date.now()
+    };
+
     if (!stateManager.isTicketValid()) {
       logger.info("BiliTicket expired or not set, requesting a new one");
       const ticketData = await generateBiliTicket();
@@ -79,13 +84,13 @@ export function createClient(baseURL: string): AxiosInstance {
   });
 
   client.interceptors.response.use(
-    (response: AxiosResponse) => {
+    async (response: AxiosResponse) => {
       const endTime = Date.now();
       const startTime =
         (response.config as RequestConfig).metadata?.startTime ?? 0;
       const timeUsed = endTime - startTime;
       const params = response.config.params
-        ? ` params=${buildSignedQuery(response.config.params)}`
+        ? ` params=${await buildSignedQuery(response.config.params)}`
         : "";
       const data = response.config.data
         ? ` data=${JSON.stringify(response.config.data)}`

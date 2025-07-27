@@ -4,6 +4,7 @@ import { logger } from "../logger";
 
 export async function sendTelegramMessage(message: string) {
   if (
+    !config.notifications.telegram.enabled ||
     !config.notifications.telegram.botToken ||
     !config.notifications.telegram.chatId
   ) {

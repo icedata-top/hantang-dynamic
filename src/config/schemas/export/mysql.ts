@@ -2,6 +2,7 @@ import { z } from "zod";
 
 // MySQL export configuration
 export const mysqlSchema = z.object({
+  enabled: z.boolean().optional().default(false),
   host: z.string().optional(),
   port: z.coerce.number().optional(),
   username: z.string().optional(),
@@ -21,6 +22,11 @@ export function createMysqlConfig(
   ) => any,
 ): MysqlConfig {
   return {
+    enabled: getConfigValue(
+      ["export", "mysql", "enabled"],
+      "MYSQL_ENABLED",
+      false,
+    ),
     host: getConfigValue(["export", "mysql", "host"], "MYSQL_IP"),
     port: getConfigValue(["export", "mysql", "port"], "MYSQL_PORT"),
     username: getConfigValue(["export", "mysql", "username"], "MYSQL_USERNAME"),
