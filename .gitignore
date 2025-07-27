@@ -7,3 +7,5 @@ state.json
 dist/*
 .vscode/*
 data/*
+
+biome.json
