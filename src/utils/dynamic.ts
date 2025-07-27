@@ -7,6 +7,11 @@ import { filterVideo } from "./filter";
 import { logger } from "./logger";
 import { processCard } from "./processCard";
 import { batchProcessRelatedVideos } from "./relatedVideos";
+import {
+  isVideoRejected,
+  logRejectedVideo,
+  RejectionReason,
+} from "./rejectedVideoLogger";
 
 export async function filterAndProcessDynamics(
   dynamics: BiliDynamicCard[],
@@ -36,9 +41,32 @@ export async function filterAndProcessDynamics(
     videoData.push(await processCard(dynamic));
   }
 
+  // Apply filtering and log rejected videos
+  const originalVideoData = [...videoData];
   videoData = (await Promise.all(videoData.map(filterVideo))).filter(
     (video): video is VideoData => video !== null,
   );
+
+  // Log rejected videos for analytics
+  const rejectedVideos = originalVideoData.filter(
+    (original) =>
+      !videoData.find((accepted) => accepted.bvid === original.bvid),
+  );
+
+  if (rejectedVideos.length > 0) {
+    logger.info(
+      `${rejectedVideos.length} videos were filtered out by main filters`,
+    );
+
+    // Log rejected videos asynchronously to avoid blocking main flow
+    Promise.all(
+      rejectedVideos.map((video) =>
+        logRejectedVideo(video, RejectionReason.CONTENT_BLACKLIST),
+      ),
+    ).catch((error) => {
+      logger.warn("Failed to log some rejected videos:", error);
+    });
+  }
 
   // Final safety check for any edge cases (usually unnecessary now)
   if (config.processing.features.enableDeduplication && videoData.length > 0) {
@@ -78,11 +106,28 @@ export async function filterAndProcessDynamics(
             `Found ${relatedResult.relatedVideos.length} related videos`,
           );
 
+          // Filter out previously rejected videos before further processing
+          const originalRelatedCount = relatedResult.relatedVideos.length;
+          const notRejectedRelatedVideos = [];
+
+          for (const video of relatedResult.relatedVideos) {
+            const isRejected = await isVideoRejected(video.bvid);
+            if (!isRejected) {
+              notRejectedRelatedVideos.push(video);
+            }
+          }
+
+          if (notRejectedRelatedVideos.length !== originalRelatedCount) {
+            logger.info(
+              `Filtered out ${originalRelatedCount - notRejectedRelatedVideos.length} previously rejected related videos`,
+            );
+          }
+
           // Apply deduplication to related videos if enabled
-          let filteredRelatedVideos = relatedResult.relatedVideos;
+          let filteredRelatedVideos = notRejectedRelatedVideos;
           if (config.processing.features.enableDeduplication) {
             filteredRelatedVideos = await filterNewVideoData(
-              relatedResult.relatedVideos,
+              notRejectedRelatedVideos,
             );
             logger.info(
               `After deduplication: ${filteredRelatedVideos.length} new related videos`,

@@ -3,6 +3,7 @@ import { config } from "../config";
 import type { BiliRelatedVideo, VideoData } from "../types";
 import { filterVideo } from "./filter";
 import { logger } from "./logger";
+import { logRejectedVideo, RejectionReason } from "./rejectedVideoLogger";
 
 /**
  * Converts BiliRelatedVideo to VideoData format for consistency with existing pipeline
@@ -97,6 +98,17 @@ async function fetchAndFilterPrimaryVideos(
         logger.debug(
           `Related video ${relatedVideo.bvid} filtered out by main filters`,
         );
+
+        // Log rejected video asynchronously (don't block processing)
+        logRejectedVideo(
+          videoData,
+          RejectionReason.RELATED_QUALITY_FILTER,
+        ).catch((error) => {
+          logger.debug(
+            `Failed to log rejected related video ${videoData.bvid}:`,
+            error,
+          );
+        });
       }
     } else {
       acceptedVideos.push(videoData);
@@ -207,6 +219,14 @@ async function performSecondaryQualityCheck(
           logger.debug(
             `Dropping related video ${video.bvid}: ${sampleFilteredOut}/${secondLevelRelated.length} (${(sampleFilterRate * 100).toFixed(1)}%) of its related videos were filtered`,
           );
+
+          // Log rejected video asynchronously
+          logRejectedVideo(
+            video,
+            RejectionReason.SECONDARY_QUALITY_FILTER,
+          ).catch((error) => {
+            logger.debug(`Failed to log rejected video ${video.bvid}:`, error);
+          });
         }
 
         return { video, passed };
