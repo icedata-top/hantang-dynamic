@@ -6,6 +6,7 @@ export const bilibiliSchema = z.object({
   sessdata: z.string(),
   csrfToken: z.string().optional(),
   accessKey: z.string().optional(),
+  apiProxyUrl: z.string().optional(),
 });
 
 export type BilibiliConfig = z.infer<typeof bilibiliSchema>;
@@ -22,5 +23,6 @@ export function createBilibiliConfig(
     sessdata: getConfigValue(["bilibili", "sessdata"], "SESSDATA"),
     csrfToken: getConfigValue(["bilibili", "csrf_token"], "BILI_JCT"),
     accessKey: getConfigValue(["bilibili", "access_key"], "BILI_ACCESS_KEY"),
+    apiProxyUrl: getConfigValue(["bilibili", "api_proxy_url"], "BILIBILI_API_PROXY_URL"),
   };
 }

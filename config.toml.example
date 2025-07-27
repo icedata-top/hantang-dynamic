@@ -11,6 +11,9 @@ sessdata = "your_sessdata"     # Your Bilibili session data
 csrf_token = ""                # BILI_JCT - CSRF token for user relation operations
 access_key = ""                # BILI_ACCESS_KEY - Access key for app authentication
 
+# Optional: API proxy URL for high-traffic features (required for related videos)
+api_proxy_url = ""             # API proxy URL (e.g., "https://biliproxy.example.com")
+
 [application]
 # Application behavior settings
 log_level = "info"             # Log level: debug, info, warn, error

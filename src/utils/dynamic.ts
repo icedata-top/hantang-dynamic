@@ -45,53 +45,63 @@ export async function filterAndProcessDynamics(
     videoData = await filterNewVideoData(videoData);
   }
 
-  // Process related videos if enabled
+  // Process related videos if enabled and API proxy is configured
   if (config.processing.features.enableRelatedVideos && videoData.length > 0) {
-    logger.info(`Processing related videos for ${videoData.length} videos`);
+    // Check if API proxy is configured
+    if (!config.bilibili.apiProxyUrl) {
+      logger.warn(
+        "Related videos feature is enabled but no API proxy URL is configured. " +
+        "Related videos feature requires API proxy to avoid rate limiting. " +
+        "Please set 'api_proxy_url' in [bilibili] section of config.toml. " +
+        "Skipping related videos processing."
+      );
+    } else {
+      logger.info(`Processing related videos for ${videoData.length} videos`);
 
-    try {
-      const relatedResult = await batchProcessRelatedVideos(videoData);
+      try {
+        const relatedResult = await batchProcessRelatedVideos(videoData);
 
-      // Filter out source videos that should be removed based on related video quality
-      // This needs to happen regardless of whether related videos were found
-      if (relatedResult.filteredSourceVideos.length > 0) {
-        const originalCount = videoData.length;
-        videoData = videoData.filter(
-          (video) => !relatedResult.filteredSourceVideos.includes(video.bvid),
-        );
-        logger.info(
-          `Filtered out ${originalCount - videoData.length} source videos based on related video quality`,
-        );
-      }
-
-      if (relatedResult.relatedVideos.length > 0) {
-        logger.info(
-          `Found ${relatedResult.relatedVideos.length} related videos`,
-        );
-
-        // Apply deduplication to related videos if enabled
-        let filteredRelatedVideos = relatedResult.relatedVideos;
-        if (config.processing.features.enableDeduplication) {
-          filteredRelatedVideos = await filterNewVideoData(
-            relatedResult.relatedVideos,
+        // Filter out source videos that should be removed based on related video quality
+        // This needs to happen regardless of whether related videos were found
+        if (relatedResult.filteredSourceVideos.length > 0) {
+          const originalCount = videoData.length;
+          videoData = videoData.filter(
+            (video) => !relatedResult.filteredSourceVideos.includes(video.bvid),
           );
           logger.info(
-            `After deduplication: ${filteredRelatedVideos.length} new related videos`,
+            `Filtered out ${originalCount - videoData.length} source videos based on related video quality`,
           );
         }
 
-        // Add related videos to final result
-        videoData.push(...filteredRelatedVideos);
+        if (relatedResult.relatedVideos.length > 0) {
+          logger.info(
+            `Found ${relatedResult.relatedVideos.length} related videos`,
+          );
 
-        logger.info(
-          `Total videos after related video processing: ${videoData.length}`,
-        );
-      } else {
-        logger.info("No related videos found");
+          // Apply deduplication to related videos if enabled
+          let filteredRelatedVideos = relatedResult.relatedVideos;
+          if (config.processing.features.enableDeduplication) {
+            filteredRelatedVideos = await filterNewVideoData(
+              relatedResult.relatedVideos,
+            );
+            logger.info(
+              `After deduplication: ${filteredRelatedVideos.length} new related videos`,
+            );
+          }
+
+          // Add related videos to final result
+          videoData.push(...filteredRelatedVideos);
+
+          logger.info(
+            `Total videos after related video processing: ${videoData.length}`,
+          );
+        } else {
+          logger.info("No related videos found");
+        }
+      } catch (error) {
+        logger.error("Failed to process related videos:", error);
+        // Continue without related videos on error
       }
-    } catch (error) {
-      logger.error("Failed to process related videos:", error);
-      // Continue without related videos on error
     }
   }
 
