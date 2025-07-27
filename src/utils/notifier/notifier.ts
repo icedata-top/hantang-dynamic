@@ -3,7 +3,7 @@ import { logger } from "../logger";
 import { sendEmailMessage } from "./email";
 import { sendTelegramMessage } from "./telegram";
 import { sendHttpNotification } from "./http";
-import type { VideoData } from "../../core/types";
+import type { VideoData } from "../../types";
 
 // Template data interface for video notifications
 export interface VideoTemplateData {

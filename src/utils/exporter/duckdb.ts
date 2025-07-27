@@ -2,7 +2,7 @@ import { DuckDBInstance, DuckDBTimestampValue } from "@duckdb/node-api";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { config } from "../../config";
-import type { VideoData } from "../../core/types";
+import type { VideoData } from "../../types";
 import { logger } from "../logger";
 
 /**

@@ -1,5 +1,5 @@
 import { config } from "../config";
-import type { VideoData } from "../core/types";
+import type { VideoData } from "../types";
 import { logger } from "./logger";
 
 export const filterVideo = async (
