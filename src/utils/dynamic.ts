@@ -2,6 +2,7 @@ import { getDynamic } from "../api/dynamic";
 import { config } from "../config";
 import type { BiliDynamicCard, VideoData } from "../core/types";
 import { sleep } from "./datetime";
+import { filterNewVideoData } from "./deduplicator";
 import { filterVideo } from "./filter";
 import { logger } from "./logger";
 import { processCard } from "./processCard";
@@ -27,9 +28,9 @@ export async function filterAndProcessDynamics(
     (video): video is VideoData => video !== null,
   );
 
-  // if (config.processing.features.enableDeduplication && videoData.length > 0) {
-  //   videoData = await aidFilter.filterNewVideoData(videoData);
-  // }
+  if (config.processing.features.enableDeduplication && videoData.length > 0) {
+    videoData = await filterNewVideoData(videoData);
+  }
 
   return videoData;
 }

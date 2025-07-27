@@ -12,9 +12,6 @@ export const processingSchema = z.object({
     contentBlacklist: z.array(z.string()).default([]),
     contentWhitelist: z.array(z.string()).default([]),
   }),
-  deduplication: z.object({
-    aidsDuckdbPath: z.string(),
-  }),
 });
 
 export type ProcessingConfig = z.infer<typeof processingSchema>;
@@ -66,13 +63,6 @@ export function createProcessingConfig(
         ) ||
         process.env.CONTENT_WHITE_LIST?.split(",").map((s) => s.trim()) ||
         [],
-    },
-    deduplication: {
-      aidsDuckdbPath: getConfigValue(
-        ["processing", "deduplication", "aids_duckdb_path"],
-        "AIDS_DUCKDB_PATH",
-        "./data/aids.duckdb",
-      ),
     },
   };
 }
