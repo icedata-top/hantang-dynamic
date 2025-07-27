@@ -83,10 +83,14 @@ async function fetchWbiKeys(
 async function getWbiKeys(): Promise<{ imgKey: string; subKey: string }> {
   const stateManager = new StateManager();
   if (stateManager.isWbiKeysValid()) {
-    return {
-      imgKey: stateManager.imgKey!,
-      subKey: stateManager.subKey!,
-    };
+    const imgKey = stateManager.imgKey;
+    const subKey = stateManager.subKey;
+    if (imgKey && subKey) {
+      return {
+        imgKey,
+        subKey,
+      };
+    }
   }
 
   // Fetch new keys
