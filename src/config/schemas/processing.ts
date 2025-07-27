@@ -6,6 +6,14 @@ export const processingSchema = z.object({
     enableTagFetch: z.coerce.boolean().default(false),
     enableUserRelation: z.coerce.boolean().default(false),
     enableDeduplication: z.coerce.boolean().default(true),
+    enableRelatedVideos: z.coerce.boolean().default(false),
+  }),
+  relatedVideos: z.object({
+    maxPerVideo: z.coerce.number().default(10),
+    maxDepth: z.coerce.number().default(1),
+    respectMainFilters: z.coerce.boolean().default(true),
+    rateLimitDelay: z.coerce.number().default(1000),
+    batchSize: z.coerce.number().default(5),
   }),
   filtering: z.object({
     typeIdWhitelist: z.array(z.number()).default([]),
@@ -39,6 +47,38 @@ export function createProcessingConfig(
         ["processing", "features", "enable_deduplication"],
         "ENABLE_DEDUPLICATION",
         true,
+      ),
+      enableRelatedVideos: getConfigValue(
+        ["processing", "features", "enable_related_videos"],
+        "ENABLE_RELATED_VIDEOS",
+        false,
+      ),
+    },
+    relatedVideos: {
+      maxPerVideo: getConfigValue(
+        ["processing", "related_videos", "max_per_video"],
+        "RELATED_VIDEOS_MAX_PER_VIDEO",
+        10,
+      ),
+      maxDepth: getConfigValue(
+        ["processing", "related_videos", "max_depth"],
+        "RELATED_VIDEOS_MAX_DEPTH",
+        1,
+      ),
+      respectMainFilters: getConfigValue(
+        ["processing", "related_videos", "respect_main_filters"],
+        "RELATED_VIDEOS_RESPECT_MAIN_FILTERS",
+        true,
+      ),
+      rateLimitDelay: getConfigValue(
+        ["processing", "related_videos", "rate_limit_delay"],
+        "RELATED_VIDEOS_RATE_LIMIT_DELAY",
+        1000,
+      ),
+      batchSize: getConfigValue(
+        ["processing", "related_videos", "batch_size"],
+        "RELATED_VIDEOS_BATCH_SIZE",
+        5,
       ),
     },
     filtering: {

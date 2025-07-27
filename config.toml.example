@@ -26,12 +26,21 @@ max_item = 0                   # Maximum number of items to fetch (0 for unlimit
 enable_tag_fetch = false       # Whether to fetch video tags
 enable_user_relation = false   # Toggle for user relation features
 enable_deduplication = true    # Enable AID-based deduplication (default: true)
+enable_related_videos = false  # Enable related video discovery (default: false)
 
 [processing.filtering]
 # Content filtering settings
 type_id_whitelist = []         # Array of video type IDs to include (e.g., [28, 30, 130])
 content_blacklist = []         # Array of content blacklist keywords
 content_whitelist = []         # Array of content whitelist keywords
+
+[processing.related_videos]
+# Related video discovery settings (only when enable_related_videos = true)
+max_depth = 1                  # Maximum discovery depth (0 = disabled, 1 = first level only)
+max_per_video = 5              # Maximum related videos to fetch per source video
+batch_size = 3                 # Number of videos to process concurrently
+rate_limit_delay = 1000        # Delay between API calls in milliseconds
+respect_main_filters = true    # Apply main content filters to related videos
 
 [export]
 [export.csv]

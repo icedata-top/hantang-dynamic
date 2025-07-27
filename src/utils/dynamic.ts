@@ -6,6 +6,7 @@ import { filterNewDynamics, filterNewVideoData } from "./deduplicator";
 import { filterVideo } from "./filter";
 import { logger } from "./logger";
 import { processCard } from "./processCard";
+import { batchProcessRelatedVideos } from "./relatedVideos";
 
 export async function filterAndProcessDynamics(
   dynamics: BiliDynamicCard[],
@@ -42,6 +43,40 @@ export async function filterAndProcessDynamics(
   // Final safety check for any edge cases (usually unnecessary now)
   if (config.processing.features.enableDeduplication && videoData.length > 0) {
     videoData = await filterNewVideoData(videoData);
+  }
+
+  // Process related videos if enabled
+  if (config.processing.features.enableRelatedVideos && videoData.length > 0) {
+    logger.info(`Processing related videos for ${videoData.length} videos`);
+    
+    try {
+      const relatedVideos = await batchProcessRelatedVideos(videoData);
+      
+      if (relatedVideos.length > 0) {
+        logger.info(`Found ${relatedVideos.length} related videos`);
+        
+        // Apply deduplication to related videos if enabled
+        let filteredRelatedVideos = relatedVideos;
+        if (config.processing.features.enableDeduplication) {
+          filteredRelatedVideos = await filterNewVideoData(relatedVideos);
+          logger.info(
+            `After deduplication: ${filteredRelatedVideos.length} new related videos`
+          );
+        }
+        
+        // Add related videos to final result
+        videoData.push(...filteredRelatedVideos);
+        
+        logger.info(
+          `Total videos after related video processing: ${videoData.length}`
+        );
+      } else {
+        logger.info("No related videos found");
+      }
+    } catch (error) {
+      logger.error("Failed to process related videos:", error);
+      // Continue without related videos on error
+    }
   }
 
   return videoData;
