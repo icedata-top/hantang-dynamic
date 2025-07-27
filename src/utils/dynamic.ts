@@ -51,9 +51,9 @@ export async function filterAndProcessDynamics(
     if (!config.bilibili.apiProxyUrl) {
       logger.warn(
         "Related videos feature is enabled but no API proxy URL is configured. " +
-        "Related videos feature requires API proxy to avoid rate limiting. " +
-        "Please set 'api_proxy_url' in [bilibili] section of config.toml. " +
-        "Skipping related videos processing."
+          "Related videos feature requires API proxy to avoid rate limiting. " +
+          "Please set 'api_proxy_url' in [bilibili] section of config.toml. " +
+          "Skipping related videos processing.",
       );
     } else {
       logger.info(`Processing related videos for ${videoData.length} videos`);

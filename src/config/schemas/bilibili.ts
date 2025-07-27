@@ -23,6 +23,9 @@ export function createBilibiliConfig(
     sessdata: getConfigValue(["bilibili", "sessdata"], "SESSDATA"),
     csrfToken: getConfigValue(["bilibili", "csrf_token"], "BILI_JCT"),
     accessKey: getConfigValue(["bilibili", "access_key"], "BILI_ACCESS_KEY"),
-    apiProxyUrl: getConfigValue(["bilibili", "api_proxy_url"], "BILIBILI_API_PROXY_URL"),
+    apiProxyUrl: getConfigValue(
+      ["bilibili", "api_proxy_url"],
+      "BILIBILI_API_PROXY_URL",
+    ),
   };
 }

@@ -156,14 +156,16 @@ async function performSecondaryQualityCheck(
   }
 
   logger.debug(`Performing secondary quality check on ${videos.length} videos`);
-  
+
   const finalVideoList: VideoData[] = [];
 
   // Process all videos concurrently with Promise.allSettled
   const results = await Promise.allSettled(
     videos.map(async (video) => {
       try {
-        logger.debug(`Secondary quality check for related video: ${video.bvid}`);
+        logger.debug(
+          `Secondary quality check for related video: ${video.bvid}`,
+        );
 
         // Fetch related videos of this video for quality assessment
         const secondLevelRelated = await fetchRelatedVideos({
@@ -176,28 +178,30 @@ async function performSecondaryQualityCheck(
         }
 
         let sampleFilteredOut = 0;
-        
+
         // Process all secondary related videos concurrently
         const sampleResults = await Promise.allSettled(
           secondLevelRelated.map(async (sampleVideo) => {
             const sampleVideoData = convertRelatedVideoToVideoData(sampleVideo);
-            
+
             if (config.processing.relatedVideos.respectMainFilters) {
               const filtered = await filterVideo(sampleVideoData);
               return !filtered; // Return true if filtered out
             }
             return false; // Not filtered
-          })
+          }),
         );
 
         // Count filtered samples
         sampleFilteredOut = sampleResults.filter(
-          (result) => result.status === "fulfilled" && result.value
+          (result) => result.status === "fulfilled" && result.value,
         ).length;
 
         // Check if this video should be kept based on its related videos quality
         const sampleFilterRate = sampleFilteredOut / secondLevelRelated.length;
-        const passed = sampleFilterRate < config.processing.relatedVideos.filterSourceThreshold;
+        const passed =
+          sampleFilterRate <
+          config.processing.relatedVideos.filterSourceThreshold;
 
         if (!passed) {
           logger.debug(
@@ -213,7 +217,7 @@ async function performSecondaryQualityCheck(
         // If secondary check fails, keep the video (fail safe)
         return { video, passed: true };
       }
-    })
+    }),
   );
 
   // Collect videos that passed the secondary check
@@ -275,8 +279,11 @@ export async function processRelatedVideos(
 
   try {
     // Step 1: Fetch and filter primary related videos
-    const primaryResult = await fetchAndFilterPrimaryVideos(videoId, sourceTitle);
-    
+    const primaryResult = await fetchAndFilterPrimaryVideos(
+      videoId,
+      sourceTitle,
+    );
+
     if (primaryResult.totalCount === 0) {
       return { relatedVideos: [], shouldFilterSource: false };
     }
@@ -295,14 +302,21 @@ export async function processRelatedVideos(
     }
 
     // Step 3: Perform secondary quality check on accepted videos
-    const finalVideoList = await performSecondaryQualityCheck(primaryResult.acceptedVideos);
+    const finalVideoList = await performSecondaryQualityCheck(
+      primaryResult.acceptedVideos,
+    );
 
     // Step 4: Check if too many videos failed the secondary quality check
     if (primaryResult.acceptedVideos.length > 0) {
-      const secondaryFailedCount = primaryResult.acceptedVideos.length - finalVideoList.length;
-      const secondaryFilterRate = secondaryFailedCount / primaryResult.acceptedVideos.length;
+      const secondaryFailedCount =
+        primaryResult.acceptedVideos.length - finalVideoList.length;
+      const secondaryFilterRate =
+        secondaryFailedCount / primaryResult.acceptedVideos.length;
 
-      if (secondaryFilterRate >= config.processing.relatedVideos.filterSourceThreshold) {
+      if (
+        secondaryFilterRate >=
+        config.processing.relatedVideos.filterSourceThreshold
+      ) {
         const videoInfo = formatVideoInfo(videoId, sourceTitle);
         logger.info(
           `Source video ${videoInfo} marked for filtering due to secondary quality check: ${secondaryFailedCount}/${primaryResult.acceptedVideos.length} (${(secondaryFilterRate * 100).toFixed(1)}%) related videos failed secondary check.`,
@@ -381,10 +395,7 @@ export async function batchProcessRelatedVideos(
         filteredSourceVideos.push(sourceVideo.bvid);
       }
     } else {
-      logger.error(
-        "Failed to process related videos in batch:",
-        result.reason,
-      );
+      logger.error("Failed to process related videos in batch:", result.reason);
     }
   }
 
