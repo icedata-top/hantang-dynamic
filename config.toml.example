@@ -38,11 +38,9 @@ content_blacklist = []         # Array of content blacklist keywords
 content_whitelist = []         # Array of content whitelist keywords
 
 [processing.related_videos]
-# Related video discovery settings (only when enable_related_videos = true)
+# Related video discovery settings (only when enable_related_videos = true and api_proxy_url is configured)
 max_depth = 1                  # Maximum discovery depth (0 = disabled, 1 = first level only)
 max_per_video = 5              # Maximum related videos to fetch per source video
-batch_size = 3                 # Number of videos to process concurrently
-rate_limit_delay = 1000        # Delay between API calls in milliseconds
 respect_main_filters = true    # Apply main content filters to related videos
 filter_source_threshold = 0.5  # If >50% of related videos are filtered, filter source video too (0.0-1.0)
 new_video_bypass_hours = 3     # Skip related video filtering for videos newer than X hours

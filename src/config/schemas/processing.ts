@@ -12,8 +12,6 @@ export const processingSchema = z.object({
     maxPerVideo: z.coerce.number().default(10),
     maxDepth: z.coerce.number().default(1),
     respectMainFilters: z.coerce.boolean().default(true),
-    rateLimitDelay: z.coerce.number().default(1000),
-    batchSize: z.coerce.number().default(5),
     filterSourceThreshold: z.coerce.number().min(0).max(1).default(0.5),
     newVideoBypassHours: z.coerce.number().min(0).default(3),
   }),
@@ -71,16 +69,6 @@ export function createProcessingConfig(
         ["processing", "related_videos", "respect_main_filters"],
         "RELATED_VIDEOS_RESPECT_MAIN_FILTERS",
         true,
-      ),
-      rateLimitDelay: getConfigValue(
-        ["processing", "related_videos", "rate_limit_delay"],
-        "RELATED_VIDEOS_RATE_LIMIT_DELAY",
-        1000,
-      ),
-      batchSize: getConfigValue(
-        ["processing", "related_videos", "batch_size"],
-        "RELATED_VIDEOS_BATCH_SIZE",
-        5,
       ),
       filterSourceThreshold: getConfigValue(
         ["processing", "related_videos", "filter_source_threshold"],
