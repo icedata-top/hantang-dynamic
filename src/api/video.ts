@@ -32,7 +32,7 @@ export const fetchVideoDetail = async (params: {
 }): Promise<BiliVideoDetailResponse> => {
   try {
     const response = await xClient.get<BiliVideoDetailResponse>(
-      "/x/web-interface/view",
+      "/web-interface/view",
       { params },
     );
     return response.data;
@@ -51,7 +51,7 @@ export const fetchVideoFullDetail = async (params: {
 }): Promise<BiliVideoFullDetailResponse> => {
   try {
     const response = await xClient.get<BiliVideoFullDetailResponse>(
-      "/x/web-interface/view/detail",
+      "/web-interface/view/detail",
       {
         params,
       },
@@ -88,7 +88,7 @@ export const fetchVideoDescription = async (params: {
 }): Promise<BiliVideoDescResponse> => {
   try {
     const response = await xClient.get<BiliVideoDescResponse>(
-      "/x/web-interface/archive/desc",
+      "/web-interface/archive/desc",
       { params },
     );
     return response.data;
@@ -107,7 +107,7 @@ export const fetchVideoPageList = async (params: {
 }): Promise<BiliVideoPageListResponse> => {
   try {
     const response = await xClient.get<BiliVideoPageListResponse>(
-      "/x/player/pagelist",
+      "/player/pagelist",
       { params },
     );
     return response.data;
