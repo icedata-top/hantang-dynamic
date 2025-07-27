@@ -41,6 +41,8 @@ max_per_video = 5              # Maximum related videos to fetch per source vide
 batch_size = 3                 # Number of videos to process concurrently
 rate_limit_delay = 1000        # Delay between API calls in milliseconds
 respect_main_filters = true    # Apply main content filters to related videos
+filter_source_threshold = 0.5  # If >50% of related videos are filtered, filter source video too (0.0-1.0)
+new_video_bypass_hours = 3     # Skip related video filtering for videos newer than X hours
 
 [export]
 [export.csv]

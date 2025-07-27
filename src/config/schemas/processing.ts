@@ -14,6 +14,8 @@ export const processingSchema = z.object({
     respectMainFilters: z.coerce.boolean().default(true),
     rateLimitDelay: z.coerce.number().default(1000),
     batchSize: z.coerce.number().default(5),
+    filterSourceThreshold: z.coerce.number().min(0).max(1).default(0.5),
+    newVideoBypassHours: z.coerce.number().min(0).default(3),
   }),
   filtering: z.object({
     typeIdWhitelist: z.array(z.number()).default([]),
@@ -79,6 +81,16 @@ export function createProcessingConfig(
         ["processing", "related_videos", "batch_size"],
         "RELATED_VIDEOS_BATCH_SIZE",
         5,
+      ),
+      filterSourceThreshold: getConfigValue(
+        ["processing", "related_videos", "filter_source_threshold"],
+        "RELATED_VIDEOS_FILTER_SOURCE_THRESHOLD",
+        0.5,
+      ),
+      newVideoBypassHours: getConfigValue(
+        ["processing", "related_videos", "new_video_bypass_hours"],
+        "RELATED_VIDEOS_NEW_VIDEO_BYPASS_HOURS",
+        3,
       ),
     },
     filtering: {

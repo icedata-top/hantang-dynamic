@@ -50,15 +50,25 @@ export async function filterAndProcessDynamics(
     logger.info(`Processing related videos for ${videoData.length} videos`);
     
     try {
-      const relatedVideos = await batchProcessRelatedVideos(videoData);
+      const relatedResult = await batchProcessRelatedVideos(videoData);
       
-      if (relatedVideos.length > 0) {
-        logger.info(`Found ${relatedVideos.length} related videos`);
+      // Filter out source videos that should be removed based on related video quality
+      // This needs to happen regardless of whether related videos were found
+      if (relatedResult.filteredSourceVideos.length > 0) {
+        const originalCount = videoData.length;
+        videoData = videoData.filter(video => !relatedResult.filteredSourceVideos.includes(video.bvid));
+        logger.info(
+          `Filtered out ${originalCount - videoData.length} source videos based on related video quality`
+        );
+      }
+      
+      if (relatedResult.relatedVideos.length > 0) {
+        logger.info(`Found ${relatedResult.relatedVideos.length} related videos`);
         
         // Apply deduplication to related videos if enabled
-        let filteredRelatedVideos = relatedVideos;
+        let filteredRelatedVideos = relatedResult.relatedVideos;
         if (config.processing.features.enableDeduplication) {
-          filteredRelatedVideos = await filterNewVideoData(relatedVideos);
+          filteredRelatedVideos = await filterNewVideoData(relatedResult.relatedVideos);
           logger.info(
             `After deduplication: ${filteredRelatedVideos.length} new related videos`
           );
