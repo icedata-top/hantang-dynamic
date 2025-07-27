@@ -1,6 +1,6 @@
 import { fetchVideoTags } from "../api/video";
 import { config } from "../config";
-import type { BiliDynamicCard, BiliVideoCard, VideoData } from "../core/types";
+import type { BiliDynamicCard, BiliVideoCard, VideoData } from "../types";
 import { sleep } from "./datetime";
 import { logger } from "./logger";
 

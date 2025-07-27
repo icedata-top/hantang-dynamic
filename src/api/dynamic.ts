@@ -4,7 +4,7 @@ import type {
   BiliDynamicDetailResponse,
   BiliDynamicHistoryResponse,
   BiliDynamicNewResponse,
-} from "../core/types";
+} from "../types";
 import { sleep } from "../utils/datetime";
 import { logger } from "../utils/logger";
 import { dynamicClient } from "./client";

@@ -1,5 +1,5 @@
 import { config } from "../../config";
-import type { BiliDynamicCard, VideoData } from "../../core/types";
+import type { BiliDynamicCard, VideoData } from "../../types";
 import { filterNewDynamicsMySQL, filterNewVideoDataMySQL } from "./mysql";
 
 /**

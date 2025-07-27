@@ -1,4 +1,4 @@
-import type { BiliDynamicCard, VideoData } from "../../core/types";
+import type { BiliDynamicCard, VideoData } from "../../types";
 import { logger } from "../logger";
 
 /**

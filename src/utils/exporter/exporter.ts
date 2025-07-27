@@ -1,5 +1,5 @@
 import { config } from "../../config";
-import type { VideoData } from "../../core/types";
+import type { VideoData } from "../../types";
 import { saveAsCSV } from "./csv";
 import { saveToDuckDB } from "./duckdb";
 import { saveToMysql } from "./mysql";

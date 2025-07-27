@@ -20,7 +20,7 @@
         "noExplicitAny": "off"
       },
       "complexity": {
-        "noBannedTypes": "off"
+        "noBannedTypes": "on"
       }
     }
   },

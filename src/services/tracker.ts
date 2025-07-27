@@ -2,7 +2,7 @@ import { fetchDynamics } from "../api/dynamic";
 import { generateBiliTicket } from "../api/signatures/biliTicket";
 import { config } from "../config";
 import { StateManager } from "../core/state";
-import type { BiliDynamicCard } from "../core/types";
+import type { BiliDynamicCard } from "../types";
 import { sleep } from "../utils/datetime";
 import { filterAndProcessDynamics } from "../utils/dynamic";
 import { exportData } from "../utils/exporter/exporter";

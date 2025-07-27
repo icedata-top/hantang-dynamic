@@ -3,7 +3,7 @@ import type {
   BiliVideoDetailResponse,
   BiliVideoPageListResponse,
   VideoTagResponse,
-} from "../core/types";
+} from "../types";
 import { logger } from "../utils/logger";
 import { xClient } from "./client";
 

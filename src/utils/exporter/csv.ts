@@ -3,7 +3,7 @@ import { parse as parseCSV } from "csv-parse/sync"; // 新增导入
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { config } from "../../config";
-import type { VideoData } from "../../core/types";
+import type { VideoData } from "../../types";
 import { logger } from "../logger";
 
 const fields = [
