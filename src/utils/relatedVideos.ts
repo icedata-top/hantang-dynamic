@@ -14,8 +14,6 @@ import { logger } from "./logger";
  */
 export function convertRelatedVideoToVideoData(
   relatedVideo: BiliRelatedVideo,
-  sourceVideoId: string,
-  depth: number,
 ): VideoData {
   return {
     aid: BigInt(relatedVideo.aid),
@@ -128,16 +126,7 @@ export async function processRelatedVideos(
     for (let i = 0; i < limitedRelatedVideos.length; i++) {
       const relatedVideo = limitedRelatedVideos[i];
 
-      // Add rate limiting to respect API limits
-      if (i > 0) {
-        await sleep(config.processing.relatedVideos.rateLimitDelay);
-      }
-
-      const videoData = convertRelatedVideoToVideoData(
-        relatedVideo,
-        videoId.bvid || String(videoId.aid || ""),
-        depth + 1,
-      );
+      const videoData = convertRelatedVideoToVideoData(relatedVideo);
 
       totalProcessed++;
 
@@ -214,17 +203,9 @@ export async function processRelatedVideos(
           continue;
         }
 
-        // Apply filtering to a sample of second-level related videos for quality assessment
-        const sampleSize = Math.min(5, secondLevelRelated.length); // Check up to 5 for efficiency
-        const sample = secondLevelRelated.slice(0, sampleSize);
-
         let sampleFilteredOut = 0;
-        for (const sampleVideo of sample) {
-          const sampleVideoData = convertRelatedVideoToVideoData(
-            sampleVideo,
-            video.bvid,
-            depth + 2,
-          );
+        for (const sampleVideo of secondLevelRelated) {
+          const sampleVideoData = convertRelatedVideoToVideoData(sampleVideo);
 
           if (config.processing.relatedVideos.respectMainFilters) {
             const filtered = await filterVideo(sampleVideoData);
@@ -235,13 +216,13 @@ export async function processRelatedVideos(
         }
 
         // Check if this level 1 video should be kept based on its related videos quality
-        const sampleFilterRate = sampleFilteredOut / sample.length;
+        const sampleFilterRate = sampleFilteredOut / secondLevelRelated.length;
         if (
           sampleFilterRate >=
           config.processing.relatedVideos.filterSourceThreshold
         ) {
           logger.debug(
-            `Dropping related video ${video.bvid}: ${sampleFilteredOut}/${sample.length} (${(sampleFilterRate * 100).toFixed(1)}%) of its related videos were filtered`,
+            `Dropping related video ${video.bvid}: ${sampleFilteredOut}/${secondLevelRelated.length} (${(sampleFilterRate * 100).toFixed(1)}%) of its related videos were filtered`,
           );
         } else {
           finalVideoList.push(video);
@@ -367,11 +348,6 @@ export async function batchProcessRelatedVideos(
           result.reason,
         );
       }
-    }
-
-    // Add delay between batches
-    if (i + batchSize < videoDataList.length) {
-      await sleep(config.processing.relatedVideos.rateLimitDelay * 2);
     }
   }
 
