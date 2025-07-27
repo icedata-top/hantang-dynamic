@@ -69,7 +69,7 @@ export function createClient(baseURL: string): AxiosInstance {
   client.interceptors.request.use(async (config) => {
     // Set start time for performance tracking
     (config as RequestConfig).metadata = {
-      startTime: Date.now()
+      startTime: Date.now(),
     };
 
     if (!stateManager.isTicketValid()) {

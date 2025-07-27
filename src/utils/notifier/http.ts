@@ -83,12 +83,18 @@ async function sendHttpRequest(
     try {
       axiosConfig.data = JSON.parse(processed.body);
       if (!axiosConfig.headers?.["Content-Type"]) {
-        axiosConfig.headers = { ...axiosConfig.headers, "Content-Type": "application/json" };
+        axiosConfig.headers = {
+          ...axiosConfig.headers,
+          "Content-Type": "application/json",
+        };
       }
     } catch {
       axiosConfig.data = processed.body;
       if (!axiosConfig.headers?.["Content-Type"]) {
-        axiosConfig.headers = { ...axiosConfig.headers, "Content-Type": "text/plain" };
+        axiosConfig.headers = {
+          ...axiosConfig.headers,
+          "Content-Type": "text/plain",
+        };
       }
     }
   }
@@ -153,7 +159,7 @@ export async function sendHttpNotification(
   // Process endpoints sequentially with delay
   for (let i = 0; i < config.notifications.http.endpoints.length; i++) {
     const endpoint = config.notifications.http.endpoints[i];
-    
+
     try {
       await sendHttpRequest(endpoint, variables);
     } catch (error) {
