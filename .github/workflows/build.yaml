@@ -65,17 +65,17 @@ jobs:
 
       - name: Prepare distribution files
         run: |
-          cp .env.example dist/.env.example
+          cp config.toml.example dist/config.toml
           cp README.md dist/README.md
 
       - name: Write start script
         if: ${{ matrix.platform != 'win' }}
         run: |
           echo '#!/bin/bash
-          if [ ! -f "$(dirname "$0")/.env" ]; then
-          echo "Error: .env file not found!"
-          echo "Please create a .env file with your configuration"
-          cp "$(dirname "$0")/.env.example" "$(dirname "$0")/.env"
+          if [ ! -f "$(dirname "$0")/config.toml" ]; then
+          echo "Error: config.toml file not found!"
+          echo "Please create a config.toml file with your configuration"
+          cp "$(dirname "$0")/config.toml.example" "$(dirname "$0")/config.toml"
           exit 1
           fi
           exec "$(dirname "$0")/bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }}" "$@"' > dist/${{ matrix.start }}
@@ -86,10 +86,10 @@ jobs:
         if: ${{ matrix.platform == 'win' }}
         run: |
           echo '@echo off
-          if not exist ".env" (
-            echo Error: .env file not found!
-            echo Please create a .env file with your configuration
-            copy ".env.example" ".env"
+          if not exist "config.toml" (
+            echo Error: config.toml file not found!
+            echo Please create a config.toml file with your configuration
+            copy "config.toml.example" "config.toml"
             exit /b 1
           )
           start "" /B "bilibili-dynamic-subscribe-${{ matrix.platform }}-${{ matrix.arch }}.exe" %*' > dist/start.bat
