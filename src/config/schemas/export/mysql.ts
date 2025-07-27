@@ -9,6 +9,7 @@ export const mysqlSchema = z.object({
   password: z.string().optional(),
   table: z.string().optional(),
   database: z.string().optional(),
+  rejectedTable: z.string().optional().default("rejected_videos"),
 });
 
 export type MysqlConfig = z.infer<typeof mysqlSchema>;
@@ -33,5 +34,10 @@ export function createMysqlConfig(
     password: getConfigValue(["export", "mysql", "password"], "MYSQL_PASSWORD"),
     table: getConfigValue(["export", "mysql", "table"], "MYSQL_TABLE"),
     database: getConfigValue(["export", "mysql", "database"], "MYSQL_DATABASE"),
+    rejectedTable: getConfigValue(
+      ["export", "mysql", "rejected_table"],
+      "MYSQL_REJECTED_TABLE",
+      "rejected_videos",
+    ),
   };
 }

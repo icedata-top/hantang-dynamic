@@ -177,5 +177,9 @@ function getCookieString(stateManager: StateManager): string {
 export const dynamicClient = createClient(
   "https://api.vc.bilibili.com/dynamic_svr/v1/dynamic_svr",
 );
-export const xClient = createClient("https://api.bilibili.com/x");
+export const xClient = createClient(
+  config.bilibili.apiProxyUrl
+    ? `${config.bilibili.apiProxyUrl}/x`
+    : "https://api.bilibili.com/x",
+);
 export const accountClient = createClient("https://account.bilibili.com/api");

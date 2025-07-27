@@ -43,4 +43,6 @@ export type {
   BiliUserGarb,
   BiliHonorReply,
   BiliArgueInfo,
+  BiliRelatedVideo,
+  BiliVideoFullDetailResponse,
 } from "./api/video";

@@ -3,6 +3,8 @@ import type {
   BiliVideoDetailResponse,
   BiliVideoPageListResponse,
   VideoTagResponse,
+  BiliVideoFullDetailResponse,
+  BiliRelatedVideo,
 } from "../types";
 import { logger } from "../utils/logger";
 import { xClient } from "./client";
@@ -30,7 +32,7 @@ export const fetchVideoDetail = async (params: {
 }): Promise<BiliVideoDetailResponse> => {
   try {
     const response = await xClient.get<BiliVideoDetailResponse>(
-      "/x/web-interface/view",
+      "/web-interface/view",
       { params },
     );
     return response.data;
@@ -46,11 +48,14 @@ export const fetchVideoDetail = async (params: {
 export const fetchVideoFullDetail = async (params: {
   aid?: number;
   bvid?: string;
-}): Promise<any> => {
+}): Promise<BiliVideoFullDetailResponse> => {
   try {
-    const response = await xClient.get<any>("/x/web-interface/view/detail", {
-      params,
-    });
+    const response = await xClient.get<BiliVideoFullDetailResponse>(
+      "/web-interface/view/detail",
+      {
+        params,
+      },
+    );
     return response.data;
   } catch (error) {
     logger.error("API Error:", error);
@@ -61,13 +66,29 @@ export const fetchVideoFullDetail = async (params: {
   }
 };
 
+export const fetchRelatedVideos = async (params: {
+  aid?: number;
+  bvid?: string;
+}): Promise<BiliRelatedVideo[]> => {
+  try {
+    const response = await fetchVideoFullDetail(params);
+    return response.data.Related || [];
+  } catch (error) {
+    logger.error("API Error:", error);
+    if (error instanceof Error) {
+      logger.error(error.stack);
+    }
+    throw new Error("API Error: Fetch related videos failed");
+  }
+};
+
 export const fetchVideoDescription = async (params: {
   aid?: number;
   bvid?: string;
 }): Promise<BiliVideoDescResponse> => {
   try {
     const response = await xClient.get<BiliVideoDescResponse>(
-      "/x/web-interface/archive/desc",
+      "/web-interface/archive/desc",
       { params },
     );
     return response.data;
@@ -86,7 +107,7 @@ export const fetchVideoPageList = async (params: {
 }): Promise<BiliVideoPageListResponse> => {
   try {
     const response = await xClient.get<BiliVideoPageListResponse>(
-      "/x/player/pagelist",
+      "/player/pagelist",
       { params },
     );
     return response.data;

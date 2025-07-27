@@ -33,6 +33,9 @@ export interface BiliVideoStat {
   his_rank: number;
   evaluation?: string;
   vt?: number;
+  vv?: number; // Extended view count (appears in related videos)
+  fav_g?: number; // Favorite group count (appears in related videos)
+  like_g?: number; // Like group count (appears in related videos)
 }
 
 /**
