@@ -36,6 +36,7 @@ enable_related_videos = false  # Enable related video discovery (default: false)
 type_id_whitelist = []         # Array of video type IDs to include (e.g., [28, 30, 130])
 content_blacklist = []         # Array of content blacklist keywords
 content_whitelist = []         # Array of content whitelist keywords
+copyright_blacklist = [2]      # Array of copyright statuses to filter out (1=original, 2=reprint, default: [2])
 
 [processing.related_videos]
 # Related video discovery settings (only when enable_related_videos = true and api_proxy_url is configured)

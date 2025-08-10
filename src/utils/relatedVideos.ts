@@ -22,6 +22,7 @@ export function convertRelatedVideoToVideoData(
     pic: relatedVideo.pic,
     type_id: relatedVideo.tid,
     user_id: BigInt(relatedVideo.owner.mid),
+    copyright: relatedVideo.copyright,
   };
 }
 

@@ -5,6 +5,15 @@ import { logger } from "./logger";
 export const filterVideo = async (
   videoData: VideoData,
 ): Promise<VideoData | null> => {
+  // Check copyright blacklist
+  if (
+    Array.isArray(config.processing.filtering.copyrightBlacklist) &&
+    config.processing.filtering.copyrightBlacklist.includes(videoData.copyright)
+  ) {
+    logger.debug(`忽略版权状态为 ${videoData.copyright} 的视频: ${videoData.title}`);
+    return null;
+  }
+
   const contentToCheck = [
     videoData.title.toLowerCase(),
     videoData.description.toLowerCase(),

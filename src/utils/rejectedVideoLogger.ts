@@ -20,6 +20,7 @@ export enum RejectionReason {
   CONTENT_BLACKLIST = "content_blacklist",
   CONTENT_WHITELIST = "content_whitelist",
   TYPE_ID_FILTER = "type_id_filter",
+  COPYRIGHT_FILTER = "copyright_filter",
   RELATED_QUALITY_FILTER = "related_quality_filter",
   SECONDARY_QUALITY_FILTER = "secondary_quality_filter",
   USER_FILTER = "user_filter",

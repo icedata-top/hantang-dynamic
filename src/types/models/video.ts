@@ -11,6 +11,7 @@ export interface VideoData {
   pic: string;
   type_id: number;
   user_id: bigint;
+  copyright?: number;
 }
 
 /**
