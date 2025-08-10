@@ -25,8 +25,8 @@ export const filterVideo = async (
       ) {
         for (const keyword of config.processing.filtering.contentWhitelist) {
           if (contentToCheck.includes(keyword.toLowerCase())) {
-            logger.info(
-              `包含白名单关键字 "${keyword}"，忽略类型检查: ${videoData.title}`,
+            logger.debug(
+              `包含白名单关键字 "${keyword}"，忽略类型检查: ${videoData.title}, bvid: ${videoData.bvid}`,
             );
             inwhite = true;
             break;
