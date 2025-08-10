@@ -170,7 +170,7 @@ export interface BiliVideoFullDetailResponse {
   data: {
     View: BiliVideoDetailResponse["data"];
     Card?: unknown;
-    Tags?: VideoTag[]; // Use existing VideoTag type
+    Tags: VideoTag[]; // Use existing VideoTag type
     Reply?: unknown;
     Related?: BiliRelatedVideo[];
   };
