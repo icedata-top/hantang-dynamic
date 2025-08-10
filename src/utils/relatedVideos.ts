@@ -366,25 +366,29 @@ export async function processRelatedVideos(
  * Result of batch processing related videos
  */
 export interface BatchRelatedVideosResult {
-  relatedVideos: VideoData[];
   filteredSourceVideos: string[]; // BVIDs of source videos that should be filtered
 }
+
+/**
+ * Callback type for handling found videos in a streaming fashion
+ */
+export type RelatedVideoCallback = (videos: VideoData[]) => Promise<void>;
 
 /**
  * Batch processes multiple videos for related video discovery
  */
 export async function batchProcessRelatedVideos(
   videoDataList: VideoData[],
+  onVideosFound: RelatedVideoCallback,
   depth: number = 0,
 ): Promise<BatchRelatedVideosResult> {
   if (
     !config.processing.features.enableRelatedVideos ||
     !videoDataList.length
   ) {
-    return { relatedVideos: [], filteredSourceVideos: [] };
+    return { filteredSourceVideos: [] };
   }
 
-  const allRelatedVideos: VideoData[] = [];
   const filteredSourceVideos: string[] = [];
 
   logger.info(
@@ -407,7 +411,10 @@ export async function batchProcessRelatedVideos(
   for (let i = 0; i < batchResults.length; i++) {
     const result = batchResults[i];
     if (result.status === "fulfilled") {
-      allRelatedVideos.push(...result.value.relatedVideos);
+      // Instead of accumulating, process videos immediately via callback
+      if (result.value.relatedVideos.length > 0) {
+        await onVideosFound(result.value.relatedVideos);
+      }
 
       // Track source videos that should be filtered
       if (result.value.shouldFilterSource) {
@@ -420,10 +427,10 @@ export async function batchProcessRelatedVideos(
   }
 
   logger.info(
-    `Batch processing completed: discovered ${allRelatedVideos.length} related videos from ${videoDataList.length} source videos. ${filteredSourceVideos.length} source videos marked for filtering.`,
+    `Batch processing completed. Related videos were handled by the callback. ${filteredSourceVideos.length} source videos marked for filtering.`,
   );
 
-  return { relatedVideos: allRelatedVideos, filteredSourceVideos };
+  return { filteredSourceVideos };
 }
 
 /**

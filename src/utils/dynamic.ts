@@ -87,62 +87,63 @@ export async function filterAndProcessDynamics(
       logger.info(`Processing related videos for ${videoData.length} videos`);
 
       try {
-        const relatedResult = await batchProcessRelatedVideos(videoData);
+        // Define the callback for handling found related videos
+        const handleFoundRelatedVideos = async (relatedVideos: VideoData[]) => {
+          if (relatedVideos.length === 0) return;
+
+          logger.info(
+            `Received ${relatedVideos.length} related videos, processing immediately...`,
+          );
+
+          // Filter out previously rejected videos
+          const notRejectedRelatedVideos = [];
+          for (const video of relatedVideos) {
+            if (!(await isVideoRejected(video.bvid))) {
+              notRejectedRelatedVideos.push(video);
+            }
+          }
+
+          if (notRejectedRelatedVideos.length !== relatedVideos.length) {
+            logger.info(
+              `Filtered out ${relatedVideos.length - notRejectedRelatedVideos.length} previously rejected related videos`,
+            );
+          }
+
+          // Apply deduplication
+          let newVideos = notRejectedRelatedVideos;
+          if (config.processing.features.enableDeduplication) {
+            newVideos = await filterNewVideoData(notRejectedRelatedVideos);
+          }
+
+          // Add new videos to the final list
+          if (newVideos.length > 0) {
+            videoData.push(...newVideos);
+            logger.info(
+              `Added ${newVideos.length} new related videos to the final list.`,
+            );
+          }
+        };
+
+        // Call batch processing with the callback
+        const { filteredSourceVideos } = await batchProcessRelatedVideos(
+          videoData,
+          handleFoundRelatedVideos,
+        );
 
         // Filter out source videos that should be removed based on related video quality
-        // This needs to happen regardless of whether related videos were found
-        if (relatedResult.filteredSourceVideos.length > 0) {
+        if (filteredSourceVideos.length > 0) {
           const originalCount = videoData.length;
           videoData = videoData.filter(
-            (video) => !relatedResult.filteredSourceVideos.includes(video.bvid),
+            (video) => !filteredSourceVideos.includes(video.bvid),
           );
           logger.info(
             `Filtered out ${originalCount - videoData.length} source videos based on related video quality`,
           );
         }
 
-        if (relatedResult.relatedVideos.length > 0) {
-          logger.info(
-            `Found ${relatedResult.relatedVideos.length} related videos`,
-          );
-
-          // Filter out previously rejected videos before further processing
-          const originalRelatedCount = relatedResult.relatedVideos.length;
-          const notRejectedRelatedVideos = [];
-
-          for (const video of relatedResult.relatedVideos) {
-            const isRejected = await isVideoRejected(video.bvid);
-            if (!isRejected) {
-              notRejectedRelatedVideos.push(video);
-            }
-          }
-
-          if (notRejectedRelatedVideos.length !== originalRelatedCount) {
-            logger.info(
-              `Filtered out ${originalRelatedCount - notRejectedRelatedVideos.length} previously rejected related videos`,
-            );
-          }
-
-          // Apply deduplication to related videos if enabled
-          let filteredRelatedVideos = notRejectedRelatedVideos;
-          if (config.processing.features.enableDeduplication) {
-            filteredRelatedVideos = await filterNewVideoData(
-              notRejectedRelatedVideos,
-            );
-            logger.info(
-              `After deduplication: ${filteredRelatedVideos.length} new related videos`,
-            );
-          }
-
-          // Add related videos to final result
-          videoData.push(...filteredRelatedVideos);
-
-          logger.info(
-            `Total videos after related video processing: ${videoData.length}`,
-          );
-        } else {
-          logger.info("No related videos found");
-        }
+        logger.info(
+          `Total videos after related video processing: ${videoData.length}`,
+        );
       } catch (error) {
         logger.error("Failed to process related videos:", error);
         // Continue without related videos on error
