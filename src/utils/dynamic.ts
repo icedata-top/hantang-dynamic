@@ -6,6 +6,12 @@ import { filterNewDynamics, filterNewVideoData } from "./deduplicator";
 import { filterVideo } from "./filter";
 import { logger } from "./logger";
 import { processCard } from "./processCard";
+import { batchProcessRelatedVideos } from "./relatedVideos";
+import {
+  isVideoRejected,
+  logRejectedVideo,
+  RejectionReason,
+} from "./rejectedVideoLogger";
 
 export async function filterAndProcessDynamics(
   dynamics: BiliDynamicCard[],
@@ -35,13 +41,114 @@ export async function filterAndProcessDynamics(
     videoData.push(await processCard(dynamic));
   }
 
+  // Apply filtering and log rejected videos
+  const originalVideoData = [...videoData];
   videoData = (await Promise.all(videoData.map(filterVideo))).filter(
     (video): video is VideoData => video !== null,
   );
 
+  // Log rejected videos for analytics
+  const rejectedVideos = originalVideoData.filter(
+    (original) =>
+      !videoData.find((accepted) => accepted.bvid === original.bvid),
+  );
+
+  if (rejectedVideos.length > 0) {
+    logger.info(
+      `${rejectedVideos.length} videos were filtered out by main filters`,
+    );
+
+    // Log rejected videos asynchronously to avoid blocking main flow
+    Promise.all(
+      rejectedVideos.map((video) =>
+        logRejectedVideo(video, RejectionReason.CONTENT_BLACKLIST),
+      ),
+    ).catch((error) => {
+      logger.warn("Failed to log some rejected videos:", error);
+    });
+  }
+
   // Final safety check for any edge cases (usually unnecessary now)
   if (config.processing.features.enableDeduplication && videoData.length > 0) {
     videoData = await filterNewVideoData(videoData);
+  }
+
+  // Process related videos if enabled and API proxy is configured
+  if (config.processing.features.enableRelatedVideos && videoData.length > 0) {
+    // Check if API proxy is configured
+    if (!config.bilibili.apiProxyUrl) {
+      logger.warn(
+        "Related videos feature is enabled but no API proxy URL is configured. " +
+          "Related videos feature requires API proxy to avoid rate limiting. " +
+          "Please set 'api_proxy_url' in [bilibili] section of config.toml. " +
+          "Skipping related videos processing.",
+      );
+    } else {
+      logger.info(`Processing related videos for ${videoData.length} videos`);
+
+      try {
+        // Define the callback for handling found related videos
+        const handleFoundRelatedVideos = async (relatedVideos: VideoData[]) => {
+          if (relatedVideos.length === 0) return;
+
+          logger.info(
+            `Received ${relatedVideos.length} related videos, processing immediately...`,
+          );
+
+          // Filter out previously rejected videos
+          const notRejectedRelatedVideos = [];
+          for (const video of relatedVideos) {
+            if (!(await isVideoRejected(video.bvid))) {
+              notRejectedRelatedVideos.push(video);
+            }
+          }
+
+          if (notRejectedRelatedVideos.length !== relatedVideos.length) {
+            logger.info(
+              `Filtered out ${relatedVideos.length - notRejectedRelatedVideos.length} previously rejected related videos`,
+            );
+          }
+
+          // Apply deduplication
+          let newVideos = notRejectedRelatedVideos;
+          if (config.processing.features.enableDeduplication) {
+            newVideos = await filterNewVideoData(notRejectedRelatedVideos);
+          }
+
+          // Add new videos to the final list
+          if (newVideos.length > 0) {
+            videoData.push(...newVideos);
+            logger.info(
+              `Added ${newVideos.length} new related videos to the final list.`,
+            );
+          }
+        };
+
+        // Call batch processing with the callback
+        const { filteredSourceVideos } = await batchProcessRelatedVideos(
+          videoData,
+          handleFoundRelatedVideos,
+        );
+
+        // Filter out source videos that should be removed based on related video quality
+        if (filteredSourceVideos.length > 0) {
+          const originalCount = videoData.length;
+          videoData = videoData.filter(
+            (video) => !filteredSourceVideos.includes(video.bvid),
+          );
+          logger.info(
+            `Filtered out ${originalCount - videoData.length} source videos based on related video quality`,
+          );
+        }
+
+        logger.info(
+          `Total videos after related video processing: ${videoData.length}`,
+        );
+      } catch (error) {
+        logger.error("Failed to process related videos:", error);
+        // Continue without related videos on error
+      }
+    }
   }
 
   return videoData;

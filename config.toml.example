@@ -11,6 +11,9 @@ sessdata = "your_sessdata"     # Your Bilibili session data
 csrf_token = ""                # BILI_JCT - CSRF token for user relation operations
 access_key = ""                # BILI_ACCESS_KEY - Access key for app authentication
 
+# Optional: API proxy URL for high-traffic features (required for related videos)
+api_proxy_url = ""             # API proxy URL (e.g., "https://biliproxy.example.com")
+
 [application]
 # Application behavior settings
 log_level = "info"             # Log level: debug, info, warn, error
@@ -26,12 +29,21 @@ max_item = 0                   # Maximum number of items to fetch (0 for unlimit
 enable_tag_fetch = false       # Whether to fetch video tags
 enable_user_relation = false   # Toggle for user relation features
 enable_deduplication = true    # Enable AID-based deduplication (default: true)
+enable_related_videos = false  # Enable related video discovery (default: false)
 
 [processing.filtering]
 # Content filtering settings
 type_id_whitelist = []         # Array of video type IDs to include (e.g., [28, 30, 130])
 content_blacklist = []         # Array of content blacklist keywords
 content_whitelist = []         # Array of content whitelist keywords
+
+[processing.related_videos]
+# Related video discovery settings (only when enable_related_videos = true and api_proxy_url is configured)
+max_depth = 1                  # Maximum discovery depth (0 = disabled, 1 = first level only)
+max_per_video = 5              # Maximum related videos to fetch per source video
+respect_main_filters = true    # Apply main content filters to related videos
+filter_source_threshold = 0.5  # If >50% of related videos are filtered, filter source video too (0.0-1.0)
+new_video_bypass_hours = 3     # Skip related video filtering for videos newer than X hours
 
 [export]
 [export.csv]
@@ -43,6 +55,7 @@ path = ""                      # CSV file path (default: "./data/uid{BILIBILI_UI
 # DuckDB file export settings
 enabled = false                 # Enable DuckDB export (default: false)
 path = ""                      # DuckDB file path (default: "./data/uid{BILIBILI_UID}.duckdb")
+rejected_table = "rejected_videos"  # Table name for rejected videos (default: "rejected_videos")
 
 [export.mysql]
 # MySQL export settings (all optional)
@@ -53,6 +66,7 @@ username = ""                  # MySQL username
 password = ""                  # MySQL password
 database = ""                  # MySQL database name
 table = ""                     # MySQL table name
+rejected_table = "rejected_videos"  # Table name for rejected videos (default: "rejected_videos")
 
 [notifications]
 [notifications.telegram]

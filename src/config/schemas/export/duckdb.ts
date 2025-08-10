@@ -4,6 +4,7 @@ import { z } from "zod";
 export const duckdbSchema = z.object({
   enabled: z.boolean().optional().default(false),
   path: z.string(),
+  rejectedTable: z.string().optional().default("rejected_videos"),
 });
 
 export type DuckdbConfig = z.infer<typeof duckdbSchema>;
@@ -30,6 +31,11 @@ export function createDuckdbConfig(
       ["export", "duckdb", "path"],
       "DUCKDB_PATH",
       defaultDuckdbPath,
+    ),
+    rejectedTable: getConfigValue(
+      ["export", "duckdb", "rejected_table"],
+      "DUCKDB_REJECTED_TABLE",
+      "rejected_videos",
     ),
   };
 }

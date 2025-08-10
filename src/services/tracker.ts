@@ -70,7 +70,7 @@ export class DynamicTracker {
   private async processDynamics(dynamics: BiliDynamicCard[]) {
     const videoData = await filterAndProcessDynamics(dynamics);
     if (videoData.length) {
-      exportData(videoData);
+      await exportData(videoData);
       await notifyNewVideos(videoData);
     }
   }
