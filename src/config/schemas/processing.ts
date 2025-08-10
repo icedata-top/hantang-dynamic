@@ -104,13 +104,11 @@ export function createProcessingConfig(
         ) ||
         process.env.CONTENT_WHITE_LIST?.split(",").map((s) => s.trim()) ||
         [],
-      copyrightBlacklist:
-        getConfigValue(
-          ["processing", "filtering", "copyright_blacklist"],
-          "COPYRIGHT_BLACK_LIST",
-        ) ||
-        process.env.COPYRIGHT_BLACK_LIST?.split(",").map(Number) ||
-        [2], // Default: filter out copyright status 2
+      copyrightBlacklist: getConfigValue(
+        ["processing", "filtering", "copyright_blacklist"],
+        "COPYRIGHT_BLACK_LIST",
+      ) ||
+        process.env.COPYRIGHT_BLACK_LIST?.split(",").map(Number) || [2], // Default: filter out copyright status 2
     },
   };
 }

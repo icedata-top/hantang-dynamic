@@ -8,10 +8,12 @@ export const filterVideo = async (
   // Check copyright blacklist
   if (
     Array.isArray(config.processing.filtering.copyrightBlacklist) &&
-    typeof videoData.copyright === 'number' &&
+    typeof videoData.copyright === "number" &&
     config.processing.filtering.copyrightBlacklist.includes(videoData.copyright)
   ) {
-    logger.debug(`忽略版权状态为 ${videoData.copyright} 的视频: ${videoData.title}`);
+    logger.debug(
+      `忽略版权状态为 ${videoData.copyright} 的视频: ${videoData.title}`,
+    );
     return null;
   }
 

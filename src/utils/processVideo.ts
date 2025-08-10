@@ -12,9 +12,9 @@ import { logger } from "./logger";
 export const processVideo = async (
   bvid: string,
   dynamiccard?: BiliDynamicCard,
-  relatedvideo?: BiliRelatedVideo
+  relatedvideo?: BiliRelatedVideo,
 ): Promise<VideoData> => {
-  let tagString = "";
+  const tagString = "";
   let copyrightStatus = 1;
 
   try {
@@ -23,8 +23,6 @@ export const processVideo = async (
     });
 
     copyrightStatus = videoFullDetail.data.View.copyright;
-
-
 
     const view = videoFullDetail.data.View;
     await sleep(config.application.apiWaitTime);
@@ -43,7 +41,7 @@ export const processVideo = async (
   } catch (error) {
     logger.warn(
       `视频详情获取失败 ${bvid}:`,
-      error instanceof Error ? error.message : "未知错误"
+      error instanceof Error ? error.message : "未知错误",
     );
 
     if (dynamiccard) {
