@@ -83,8 +83,14 @@ export const fetchDynamics = async ({
   minTimestamp = Date.now() / 1000 - config.application.maxHistoryDays * 86400,
   max_items = 0,
   types = ["video", "forward"] as DynamicType[],
-}): Promise<BiliDynamicCard[]> => {
-  const dynamics: BiliDynamicCard[] = [];
+  onPage,
+}: {
+  minDynamicId?: number;
+  minTimestamp?: number;
+  max_items?: number;
+  types?: DynamicType[];
+  onPage: (dynamics: BiliDynamicCard[]) => Promise<void>;
+}): Promise<void> => {
   let totalItems = 0;
 
   for (const type of types) {
@@ -111,8 +117,12 @@ export const fetchDynamics = async ({
         return isTimestampValid && isDynamicIdValid;
       });
 
-      dynamics.push(...validCards);
-      totalItems += validCards.length;
+      if (validCards.length > 0) {
+        totalItems += validCards.length;
+        await onPage(
+          validCards.sort((a, b) => a.desc.timestamp - b.desc.timestamp),
+        );
+      }
 
       if (
         !validCards.length ||
@@ -136,11 +146,4 @@ export const fetchDynamics = async ({
       }
     }
   }
-
-  if (max_items > 0) {
-    dynamics.splice(max_items);
-  }
-
-  logger.info(`Total ${dynamics.length} dynamics fetched`);
-  return dynamics.sort((a, b) => a.desc.timestamp - b.desc.timestamp);
 };

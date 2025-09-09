@@ -51,27 +51,29 @@ export class DynamicTracker {
   }
 
   private async checkDynamics() {
-    const Dynamics = await fetchDynamics({
+    let maxDynamicId = this.state.lastDynamicId;
+
+    await fetchDynamics({
       minDynamicId: this.state.lastDynamicId,
       minTimestamp:
         Date.now() / 1000 - config.application.maxHistoryDays * 86400,
       max_items: config.application.maxItem,
       types: ["video", "forward"],
+      onPage: async (dynamics: BiliDynamicCard[]) => {
+        const videoData = await filterAndProcessDynamics(dynamics);
+        if (videoData.length) {
+          exportData(videoData);
+          await notifyNewVideos(videoData);
+        }
+        maxDynamicId = Math.max(
+          maxDynamicId,
+          ...dynamics.map((d) => Number(d.desc.dynamic_id)),
+        );
+      },
     });
 
-    if (Dynamics.length) {
-      await this.processDynamics(Dynamics);
-      this.state.updateLastDynamicId(
-        Math.max(...Dynamics.map((d) => Number(d.desc.dynamic_id))),
-      );
-    }
-  }
-
-  private async processDynamics(dynamics: BiliDynamicCard[]) {
-    const videoData = await filterAndProcessDynamics(dynamics);
-    if (videoData.length) {
-      exportData(videoData);
-      await notifyNewVideos(videoData);
+    if (maxDynamicId > this.state.lastDynamicId) {
+      this.state.updateLastDynamicId(maxDynamicId);
     }
   }
 }
