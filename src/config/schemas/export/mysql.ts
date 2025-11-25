@@ -18,7 +18,9 @@ export function createMysqlConfig(
   getConfigValue: (
     tomlPath: string[],
     envKey: string,
+    // biome-ignore lint/suspicious/noExplicitAny: Config values from TOML/env are inherently untyped and validated by zod
     defaultValue?: any,
+    // biome-ignore lint/suspicious/noExplicitAny: Config values from TOML/env are inherently untyped and validated by zod
   ) => any,
 ): MysqlConfig {
   return {

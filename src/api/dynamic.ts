@@ -18,7 +18,7 @@ const DYNAMIC_TYPE_MAP: Record<DynamicType, number> = {
 
 export const fetchDynamicsAPI = async (
   endpoint: string,
-  params: Record<string, any>,
+  params: Record<string, string | number | bigint>,
 ): Promise<BiliDynamicNewResponse | BiliDynamicHistoryResponse> => {
   try {
     const response = await dynamicClient.get<
@@ -38,7 +38,7 @@ export const fetchDynamicsAPI = async (
 
 export const fetchDynamicAPI = async (
   endpoint: string,
-  params: Record<string, any>,
+  params: Record<string, string | number | bigint>,
 ): Promise<BiliDynamicDetailResponse> => {
   try {
     const response = await dynamicClient.get<BiliDynamicDetailResponse>(
@@ -128,8 +128,9 @@ export const fetchDynamics = async ({
         !validCards.length ||
         validCards.length < response.data.cards.length ||
         (totalItems >= max_items && max_items > 0)
-      )
+      ) {
         break;
+      }
 
       if (firstRun) {
         const newResponse = response as BiliDynamicNewResponse;

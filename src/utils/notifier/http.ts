@@ -10,7 +10,7 @@ import type { VideoTemplateData } from "./notifier";
  */
 function replaceTemplateVariables(
   template: string,
-  variables: Record<string, any>,
+  variables: Record<string, unknown>,
 ): string {
   return template.replace(/\{\{(\w+)\}\}/g, (match, key) => {
     const value = variables[key];

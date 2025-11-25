@@ -15,7 +15,7 @@ export interface VideoTemplateData {
   url?: string;
   description?: string;
   tag?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export async function notify(

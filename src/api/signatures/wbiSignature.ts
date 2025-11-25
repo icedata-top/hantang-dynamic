@@ -102,9 +102,9 @@ async function getWbiKeys(): Promise<{ imgKey: string; subKey: string }> {
  * @param params Parameters to sign
  * @returns Parameters with WBI signature added
  */
-export async function signWithWbi<T extends Record<string, any>>(
-  params: T,
-): Promise<T & { w_rid: string; wts: number }> {
+export async function signWithWbi<
+  T extends Record<string, string | number | boolean>,
+>(params: T): Promise<T & { w_rid: string; wts: number }> {
   const { imgKey, subKey } = await getWbiKeys();
   const mixinKey = getMixinKey(imgKey + subKey);
 
@@ -115,7 +115,7 @@ export async function signWithWbi<T extends Record<string, any>>(
   // Sort and filter parameters
   const sortedParams = Object.keys(paramsWithWts)
     .sort()
-    .reduce<Record<string, any>>((acc, key) => {
+    .reduce<Record<string, string>>((acc, key) => {
       // Filter out special characters from values
       const value = String(paramsWithWts[key]).replace(/[!'()*]/g, "");
       acc[key] = value;
@@ -144,7 +144,7 @@ export async function signWithWbi<T extends Record<string, any>>(
  * @returns Query string with WBI signature
  */
 export async function buildSignedQuery(
-  params: Record<string, any>,
+  params: Record<string, string | number | boolean>,
 ): Promise<string> {
   const signedParams = await signWithWbi(params);
 

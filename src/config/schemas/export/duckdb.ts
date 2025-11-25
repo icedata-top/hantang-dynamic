@@ -13,7 +13,9 @@ export function createDuckdbConfig(
   getConfigValue: (
     tomlPath: string[],
     envKey: string,
+    // biome-ignore lint/suspicious/noExplicitAny: Config values from TOML/env are inherently untyped and validated by zod
     defaultValue?: any,
+    // biome-ignore lint/suspicious/noExplicitAny: Config values from TOML/env are inherently untyped and validated by zod
   ) => any,
 ): DuckdbConfig {
   const bilibiliUid = getConfigValue(["bilibili", "uid"], "BILIBILI_UID");

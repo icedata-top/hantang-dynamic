@@ -11,7 +11,7 @@ interface BiliTicketResponse {
     ticket: string;
     created_at: number;
     ttl: number;
-    context: Record<string, any>;
+    context: Record<string, unknown>;
     nav: {
       img: string;
       sub: string;
@@ -73,7 +73,9 @@ export async function generateBiliTicket(csrf: string = ""): Promise<{
       const expiresAt = createdAt + ttl;
 
       logger.info(
-        `BiliTicket generated successfully, expires in ${Math.floor(ttl / 86400)} days`,
+        `BiliTicket generated successfully, expires in ${Math.floor(
+          ttl / 86400,
+        )} days`,
       );
       return { ticket, expiresAt };
     } else {

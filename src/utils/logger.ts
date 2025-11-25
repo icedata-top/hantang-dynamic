@@ -21,30 +21,30 @@ class Logger {
     return LOG_LEVELS[level] >= this.currentLevel;
   }
 
-  private formatMessage(message: any): string {
+  private formatMessage(message: unknown): string {
     if (typeof message === "string") return message;
     return JSON.stringify(message);
   }
 
-  debug(...args: any[]): void {
+  debug(...args: unknown[]): void {
     if (this.shouldLog("debug")) {
       console.log(`[DEBUG] ${args.map(this.formatMessage).join(" ")}`);
     }
   }
 
-  info(...args: any[]): void {
+  info(...args: unknown[]): void {
     if (this.shouldLog("info")) {
       console.log(`[INFO] ${args.map(this.formatMessage).join(" ")}`);
     }
   }
 
-  warn(...args: any[]): void {
+  warn(...args: unknown[]): void {
     if (this.shouldLog("warn")) {
       console.warn(`[WARN] ${args.map(this.formatMessage).join(" ")}`);
     }
   }
 
-  error(...args: any[]): void {
+  error(...args: unknown[]): void {
     if (this.shouldLog("error")) {
       console.error(`[ERROR] ${args.map(this.formatMessage).join(" ")}`);
     }

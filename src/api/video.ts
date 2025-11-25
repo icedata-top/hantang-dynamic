@@ -46,11 +46,14 @@ export const fetchVideoDetail = async (params: {
 export const fetchVideoFullDetail = async (params: {
   aid?: number;
   bvid?: string;
-}): Promise<any> => {
+}): Promise<unknown> => {
   try {
-    const response = await xClient.get<any>("/x/web-interface/view/detail", {
-      params,
-    });
+    const response = await xClient.get<unknown>(
+      "/x/web-interface/view/detail",
+      {
+        params,
+      },
+    );
     return response.data;
   } catch (error) {
     logger.error("API Error:", error);

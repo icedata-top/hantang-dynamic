@@ -15,7 +15,7 @@ import {
   processingSchema,
 } from "./schemas";
 
-let tomlData: any = {};
+let tomlData: unknown = {};
 try {
   const configPath = resolve(process.cwd(), "config.toml");
   const tomlString = readFileSync(configPath, "utf-8");
@@ -30,13 +30,21 @@ try {
 function getConfigValue(
   tomlPath: string[],
   envKey: string,
+  // biome-ignore lint/suspicious/noExplicitAny: Config values from TOML/env are inherently untyped and validated by zod
   defaultValue?: any,
+  // biome-ignore lint/suspicious/noExplicitAny: Config values from TOML/env are inherently untyped and validated by zod
 ): any {
   try {
     // Try to get value from TOML first
-    let value = tomlData;
+    // biome-ignore lint/suspicious/noExplicitAny: Config values from TOML/env are inherently untyped and validated by zod
+    let value: any = tomlData;
     for (const key of tomlPath) {
-      value = value?.[key];
+      if (value && typeof value === "object" && key in value) {
+        value = (value as Record<string, unknown>)[key];
+      } else {
+        value = undefined;
+        break;
+      }
     }
 
     // If found in TOML and not empty string, return it
