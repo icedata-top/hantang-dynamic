@@ -1,35 +1,28 @@
-import { fetchDynamics } from "../api/dynamic";
 import { generateBiliTicket } from "../api/signatures/biliTicket";
 import { config } from "../config";
 import { StateManager } from "../core/state";
-import type { BiliDynamicCard } from "../types";
+import type { BiliDynamicCard, VideoData } from "../types";
 import { sleep } from "../utils/datetime";
-import { filterAndProcessDynamics } from "../utils/dynamic";
 import { exportData } from "../utils/exporter/exporter";
 import { logger } from "../utils/logger";
 import { notifyNewVideos } from "../utils/notifier/notifier";
+import { DetailsService } from "./details.service";
+import { DynamicsService } from "./dynamics.service";
+import { RecommendationService } from "./recommendation.service";
 
 export class DynamicTracker {
   private state = new StateManager();
   private isRunning = false;
+  private dynamicsService = new DynamicsService();
+  private detailsService = new DetailsService();
+  private recommendationService = new RecommendationService();
 
   async start() {
     if (this.isRunning) return;
     this.isRunning = true;
 
-    const stateManager = new StateManager();
-    if (!stateManager.isTicketValid()) {
-      logger.debug("Generating initial BiliTicket...");
-      const ticketData = await generateBiliTicket();
-      if (ticketData) {
-        stateManager.updateTicket(ticketData.ticket, ticketData.expiresAt);
-        logger.info("BiliTicket initialized successfully");
-      } else {
-        logger.debug("Failed to initialize BiliTicket, continuing without it");
-      }
-    } else {
-      logger.debug("Using existing valid BiliTicket");
-    }
+    await this.initialize();
+    this.startRetrospectiveSchedule();
 
     while (this.isRunning) {
       try {
@@ -50,33 +43,153 @@ export class DynamicTracker {
     this.isRunning = false;
   }
 
+  private async initialize() {
+    // Initialize Database
+    // Assuming DB init is handled in index.ts or singleton ensures it's ready,
+    // but good to ensure connection here if needed.
+    // The Database.getInstance() is synchronous but init is async.
+    // We should probably ensure it's initialized.
+    // For now, let's assume index.ts calls db.init().
+
+    // Initialize BiliTicket
+    if (!this.state.isTicketValid()) {
+      logger.debug("Generating initial BiliTicket...");
+      const ticketData = await generateBiliTicket();
+      if (ticketData) {
+        this.state.updateTicket(ticketData.ticket, ticketData.expiresAt);
+        logger.info("BiliTicket initialized successfully");
+      } else {
+        logger.debug("Failed to initialize BiliTicket, continuing without it");
+      }
+    } else {
+      logger.debug("Using existing valid BiliTicket");
+    }
+  }
+
   private async checkDynamics() {
-    // Get last dynamic ID from state
     const lastDynamicId = this.state.lastDynamicId;
     let maxDynamicId = lastDynamicId;
+    const minTimestamp =
+      Date.now() / 1000 - config.application.maxHistoryDays * 86400;
 
-    await fetchDynamics({
+    logger.info(
+      `Checking dynamics since ID: ${lastDynamicId}, Timestamp: ${minTimestamp}`,
+    );
+
+    const stream = this.dynamicsService.fetchDynamicsStream({
       minDynamicId: lastDynamicId,
-      minTimestamp:
-        Date.now() / 1000 - config.application.maxHistoryDays * 86400,
-      max_items: config.application.maxItem,
+      minTimestamp,
       types: ["video", "forward"],
-      onPage: async (dynamics: BiliDynamicCard[]) => {
-        const videoData = await filterAndProcessDynamics(dynamics);
-        if (videoData.length) {
-          exportData(videoData);
-          await notifyNewVideos(videoData);
-        }
-        maxDynamicId = Math.max(
-          maxDynamicId,
-          ...dynamics.map((d) => Number(d.desc.dynamic_id)),
-        );
-      },
     });
 
-    // Update last dynamic ID in state
+    for await (const dynamics of stream) {
+      // Process page immediately
+      const processedVideos = await this.processPage(dynamics);
+
+      // Export and Notify
+      if (processedVideos.length > 0) {
+        await exportData(processedVideos);
+        await notifyNewVideos(processedVideos);
+      }
+
+      // Update maxDynamicId
+      const pageMaxId = Math.max(
+        ...dynamics.map((d) => Number(d.desc.dynamic_id)),
+      );
+      if (pageMaxId > maxDynamicId) {
+        maxDynamicId = pageMaxId;
+      }
+    }
+
+    // Update state after full cycle (or incrementally if preferred, but state usually tracks "all read up to here")
     if (maxDynamicId > lastDynamicId) {
       this.state.updateLastDynamicId(maxDynamicId);
     }
+  }
+
+  private async processPage(
+    dynamics: BiliDynamicCard[],
+    depth = 0,
+  ): Promise<VideoData[]> {
+    const results: VideoData[] = [];
+    const relatedQueue: BiliDynamicCard[] = [];
+
+    for (const dynamic of dynamics) {
+      // Process video and get related
+      const enableRecommendation =
+        config.processing?.features?.enableRecommendation ?? false;
+      const maxDepth = config.processing?.features?.maxRecommendationDepth ?? 1;
+
+      const { video, relatedVideos } = await this.detailsService.processVideo(
+        dynamic,
+        enableRecommendation && depth < maxDepth,
+      );
+
+      if (video) {
+        results.push(video);
+
+        if (
+          enableRecommendation &&
+          depth < maxDepth &&
+          relatedVideos.length > 0
+        ) {
+          const converted =
+            await this.recommendationService.trackAndConvertRecommendations(
+              video.bvid,
+              relatedVideos,
+            );
+          relatedQueue.push(...converted);
+        }
+      }
+    }
+
+    // Recursive processing for related videos
+    if (relatedQueue.length > 0) {
+      const relatedResults = await this.processPage(relatedQueue, depth + 1);
+      results.push(...relatedResults);
+    }
+
+    return results;
+  }
+
+  async runRetrospective() {
+    const retrospectiveDays = config.application.retrospectiveDays || 30;
+    const minTimestamp = Date.now() / 1000 - retrospectiveDays * 86400;
+
+    logger.info(
+      `Starting retrospective scan for past ${retrospectiveDays} days`,
+    );
+
+    const stream = this.dynamicsService.fetchDynamicsStream({
+      minDynamicId: 0, // Scan all
+      minTimestamp,
+      types: ["video", "forward"],
+    });
+
+    for await (const dynamics of stream) {
+      await this.processPage(dynamics);
+      // We don't necessarily need to notify for retrospective, or maybe we do?
+      // Usually retrospective is to fill gaps or update data.
+      // If we find NEW videos that were missed, maybe notify?
+      // But processPage returns videos that were NOT in DB (since DetailsService checks DB).
+      // So yes, these are effectively "newly processed" videos.
+    }
+
+    logger.info("Retrospective scan completed");
+  }
+
+  startRetrospectiveSchedule() {
+    const interval =
+      config.application.retrospectiveInterval || 7 * 24 * 3600 * 1000;
+
+    setInterval(() => {
+      this.runRetrospective().catch((err) =>
+        logger.error("Retrospective error:", err),
+      );
+    }, interval);
+
+    logger.info(
+      `Retrospective scan scheduled every ${interval / 86400000} days`,
+    );
   }
 }

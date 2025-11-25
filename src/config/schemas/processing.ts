@@ -6,6 +6,8 @@ export const processingSchema = z.object({
     enableTagFetch: z.coerce.boolean().default(false),
     enableUserRelation: z.coerce.boolean().default(false),
     enableDeduplication: z.coerce.boolean().default(true),
+    enableRecommendation: z.coerce.boolean().default(false),
+    maxRecommendationDepth: z.coerce.number().default(1),
   }),
   filtering: z.object({
     typeIdWhitelist: z.array(z.number()).default([]),
@@ -41,6 +43,16 @@ export function createProcessingConfig(
         ["processing", "features", "enable_deduplication"],
         "ENABLE_DEDUPLICATION",
         true,
+      ),
+      enableRecommendation: getConfigValue(
+        ["processing", "features", "enable_recommendation"],
+        "ENABLE_RECOMMENDATION",
+        false,
+      ),
+      maxRecommendationDepth: getConfigValue(
+        ["processing", "features", "max_recommendation_depth"],
+        "MAX_RECOMMENDATION_DEPTH",
+        1,
       ),
     },
     filtering: {

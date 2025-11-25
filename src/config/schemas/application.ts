@@ -8,6 +8,9 @@ export const applicationSchema = z.object({
   apiWaitTime: z.coerce.number().default(2000),
   maxHistoryDays: z.coerce.number().default(7),
   maxItem: z.coerce.number().default(0),
+  concurrencyLimit: z.coerce.number().default(1),
+  retrospectiveInterval: z.coerce.number().default(7 * 24 * 3600 * 1000),
+  retrospectiveDays: z.coerce.number().default(30),
 });
 
 export type ApplicationConfig = z.infer<typeof applicationSchema>;
@@ -44,5 +47,20 @@ export function createApplicationConfig(
       7,
     ),
     maxItem: getConfigValue(["application", "max_item"], "MAX_ITEM", 0),
+    concurrencyLimit: getConfigValue(
+      ["application", "concurrency_limit"],
+      "CONCURRENCY_LIMIT",
+      1,
+    ),
+    retrospectiveInterval: getConfigValue(
+      ["application", "retrospective_interval"],
+      "RETROSPECTIVE_INTERVAL",
+      7 * 24 * 3600 * 1000,
+    ),
+    retrospectiveDays: getConfigValue(
+      ["application", "retrospective_days"],
+      "RETROSPECTIVE_DAYS",
+      30,
+    ),
   };
 }

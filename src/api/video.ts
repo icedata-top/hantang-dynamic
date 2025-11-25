@@ -1,6 +1,7 @@
 import type {
   BiliVideoDescResponse,
   BiliVideoDetailResponse,
+  BiliVideoFullDetailResponse,
   BiliVideoPageListResponse,
   VideoTagResponse,
 } from "../types";
@@ -46,9 +47,9 @@ export const fetchVideoDetail = async (params: {
 export const fetchVideoFullDetail = async (params: {
   aid?: number;
   bvid?: string;
-}): Promise<unknown> => {
+}): Promise<BiliVideoFullDetailResponse> => {
   try {
-    const response = await xClient.get<unknown>(
+    const response = await xClient.get<BiliVideoFullDetailResponse>(
       "/x/web-interface/view/detail",
       {
         params,

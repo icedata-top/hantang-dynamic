@@ -11,7 +11,7 @@ export interface BiliVideoDimension {
  * Video owner information
  */
 export interface BiliVideoOwner {
-  mid: number;
+  mid: bigint;
   name: string;
   face: string;
 }
@@ -161,4 +161,104 @@ export interface BiliForwardCard {
   origin: string;
   origin_extend_json: string;
   origin_user: BiliForwardOriginUser;
+}
+
+/**
+ * Recommended video from related list
+ */
+export interface RecommendedVideo {
+  aid: number;
+  bvid: string;
+  cid: number;
+  title: string;
+  pic: string;
+  owner: {
+    mid: number;
+    name: string;
+    face: string;
+  };
+  stat: {
+    aid: number;
+    view: number;
+    danmaku: number;
+    reply: number;
+    favorite: number;
+    coin: number;
+    share: number;
+    like: number;
+  };
+  pubdate: number;
+  duration: number;
+  desc: string;
+  tid: number;
+  tname: string;
+}
+
+/**
+ * Full video detail response including related videos
+ */
+export interface BiliVideoFullDetailResponse {
+  code: number;
+  message: string;
+  ttl: number;
+  data: {
+    View: {
+      aid: bigint;
+      bvid: string;
+      cid: number;
+      copyright: number;
+      ctime: number;
+      desc: string;
+      dimension: BiliVideoDimension;
+      duration: number;
+      dynamic: string;
+      owner: BiliVideoOwner;
+      pic: string;
+      pubdate: number;
+      rights: BiliVideoRights;
+      stat: BiliVideoStat;
+      state: number;
+      tid: number;
+      title: string;
+      tname: string;
+      videos: number;
+    };
+    Card: {
+      card: {
+        mid: string;
+        name: string;
+        face: string;
+        fans: number;
+        attention: number;
+        sign: string;
+        level_info: {
+          current_level: number;
+        };
+      };
+      following: boolean;
+      archive_count: number;
+      article_count: number;
+      follower: number;
+    };
+    Tags: Array<{
+      tag_id: number;
+      tag_name: string;
+      cover: string;
+      likes: number;
+      hates: number;
+      attribute: number;
+      is_activity: number;
+      uri: string;
+      tag_type: string;
+    }>;
+    Reply: {
+      page: {
+        num: number;
+        size: number;
+        count: number;
+      };
+      replies: Array<unknown>;
+    };
+    Related: RecommendedVideo[];
+  };
 }

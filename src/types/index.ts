@@ -35,9 +35,11 @@ export type {
   BiliForwardUser,
   BiliVideoCard,
   BiliVideoDimension,
+  BiliVideoFullDetailResponse,
   BiliVideoOwner,
   BiliVideoPage,
   BiliVideoRights,
   BiliVideoStat,
+  RecommendedVideo,
 } from "./bilibili/video";
 export type { VideoData, VideoTag } from "./models/video";
