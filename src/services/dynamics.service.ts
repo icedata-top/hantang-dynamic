@@ -1,5 +1,6 @@
 import { getHistoryDynamic, getNewDynamic } from "../api/dynamic";
 import { config } from "../config";
+import { StateManager } from "../core/state";
 import type {
   BiliDynamicCard,
   BiliDynamicHistoryResponse,
@@ -7,7 +8,6 @@ import type {
 } from "../types";
 import { sleep } from "../utils/datetime";
 import { logger } from "../utils/logger";
-import { StateManager } from "../core/state";
 
 type DynamicType = "video" | "forward";
 
