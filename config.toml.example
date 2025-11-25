@@ -10,6 +10,8 @@ sessdata = "your_sessdata"     # Your Bilibili session data
 # Optional: Additional authentication tokens for user relation operations
 csrf_token = ""                # BILI_JCT - CSRF token for user relation operations
 access_key = ""                # BILI_ACCESS_KEY - Access key for app authentication
+api_proxy_url = ""             # API proxy URL (e.g., "https://biliproxy.example.com")
+dynamic_proxy_url = ""         # Dynamic API proxy URL
 
 [application]
 # Application behavior settings
@@ -43,11 +45,6 @@ content_blacklist = []         # Array of content blacklist keywords
 content_whitelist = []         # Array of content whitelist keywords
 
 [export]
-[export.csv]
-# CSV file export settings
-enabled = false                 # Enable CSV export (default: false)
-path = ""                      # CSV file path (default: "./data/uid{BILIBILI_UID}.csv")
-
 [export.mysql]
 # MySQL export settings (all optional)
 enabled = false                # Enable MySQL export (default: false)
