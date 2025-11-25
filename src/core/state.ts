@@ -48,10 +48,12 @@ export class StateManager {
         return this.getDefaultState();
       }
 
-      const loadedState = JSON.parse(fileContent) as Partial<State>;
+      const loadedState = JSON.parse(fileContent);
 
       return {
-        lastDynamicId: loadedState.lastDynamicId ?? BigInt(0),
+        lastDynamicId: loadedState.lastDynamicId
+          ? BigInt(loadedState.lastDynamicId)
+          : BigInt(0),
         lastUpdate: loadedState.lastUpdate ?? Date.now(),
         lastUA: loadedState.lastUA || randUA(),
         biliTicket: loadedState.biliTicket,
@@ -71,7 +73,12 @@ export class StateManager {
 
   saveState() {
     try {
-      writeFileSync(this.filePath, JSON.stringify(this.state));
+      writeFileSync(
+        this.filePath,
+        JSON.stringify(this.state, (_, v) =>
+          typeof v === "bigint" ? v.toString() : v,
+        ),
+      );
     } catch (error) {
       logger.error("Error saving state:", error);
       if (error instanceof Error) {
@@ -121,8 +128,8 @@ export class StateManager {
   }
 
   isWithinHistoryWindow(timestamp: number) {
-    const cutoff = Date.now() -
-      config.application.maxHistoryDays * 86400 * 1000;
+    const cutoff =
+      Date.now() - config.application.maxHistoryDays * 86400 * 1000;
     return timestamp * 1000 > cutoff;
   }
 
@@ -156,11 +163,9 @@ export class StateManager {
     this.state.wbiKeysExpiresAt = expiresAt;
     this.saveState();
     logger.debug(
-      `WBI keys updated, expires at: ${
-        new Date(
-          expiresAt * 1000,
-        ).toLocaleString()
-      }`,
+      `WBI keys updated, expires at: ${new Date(
+        expiresAt * 1000,
+      ).toLocaleString()}`,
     );
   }
 }
