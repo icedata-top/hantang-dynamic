@@ -1,3 +1,5 @@
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { type DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { config } from "../config/index.js";
 import type { VideoData } from "../types/models/video.js";
@@ -95,6 +97,11 @@ export class Database {
     logger.info(`Initializing DuckDB at ${path}`);
 
     try {
+      // Ensure the database directory exists
+      const dbDir = dirname(path);
+      mkdirSync(dbDir, { recursive: true });
+      logger.debug(`Database directory created/verified: ${dbDir}`);
+
       // Create or connect to DuckDB instance
       this.duckDBInstance = await DuckDBInstance.create(path);
       this.connection = await this.duckDBInstance.connect();
