@@ -1,7 +1,7 @@
 import { config } from "../config";
 import { getRandomDelay, sleep } from "../utils/datetime";
 import { logger } from "../utils/logger";
-import { accountClient, simulateBrowserVisit, xClient } from "./client";
+import { accountClient, relationClient, simulateBrowserVisit } from "./client";
 
 // User relationship operation types
 export enum UserRelationAction {
@@ -66,10 +66,16 @@ const simulateUserPageVisit = async (
   let referrer = "https://www.bilibili.com/";
   switch (reSource) {
     case RelationSource.Video:
-      referrer = `https://www.bilibili.com/video/av${getRandomDelay(10000, 999999)}`;
+      referrer = `https://www.bilibili.com/video/av${getRandomDelay(
+        10000,
+        999999,
+      )}`;
       break;
     case RelationSource.Article:
-      referrer = `https://www.bilibili.com/read/cv${getRandomDelay(10000, 999999)}`;
+      referrer = `https://www.bilibili.com/read/cv${getRandomDelay(
+        10000,
+        999999,
+      )}`;
       break;
     case RelationSource.ActivityPage:
       referrer = "https://t.bilibili.com/";
@@ -147,7 +153,9 @@ const autoUnblockUser = async (
       return true;
     } else {
       logger.warn(
-        `Failed to unblock user ${fid}: ${getErrorMessage(unblockResponse.code)}`,
+        `Failed to unblock user ${fid}: ${getErrorMessage(
+          unblockResponse.code,
+        )}`,
       );
       return false;
     }
@@ -220,8 +228,8 @@ export const modifyUserRelation = async (
     }
 
     try {
-      const response = await xClient.post<RelationModifyResponse>(
-        "/relation/modify",
+      const response = await relationClient.post<RelationModifyResponse>(
+        "/modify",
         formData,
         {
           headers: {
@@ -283,7 +291,9 @@ export const modifyUserRelation = async (
       // Log error codes and messages for debugging
       if (response.data.code !== RelationErrorCode.Success) {
         logger.warn(
-          `Relation action ${act} on user ${fid} returned error: ${getErrorMessage(response.data.code)}`,
+          `Relation action ${act} on user ${fid} returned error: ${getErrorMessage(
+            response.data.code,
+          )}`,
         );
       } else {
         logger.debug(
@@ -407,8 +417,8 @@ export const batchModifyUserRelation = async (
       );
 
       try {
-        const response = await xClient.post<BatchRelationModifyResponse>(
-          "/relation/batch/modify",
+        const response = await relationClient.post<BatchRelationModifyResponse>(
+          "/batch/modify",
           formData,
           {
             headers: {
@@ -420,7 +430,9 @@ export const batchModifyUserRelation = async (
         // Log failed operations if any
         if (response.data.data?.failed_fids?.length > 0) {
           logger.warn(
-            `Failed to modify relation for ${response.data.data.failed_fids.length} users: ${response.data.data.failed_fids.join(", ")}`,
+            `Failed to modify relation for ${response.data.data.failed_fids.length} users: ${response.data.data.failed_fids.join(
+              ", ",
+            )}`,
           );
           logger.warn(`API Message: ${getErrorMessage(response.data.code)}`);
         }
@@ -495,7 +507,9 @@ const processIndividually = async (
 
       if (response.code !== RelationErrorCode.Success) {
         logger.warn(
-          `Failed to modify relation for user ${fid}: ${getErrorMessage(response.code)}`,
+          `Failed to modify relation for user ${fid}: ${getErrorMessage(
+            response.code,
+          )}`,
         );
         results.data.failed_fids.push(fid);
       } else {
@@ -544,7 +558,9 @@ export const fetchUserRelation = async (
 
       if (response.data.code !== RelationErrorCode.Success) {
         logger.warn(
-          `Failed to fetch user relations: ${getErrorMessage(response.data.code)}`,
+          `Failed to fetch user relations: ${getErrorMessage(
+            response.data.code,
+          )}`,
         );
         return { attentions: [] };
       }

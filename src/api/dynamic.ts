@@ -7,7 +7,7 @@ import type {
 } from "../types";
 import { sleep } from "../utils/datetime";
 import { logger } from "../utils/logger";
-import { dynamicClient } from "./client";
+import { dynamicClient, dynamicDetailClient } from "./client";
 
 type DynamicType = "video" | "forward";
 
@@ -41,7 +41,7 @@ export const fetchDynamicAPI = async (
   params: Record<string, string | number | bigint>,
 ): Promise<BiliDynamicDetailResponse> => {
   try {
-    const response = await dynamicClient.get<BiliDynamicDetailResponse>(
+    const response = await dynamicDetailClient.get<BiliDynamicDetailResponse>(
       endpoint,
       {
         params,

@@ -1,20 +1,22 @@
 import type {
-  BiliVideoDescResponse,
   BiliVideoDetailResponse,
   BiliVideoFullDetailResponse,
-  BiliVideoPageListResponse,
   VideoTagResponse,
 } from "../types";
 import { logger } from "../utils/logger";
-import { xClient } from "./client";
+import { webInterfaceClient } from "./client";
 
 export const fetchVideoTags = async (
   bvid: string,
+  aid?: number,
 ): Promise<VideoTagResponse> => {
   try {
-    const response = await xClient.get<VideoTagResponse>("/tag/archive/tags", {
-      params: { bvid },
-    });
+    const response = await webInterfaceClient.get<VideoTagResponse>(
+      "/view/detail/tag",
+      {
+        params: { bvid, aid },
+      },
+    );
     return response.data;
   } catch (error) {
     logger.error("API Error:", error);
@@ -30,8 +32,8 @@ export const fetchVideoDetail = async (params: {
   bvid?: string;
 }): Promise<BiliVideoDetailResponse> => {
   try {
-    const response = await xClient.get<BiliVideoDetailResponse>(
-      "/x/web-interface/view",
+    const response = await webInterfaceClient.get<BiliVideoDetailResponse>(
+      "/view",
       { params },
     );
     return response.data;
@@ -49,8 +51,8 @@ export const fetchVideoFullDetail = async (params: {
   bvid?: string;
 }): Promise<BiliVideoFullDetailResponse> => {
   try {
-    const response = await xClient.get<BiliVideoFullDetailResponse>(
-      "/x/web-interface/view/detail",
+    const response = await webInterfaceClient.get<BiliVideoFullDetailResponse>(
+      "/view/detail",
       {
         params,
       },
@@ -62,43 +64,5 @@ export const fetchVideoFullDetail = async (params: {
       logger.error(error.stack);
     }
     throw new Error("API Error: Fetch video full detail failed");
-  }
-};
-
-export const fetchVideoDescription = async (params: {
-  aid?: number;
-  bvid?: string;
-}): Promise<BiliVideoDescResponse> => {
-  try {
-    const response = await xClient.get<BiliVideoDescResponse>(
-      "/x/web-interface/archive/desc",
-      { params },
-    );
-    return response.data;
-  } catch (error) {
-    logger.error("API Error:", error);
-    if (error instanceof Error) {
-      logger.error(error.stack);
-    }
-    throw new Error("API Error: Fetch video description failed");
-  }
-};
-
-export const fetchVideoPageList = async (params: {
-  aid?: number;
-  bvid?: string;
-}): Promise<BiliVideoPageListResponse> => {
-  try {
-    const response = await xClient.get<BiliVideoPageListResponse>(
-      "/x/player/pagelist",
-      { params },
-    );
-    return response.data;
-  } catch (error) {
-    logger.error("API Error:", error);
-    if (error instanceof Error) {
-      logger.error(error.stack);
-    }
-    throw new Error("API Error: Fetch video page list failed");
   }
 };

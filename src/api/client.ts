@@ -97,7 +97,9 @@ export function createClient(baseURL: string): AxiosInstance {
         : "";
 
       logger.debug(
-        `[${new Date().toISOString()}] ${baseURL}${response.config.url}${params}${data} (${timeUsed}ms)`,
+        `[${
+          new Date().toISOString()
+        }] ${baseURL}${response.config.url}${params}${data} (${timeUsed}ms)`,
       );
 
       if (response.status === ApiErrorResponseCode.IpBanned) {
@@ -110,12 +112,16 @@ export function createClient(baseURL: string): AxiosInstance {
 
       // Handle non-success response codes
       if (response.data.code !== ApiErrorCode.Success) {
-        const message =
-          `API Error:\n` +
+        const message = `API Error:\n` +
           `Code: ${response.data.code}\n` +
           `baseURL: ${baseURL + response.config.url}\n` +
           `Config: ${JSON.stringify(response.config)}\n` +
-          `Response: ${JSON.stringify(response.data || "No message")?.slice(0, 1000)}`;
+          `Response: ${
+            JSON.stringify(response.data || "No message")?.slice(
+              0,
+              1000,
+            )
+          }`;
         notify(message);
 
         if (response.data.code === ApiErrorCode.CookieExpired) {
@@ -177,5 +183,21 @@ function getCookieString(stateManager: StateManager): string {
 export const dynamicClient = createClient(
   "https://api.vc.bilibili.com/dynamic_svr/v1/dynamic_svr",
 );
-export const xClient = createClient("https://api.bilibili.com/x");
+
+export const dynamicDetailClient = createClient(
+  config.bilibili.dynamicProxyUrl
+    ? `${config.bilibili.dynamicProxyUrl}/dynamic_svr/v1/dynamic_svr`
+    : "https://api.vc.bilibili.com/dynamic_svr/v1/dynamic_svr",
+);
+
+export const webInterfaceClient = createClient(
+  config.bilibili.apiProxyUrl
+    ? `${config.bilibili.apiProxyUrl}/x/web-interface`
+    : "https://api.bilibili.com/x/web-interface",
+);
+
+export const relationClient = createClient(
+  "https://api.bilibili.com/x/relation",
+);
+
 export const accountClient = createClient("https://account.bilibili.com/api");
