@@ -11,3 +11,4 @@ data/*
 biome.json
 
 tmp/*
+exports/*
