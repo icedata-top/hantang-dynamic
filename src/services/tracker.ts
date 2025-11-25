@@ -1,5 +1,6 @@
 import { generateBiliTicket } from "../api/signatures/biliTicket";
 import { config } from "../config";
+import { Database } from "../core/database";
 import { StateManager } from "../core/state";
 import type { BiliDynamicCard, VideoData } from "../types";
 import { sleep } from "../utils/datetime";
@@ -14,6 +15,7 @@ export class DynamicTracker {
   private isRunning = false;
   private dynamicsService = new DynamicsService();
   private detailsService = new DetailsService();
+  private db = Database.getInstance();
 
   async start() {
     if (this.isRunning) return;
@@ -25,6 +27,11 @@ export class DynamicTracker {
     while (this.isRunning) {
       try {
         await this.checkDynamics();
+
+        // Close and reopen DB connection to reduce WAL buildup
+        await this.db.checkpoint();
+        await this.db.reconnect();
+
         await sleep(config.application.fetchInterval);
       } catch (error) {
         logger.error("Tracker error:", error);
@@ -190,6 +197,10 @@ export class DynamicTracker {
     }
 
     logger.info("Retrospective scan completed");
+
+    // Close and reopen DB connection to reduce WAL buildup
+    await this.db.checkpoint();
+    await this.db.reconnect();
   }
 
   startRetrospectiveSchedule() {

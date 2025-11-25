@@ -649,6 +649,46 @@ export class Database {
   }
 
   /**
+   * Checkpoint the database to flush WAL to disk
+   */
+  public async checkpoint(): Promise<void> {
+    return this.withMutex(async () => {
+      if (!this.connection) {
+        throw new Error("Database not initialized");
+      }
+
+      await this.connection.run("CHECKPOINT");
+      logger.debug("Database checkpointed");
+    });
+  }
+
+  /**
+   * Close and reopen the database connection to reduce WAL buildup
+   */
+  public async reconnect(): Promise<void> {
+    const release = await this.mutex.acquire();
+    try {
+      if (!this.duckDBInstance) {
+        throw new Error("Database instance not initialized");
+      }
+
+      logger.debug("Reconnecting to database...");
+
+      // Close existing connection
+      if (this.connection) {
+        await this.connection.disconnect();
+        this.connection = null;
+      }
+
+      // Create new connection
+      this.connection = await this.duckDBInstance.connect();
+      logger.info("Database reconnected successfully");
+    } finally {
+      release();
+    }
+  }
+
+  /**
    * Close the database connection
    */
   public async close(): Promise<void> {
