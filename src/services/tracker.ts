@@ -169,6 +169,11 @@ export class DynamicTracker {
       results.push(...relatedResults);
     }
 
+    // log the processResults
+    logger.info(
+      `Original dynamic count: ${dynamics.length}, Added video count: ${results.length}`,
+    );
+
     return results;
   }
 
