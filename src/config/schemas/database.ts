@@ -19,8 +19,8 @@ export function createDatabaseConfig(
 ): DatabaseConfig {
   const bilibiliUid = getConfigValue(["bilibili", "uid"], "BILIBILI_UID");
   const defaultDuckdbPath = bilibiliUid
-    ? `/exports/duckdb/${bilibiliUid}.duckdb`
-    : "/exports/duckdb/default.duckdb";
+    ? `./exports/duckdb/${bilibiliUid}.duckdb`
+    : "./exports/duckdb/default.duckdb";
 
   return {
     path: getConfigValue(
