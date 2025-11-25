@@ -50,7 +50,7 @@ export function createApplicationConfig(
     concurrencyLimit: getConfigValue(
       ["application", "concurrency_limit"],
       "CONCURRENCY_LIMIT",
-      1,
+      process.env.HTTPS_PROXY || process.env.HTTP_PROXY ? 20 : 1,
     ),
     retrospectiveInterval: getConfigValue(
       ["application", "retrospective_interval"],

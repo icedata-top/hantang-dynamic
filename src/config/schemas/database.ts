@@ -1,15 +1,14 @@
 import { z } from "zod";
 
-// DuckDB export configuration
-export const duckdbSchema = z.object({
-  enabled: z.boolean().optional().default(false),
+// Database configuration
+export const databaseSchema = z.object({
   path: z.string(),
 });
 
-export type DuckdbConfig = z.infer<typeof duckdbSchema>;
+export type DatabaseConfig = z.infer<typeof databaseSchema>;
 
-// Factory function to create DuckDB config from TOML/env
-export function createDuckdbConfig(
+// Factory function to create Database config from TOML/env
+export function createDatabaseConfig(
   getConfigValue: (
     tomlPath: string[],
     envKey: string,
@@ -17,20 +16,16 @@ export function createDuckdbConfig(
     defaultValue?: any,
     // biome-ignore lint/suspicious/noExplicitAny: Config values from TOML/env are inherently untyped and validated by zod
   ) => any,
-): DuckdbConfig {
+): DatabaseConfig {
   const bilibiliUid = getConfigValue(["bilibili", "uid"], "BILIBILI_UID");
   const defaultDuckdbPath = bilibiliUid
     ? `/exports/duckdb/${bilibiliUid}.duckdb`
     : "/exports/duckdb/default.duckdb";
+
   return {
-    enabled: getConfigValue(
-      ["export", "duckdb", "enabled"],
-      "DUCKDB_ENABLED",
-      false,
-    ),
     path: getConfigValue(
-      ["export", "duckdb", "path"],
-      "DUCKDB_PATH",
+      ["database", "path"],
+      "DATABASE_PATH",
       defaultDuckdbPath,
     ),
   };

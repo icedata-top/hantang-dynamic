@@ -7,9 +7,11 @@ import {
   bilibiliSchema,
   createApplicationConfig,
   createBilibiliConfig,
+  createDatabaseConfig,
   createExportConfig,
   createNotificationsConfig,
   createProcessingConfig,
+  databaseSchema,
   exportSchema,
   notificationsSchema,
   processingSchema,
@@ -68,6 +70,7 @@ function getConfigValue(
 const configSchema = z.object({
   bilibili: bilibiliSchema,
   application: applicationSchema,
+  database: databaseSchema,
   processing: processingSchema,
   export: exportSchema,
   notifications: notificationsSchema,
@@ -76,6 +79,7 @@ const configSchema = z.object({
 export const config = configSchema.parse({
   bilibili: createBilibiliConfig(getConfigValue),
   application: createApplicationConfig(getConfigValue),
+  database: createDatabaseConfig(getConfigValue),
   processing: createProcessingConfig(getConfigValue),
   export: createExportConfig(getConfigValue),
   notifications: createNotificationsConfig(getConfigValue),

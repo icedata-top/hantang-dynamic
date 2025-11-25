@@ -1,10 +1,14 @@
 import { config } from "./config";
+import { Database } from "./core/database";
 import { DynamicTracker } from "./services/tracker";
 import { logger } from "./utils/logger";
 
 async function main() {
   logger.info("Starting Bilibili Video Tracker");
   logger.debug("Configuration:", config);
+
+  // Initialize Database
+  await Database.getInstance().init();
 
   const tracker = new DynamicTracker();
 

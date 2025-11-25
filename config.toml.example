@@ -19,6 +19,13 @@ api_retry_times = 3            # Number of API retry attempts
 api_wait_time = 2000           # Wait time between API calls in milliseconds
 max_history_days = 7           # Maximum days of history to fetch
 max_item = 0                   # Maximum number of items to fetch (0 for unlimited)
+concurrency_limit = 1          # Max concurrent API requests (default: 1, or 20 if proxy is set)
+retrospective_interval = 604800000 # Interval for retrospective scan in ms (default: 7 days)
+retrospective_days = 30        # Days to look back during retrospective scan (default: 30)
+
+[database]
+# Database settings
+path = ""                      # DuckDB file path (default: "./exports/duckdb/{BILIBILI_UID}.duckdb")
 
 [processing]
 [processing.features]
@@ -26,6 +33,8 @@ max_item = 0                   # Maximum number of items to fetch (0 for unlimit
 enable_tag_fetch = false       # Whether to fetch video tags
 enable_user_relation = false   # Toggle for user relation features
 enable_deduplication = true    # Enable AID-based deduplication (default: true)
+enable_recommendation = false  # Enable recommendation tracking (default: false)
+max_recommendation_depth = 1   # Max depth for recommendation recursion (default: 1)
 
 [processing.filtering]
 # Content filtering settings
@@ -38,11 +47,6 @@ content_whitelist = []         # Array of content whitelist keywords
 # CSV file export settings
 enabled = false                 # Enable CSV export (default: false)
 path = ""                      # CSV file path (default: "./data/uid{BILIBILI_UID}.csv")
-
-[export.duckdb]
-# DuckDB file export settings
-enabled = false                 # Enable DuckDB export (default: false)
-path = ""                      # DuckDB file path (default: "./data/uid{BILIBILI_UID}.duckdb")
 
 [export.mysql]
 # MySQL export settings (all optional)

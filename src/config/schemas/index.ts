@@ -2,12 +2,9 @@ export type { ApplicationConfig } from "./application";
 export { applicationSchema, createApplicationConfig } from "./application";
 export type { BilibiliConfig } from "./bilibili";
 export { bilibiliSchema, createBilibiliConfig } from "./bilibili";
-export type {
-  CsvConfig,
-  DuckdbConfig,
-  ExportConfig,
-  MysqlConfig,
-} from "./export";
+export type { DatabaseConfig } from "./database";
+export { createDatabaseConfig, databaseSchema } from "./database";
+export type { CsvConfig, ExportConfig, MysqlConfig } from "./export";
 export { createExportConfig, exportSchema } from "./export";
 export type {
   EmailConfig,

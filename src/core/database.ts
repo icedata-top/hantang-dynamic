@@ -1,4 +1,5 @@
 import { type DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import { config } from "../config/index.js";
 import type { VideoData } from "../types/models/video.js";
 import { logger } from "../utils/logger.js";
 
@@ -85,7 +86,7 @@ export class Database {
   /**
    * Initialize the database connection and schema
    */
-  public async init(path: string): Promise<void> {
+  public async init(path: string = config.database.path): Promise<void> {
     if (this.connection) {
       logger.warn("Database already initialized");
       return;
