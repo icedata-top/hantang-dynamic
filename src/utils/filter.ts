@@ -26,7 +26,7 @@ export const filterVideo = async (
         for (const keyword of config.processing.filtering.contentWhitelist) {
           if (contentToCheck.includes(keyword.toLowerCase())) {
             logger.info(
-              `包含白名单关键字 "${keyword}"，忽略类型检查: ${videoData.title}`,
+              `${videoData.bvid} 包含白名单关键字 "${keyword}"，忽略类型检查: ${videoData.title}`,
             );
             inwhite = true;
             break;
@@ -34,7 +34,9 @@ export const filterVideo = async (
         }
       }
       if (!inwhite) {
-        logger.info(`忽略类型 ${videoData.type_id}: ${videoData.title}`);
+        logger.info(
+          `忽略类型 ${videoData.type_id}(${videoData.bvid}): ${videoData.title}`,
+        );
         return null;
       }
     }
@@ -47,7 +49,9 @@ export const filterVideo = async (
   ) {
     for (const keyword of config.processing.filtering.contentBlacklist) {
       if (contentToCheck.includes(keyword.toLowerCase())) {
-        logger.info(`忽略包含黑名单关键字 "${keyword}": ${videoData.title}`);
+        logger.info(
+          `${videoData.bvid} 忽略包含黑名单关键字 "${keyword}": ${videoData.title}`,
+        );
         return null;
       }
     }
