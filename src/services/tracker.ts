@@ -1,6 +1,7 @@
 import { fetchDynamics } from "../api/dynamic";
 import { generateBiliTicket } from "../api/signatures/biliTicket";
 import { config } from "../config";
+import { Database } from "../core/database";
 import { StateManager } from "../core/state";
 import type { BiliDynamicCard } from "../types";
 import { sleep } from "../utils/datetime";
@@ -51,12 +52,14 @@ export class DynamicTracker {
   }
 
   private async checkDynamics() {
-    let maxDynamicId = this.state.lastDynamicId;
+    // Get last dynamic ID from database
+    const lastDynamicId = await Database.getInstance().getLastDynamicId();
+    let maxDynamicId = lastDynamicId;
 
     await fetchDynamics({
-      minDynamicId: this.state.lastDynamicId,
-      minTimestamp:
-        Date.now() / 1000 - config.application.maxHistoryDays * 86400,
+      minDynamicId: lastDynamicId,
+      minTimestamp: Date.now() / 1000 -
+        config.application.maxHistoryDays * 86400,
       max_items: config.application.maxItem,
       types: ["video", "forward"],
       onPage: async (dynamics: BiliDynamicCard[]) => {
@@ -71,9 +74,5 @@ export class DynamicTracker {
         );
       },
     });
-
-    if (maxDynamicId > this.state.lastDynamicId) {
-      this.state.updateLastDynamicId(maxDynamicId);
-    }
   }
 }

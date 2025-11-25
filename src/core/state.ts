@@ -4,8 +4,6 @@ import { config } from "../config";
 import { logger } from "../utils/logger";
 
 interface State {
-  lastDynamicId: number;
-  lastUpdate: number;
   lastUA: string;
   biliTicket?: string;
   ticketExpiresAt?: number;
@@ -15,8 +13,6 @@ interface State {
 }
 
 const _defaultState: State = {
-  lastDynamicId: 0,
-  lastUpdate: 0,
   lastUA: randUA(),
 };
 
@@ -31,8 +27,6 @@ export class StateManager {
 
   private getDefaultState(): State {
     return {
-      lastDynamicId: 0,
-      lastUpdate: Date.now(),
       lastUA: randUA(),
     };
   }
@@ -51,8 +45,6 @@ export class StateManager {
       const loadedState = JSON.parse(fileContent) as Partial<State>;
 
       return {
-        lastDynamicId: loadedState.lastDynamicId ?? 0,
-        lastUpdate: loadedState.lastUpdate ?? Date.now(),
         lastUA: loadedState.lastUA || randUA(),
         biliTicket: loadedState.biliTicket,
         ticketExpiresAt: loadedState.ticketExpiresAt,
@@ -78,10 +70,6 @@ export class StateManager {
         logger.error(error.stack);
       }
     }
-  }
-
-  get lastDynamicId() {
-    return this.state.lastDynamicId;
   }
 
   get lastUA() {
@@ -112,12 +100,6 @@ export class StateManager {
     this.state.lastUA = randUA();
     this.saveState();
     return this.state.lastUA;
-  }
-
-  updateLastDynamicId(id: number) {
-    this.state.lastDynamicId = id;
-    this.state.lastUpdate = Date.now();
-    this.saveState();
   }
 
   isWithinHistoryWindow(timestamp: number) {
@@ -156,7 +138,9 @@ export class StateManager {
     this.state.wbiKeysExpiresAt = expiresAt;
     this.saveState();
     logger.debug(
-      `WBI keys updated, expires at: ${new Date(expiresAt * 1000).toLocaleString()}`,
+      `WBI keys updated, expires at: ${new Date(
+        expiresAt * 1000,
+      ).toLocaleString()}`,
     );
   }
 }
