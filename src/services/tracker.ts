@@ -69,8 +69,8 @@ export class DynamicTracker {
   private async checkDynamics() {
     const lastDynamicId = this.state.lastDynamicId;
     let maxDynamicId = lastDynamicId;
-    const minTimestamp =
-      Date.now() / 1000 - config.application.maxHistoryDays * 86400;
+    const minTimestamp = Date.now() / 1000 -
+      config.application.maxHistoryDays * 86400;
 
     logger.info(
       `Checking dynamics since ID: ${lastDynamicId}, Timestamp: ${minTimestamp}`,
@@ -98,7 +98,7 @@ export class DynamicTracker {
         ...dynamics.map((d) => Number(d.desc.dynamic_id)),
       );
       if (pageMaxId > maxDynamicId) {
-        maxDynamicId = pageMaxId;
+        maxDynamicId = BigInt(pageMaxId);
       }
     }
 
@@ -134,8 +134,8 @@ export class DynamicTracker {
           depth < maxDepth &&
           relatedVideos.length > 0
         ) {
-          const converted =
-            await this.recommendationService.trackAndConvertRecommendations(
+          const converted = await this.recommendationService
+            .trackAndConvertRecommendations(
               video.bvid,
               relatedVideos,
             );
@@ -162,7 +162,7 @@ export class DynamicTracker {
     );
 
     const stream = this.dynamicsService.fetchDynamicsStream({
-      minDynamicId: 0, // Scan all
+      minDynamicId: BigInt(0), // Scan all
       minTimestamp,
       types: ["video", "forward"],
     });
@@ -177,12 +177,12 @@ export class DynamicTracker {
   }
 
   startRetrospectiveSchedule() {
-    const interval =
-      config.application.retrospectiveInterval || 7 * 24 * 3600 * 1000;
+    const interval = config.application.retrospectiveInterval ||
+      7 * 24 * 3600 * 1000;
 
     setInterval(() => {
       this.runRetrospective().catch((err) =>
-        logger.error("Retrospective error:", err),
+        logger.error("Retrospective error:", err)
       );
     }, interval);
 

@@ -7,6 +7,7 @@ import type {
 } from "../types";
 import { sleep } from "../utils/datetime";
 import { logger } from "../utils/logger";
+import { StateManager } from "../core/state";
 
 type DynamicType = "video" | "forward";
 
@@ -16,7 +17,7 @@ const DYNAMIC_TYPE_MAP: Record<DynamicType, number> = {
 };
 
 export interface FetchDynamicsStreamOptions {
-  minDynamicId: number;
+  minDynamicId: bigint;
   minTimestamp: number;
   types: DynamicType[];
 }
@@ -41,6 +42,7 @@ export class DynamicsService {
     options: FetchDynamicsStreamOptions,
   ): AsyncGenerator<BiliDynamicCard[], void, unknown> {
     const { minDynamicId, minTimestamp, types } = options;
+    const stateManager = new StateManager();
 
     for (const type of types) {
       logger.info(`Fetching dynamics of type: ${type}`);
@@ -92,6 +94,11 @@ export class DynamicsService {
           if (firstRun) {
             const newResponse = response as BiliDynamicNewResponse;
             offset = newResponse.data.history_offset;
+
+            stateManager.updateLastDynamicId(
+              newResponse.data.cards[0].desc.dynamic_id,
+            );
+
             firstRun = false;
           } else {
             const historyResponse = response as BiliDynamicHistoryResponse;
