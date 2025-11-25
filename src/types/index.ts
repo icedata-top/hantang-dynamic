@@ -1,46 +1,43 @@
 // Core models
-export type { VideoData, VideoTag } from "./models/video";
-
-// Bilibili dynamic types
-export type {
-  BiliDynamicCard,
-  BiliDynamicDesc,
-  BiliUserProfile,
-  BiliRelation,
-  BiliDisplay,
-  BiliOriginDynamic,
-} from "./bilibili/dynamic";
-
-// Bilibili video types
-export type {
-  BiliVideoCard,
-  BiliVideoOwner,
-  BiliVideoStat,
-  BiliVideoDimension,
-  BiliVideoRights,
-  BiliVideoPage,
-  BiliForwardCard,
-  BiliForwardUser,
-  BiliForwardItem,
-  BiliForwardOriginUser,
-} from "./bilibili/video";
 
 // API response types - Dynamic
 export type {
-  BiliDynamicNewResponse,
-  BiliDynamicHistoryResponse,
   BiliDynamicDetailResponse,
+  BiliDynamicHistoryResponse,
+  BiliDynamicNewResponse,
 } from "./api/dynamic";
-
 // API response types - Video
 export type {
-  BiliVideoDetailResponse,
-  BiliVideoDescResponse,
-  BiliVideoPageListResponse,
-  VideoTagResponse,
-  BiliVideoDescItem,
-  BiliVideoSubtitle,
-  BiliUserGarb,
-  BiliHonorReply,
   BiliArgueInfo,
+  BiliHonorReply,
+  BiliUserGarb,
+  BiliVideoDescItem,
+  BiliVideoDescResponse,
+  BiliVideoDetailResponse,
+  BiliVideoPageListResponse,
+  BiliVideoSubtitle,
+  VideoTagResponse,
 } from "./api/video";
+// Bilibili dynamic types
+export type {
+  BiliDisplay,
+  BiliDynamicCard,
+  BiliDynamicDesc,
+  BiliOriginDynamic,
+  BiliRelation,
+  BiliUserProfile,
+} from "./bilibili/dynamic";
+// Bilibili video types
+export type {
+  BiliForwardCard,
+  BiliForwardItem,
+  BiliForwardOriginUser,
+  BiliForwardUser,
+  BiliVideoCard,
+  BiliVideoDimension,
+  BiliVideoOwner,
+  BiliVideoPage,
+  BiliVideoRights,
+  BiliVideoStat,
+} from "./bilibili/video";
+export type { VideoData, VideoTag } from "./models/video";

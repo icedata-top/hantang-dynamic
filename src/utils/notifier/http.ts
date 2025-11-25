@@ -1,7 +1,7 @@
 import axios, { type AxiosRequestConfig } from "axios";
 import { config } from "../../config";
-import { logger } from "../logger";
 import type { HttpRequestConfig } from "../../config/schemas/notifications/http";
+import { logger } from "../logger";
 import type { VideoTemplateData } from "./notifier";
 
 /**

@@ -1,9 +1,9 @@
 import { config } from "../../config";
+import type { VideoData } from "../../types";
 import { logger } from "../logger";
 import { sendEmailMessage } from "./email";
-import { sendTelegramMessage } from "./telegram";
 import { sendHttpNotification } from "./http";
-import type { VideoData } from "../../types";
+import { sendTelegramMessage } from "./telegram";
 
 // Template data interface for video notifications
 export interface VideoTemplateData {

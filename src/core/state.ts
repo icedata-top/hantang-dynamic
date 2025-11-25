@@ -1,5 +1,5 @@
-import { randUA } from "@ahmedrangel/rand-user-agent";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { randUA } from "@ahmedrangel/rand-user-agent";
 import { config } from "../config";
 import { logger } from "../utils/logger";
 

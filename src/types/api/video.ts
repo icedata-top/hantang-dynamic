@@ -1,4 +1,3 @@
-import type { VideoTag } from "../models/video";
 import type {
   BiliVideoDimension,
   BiliVideoOwner,
@@ -6,6 +5,7 @@ import type {
   BiliVideoRights,
   BiliVideoStat,
 } from "../bilibili/video";
+import type { VideoTag } from "../models/video";
 
 /**
  * Video description information (desc_v2 array item)

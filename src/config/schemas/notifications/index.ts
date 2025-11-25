@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { createEmailConfig, emailSchema } from "./email";
-import { createTelegramConfig, telegramSchema } from "./telegram";
 import { createHttpConfig, httpSchema } from "./http";
+import { createTelegramConfig, telegramSchema } from "./telegram";
 
 // Combined notifications configuration
 export const notificationsSchema = z.object({
@@ -14,8 +14,8 @@ export type NotificationsConfig = z.infer<typeof notificationsSchema>;
 
 // Re-export individual types
 export type { EmailConfig } from "./email";
+export type { HttpConfig, HttpMethod, HttpRequestConfig } from "./http";
 export type { TelegramConfig } from "./telegram";
-export type { HttpConfig, HttpRequestConfig, HttpMethod } from "./http";
 
 // Factory function to create notifications config from TOML/env
 export function createNotificationsConfig(

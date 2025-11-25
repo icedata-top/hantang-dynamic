@@ -1,6 +1,6 @@
-import { parse } from "csv-parse/sync";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { parse } from "csv-parse/sync";
 import {
   batchModifyUserRelation,
   checkUserRelationConfig,

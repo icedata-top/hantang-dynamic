@@ -1,7 +1,7 @@
-import { Parser } from "@json2csv/plainjs";
-import { parse as parseCSV } from "csv-parse/sync"; // 新增导入
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { Parser } from "@json2csv/plainjs";
+import { parse as parseCSV } from "csv-parse/sync"; // 新增导入
 import { config } from "../../config";
 import type { VideoData } from "../../types";
 import { logger } from "../logger";
