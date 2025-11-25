@@ -49,7 +49,7 @@ export const fetchVideoDetail = async (params: {
 export const fetchVideoFullDetail = async (params: {
   aid?: number;
   bvid?: string;
-}): Promise<BiliVideoFullDetailResponse> => {
+}): Promise<BiliVideoFullDetailResponse | null> => {
   try {
     const response = await webInterfaceClient.get<BiliVideoFullDetailResponse>(
       "/view/detail",
@@ -59,6 +59,19 @@ export const fetchVideoFullDetail = async (params: {
     );
     return response.data;
   } catch (error) {
+    // Handle 404 errors gracefully - video was deleted, which is normal
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === 404
+    ) {
+      logger.debug(
+        `Video ${params.bvid || params.aid} not found (404) - likely deleted`,
+      );
+      return null;
+    }
+
     logger.error("API Error:", error);
     if (error instanceof Error) {
       logger.error(error.stack);

@@ -29,9 +29,9 @@ export class DetailsService {
     video: VideoData | null;
     relatedVideos: BiliDynamicCard[];
   }> {
+    let bvid = dynamic.desc.bvid;
     try {
       // 1. Resolve BVID (handle forwards)
-      let bvid = dynamic.desc.bvid;
       if (dynamic.desc.type === 1) {
         // Forward type
         bvid = await this.resolveForward(dynamic);
@@ -76,8 +76,34 @@ export class DetailsService {
 
       return { video: filtered, relatedVideos: relatedDynamics };
     } catch (error) {
+      // Handle deleted videos gracefully - mark as processed to avoid retrying
+      if (
+        error instanceof Error &&
+        error.message.startsWith("VIDEO_DELETED:")
+      ) {
+        const bvid = error.message.split(":")[1];
+        logger.debug(`Video ${bvid} has been deleted, marking as processed`);
+
+        // Mark as processed with 'passed=false' since we couldn't process it
+        // We need to create minimal VideoData for the database
+        const minimalVideoData: VideoData = {
+          aid: BigInt(0),
+          bvid,
+          pubdate: 0,
+          title: "",
+          description: "",
+          tag: "",
+          pic: "",
+          type_id: 0,
+          user_id: BigInt(0),
+          copyright: 0,
+        };
+        await this.db.markVideoProcessed(minimalVideoData, false);
+        return { video: null, relatedVideos: [] };
+      }
+
       logger.error(
-        `Error processing video from dynamic ${dynamic.desc.dynamic_id}:`,
+        `Error processing video from dynamic ${dynamic.desc.dynamic_id} and bvid ${bvid}:`,
         error,
       );
       return { video: null, relatedVideos: [] };
@@ -133,6 +159,12 @@ export class DetailsService {
   }> {
     // Fetch full details including related videos
     const fullDetail = await fetchVideoFullDetail({ bvid });
+
+    // Handle deleted videos
+    if (!fullDetail) {
+      throw new Error(`VIDEO_DELETED:${bvid}`);
+    }
+
     const view = fullDetail.data.View;
     const relatedVideos = fullDetail.data.Related || [];
 
