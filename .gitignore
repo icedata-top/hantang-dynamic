@@ -9,3 +9,5 @@ dist/*
 data/*
 
 biome.json
+
+tmp/*
