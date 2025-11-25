@@ -47,10 +47,17 @@ export class DetailsService {
         return { video: null, relatedVideos: [] };
       }
 
-      // 3. Fetch details (with rate limiting)
-      await this.rateLimiter.acquire();
-      const { videoData, relatedVideos } =
-        await this.fetchVideoDetailsWithRelated(bvid);
+      // 3. Fetch details (with concurrency limiting)
+      const release = await this.rateLimiter.acquire();
+      let videoData: VideoData;
+      let relatedVideos: RecommendedVideo[];
+      try {
+        ({ videoData, relatedVideos } = await this.fetchVideoDetailsWithRelated(
+          bvid,
+        ));
+      } finally {
+        release();
+      }
 
       // 4. Filter video
       const filtered = await filterVideo(videoData);
@@ -87,10 +94,10 @@ export class DetailsService {
     }
 
     // Fetch original dynamic
+    const release = await this.rateLimiter.acquire();
     try {
-      await this.rateLimiter.acquire();
-      const originalDynamicId =
-        dynamic.desc.orig_dy_id_str || dynamic.desc.origin?.dynamic_id_str;
+      const originalDynamicId = dynamic.desc.orig_dy_id_str ||
+        dynamic.desc.origin?.dynamic_id_str;
       if (!originalDynamicId) {
         logger.warn(`Cannot find original dynamic ID for forward ${dynamicId}`);
         return "";
@@ -113,6 +120,8 @@ export class DetailsService {
       }
     } catch (error) {
       logger.error(`Error resolving forward ${dynamicId}:`, error);
+    } finally {
+      release();
     }
 
     return "";
@@ -144,24 +153,25 @@ export class DetailsService {
     };
 
     // Extract and store user info
-    await this.extractAndStoreUser(view.owner);
+    await this.extractAndStoreUser(fullDetail.data.Card.card);
 
     return { videoData, relatedVideos };
   }
 
   private async extractAndStoreUser(owner: {
-    mid: bigint;
+    mid: bigint | string;
     name: string;
     face: string;
-    fans?: number; // API might not return fans in View.owner, might need separate call if critical
+    fans: number;
   }) {
+    const mid = BigInt(owner.mid);
     try {
-      const isKnown = await this.db.hasUser(BigInt(owner.mid));
+      const isKnown = await this.db.hasUser(mid);
       if (!isKnown) {
         await this.db.addDiscoveredUser({
-          userId: BigInt(owner.mid),
+          userId: mid,
           userName: owner.name,
-          fans: owner.fans || 0,
+          fans: owner.fans,
           source: "following", // Default source
         });
       }

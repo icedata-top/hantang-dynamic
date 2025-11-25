@@ -115,32 +115,51 @@ export class DynamicTracker {
     const results: VideoData[] = [];
     const relatedQueue: BiliDynamicCard[] = [];
 
-    for (const dynamic of dynamics) {
-      // Process video and get related
-      const enableRecommendation =
-        config.processing?.features?.enableRecommendation ?? false;
-      const maxDepth = config.processing?.features?.maxRecommendationDepth ?? 1;
+    const enableRecommendation =
+      config.processing?.features?.enableRecommendation ?? false;
+    const maxDepth = config.processing?.features?.maxRecommendationDepth ?? 1;
 
-      const { video, relatedVideos } = await this.detailsService.processVideo(
-        dynamic,
-        enableRecommendation && depth < maxDepth,
-      );
-
-      if (video) {
-        results.push(video);
-
-        if (
-          enableRecommendation &&
-          depth < maxDepth &&
-          relatedVideos.length > 0
-        ) {
-          const converted =
-            await this.recommendationService.trackAndConvertRecommendations(
-              video.bvid,
-              relatedVideos,
+    // Process all dynamics concurrently
+    const processResults = await Promise.all(
+      dynamics.map(async (dynamic) => {
+        try {
+          const { video, relatedVideos } =
+            await this.detailsService.processVideo(
+              dynamic,
+              enableRecommendation && depth < maxDepth,
             );
-          relatedQueue.push(...converted);
+
+          if (video) {
+            let converted: BiliDynamicCard[] = [];
+            if (
+              enableRecommendation &&
+              depth < maxDepth &&
+              relatedVideos.length > 0
+            ) {
+              converted =
+                await this.recommendationService.trackAndConvertRecommendations(
+                  video.bvid,
+                  relatedVideos,
+                );
+            }
+            return { video, relatedVideos: converted };
+          }
+          return null;
+        } catch (error) {
+          logger.error(
+            `Error processing dynamic ${dynamic.desc.dynamic_id}:`,
+            error,
+          );
+          return null;
         }
+      }),
+    );
+
+    // Collect results
+    for (const result of processResults) {
+      if (result) {
+        results.push(result.video);
+        relatedQueue.push(...result.relatedVideos);
       }
     }
 
