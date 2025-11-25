@@ -4,15 +4,21 @@ import { config } from "../config";
 import { logger } from "../utils/logger";
 
 interface State {
+  lastDynamicId: number;
+  lastUpdate: number;
   lastUA: string;
   biliTicket?: string;
   ticketExpiresAt?: number;
   imgKey?: string;
   subKey?: string;
   wbiKeysExpiresAt?: number;
-  lastDynamicId?: number;
-  lastUpdate?: number;
 }
+
+const _defaultState: State = {
+  lastDynamicId: 0,
+  lastUpdate: 0,
+  lastUA: randUA(),
+};
 
 export class StateManager {
   private state: State;
@@ -25,6 +31,8 @@ export class StateManager {
 
   private getDefaultState(): State {
     return {
+      lastDynamicId: 0,
+      lastUpdate: Date.now(),
       lastUA: randUA(),
     };
   }
@@ -43,14 +51,14 @@ export class StateManager {
       const loadedState = JSON.parse(fileContent) as Partial<State>;
 
       return {
+        lastDynamicId: loadedState.lastDynamicId ?? 0,
+        lastUpdate: loadedState.lastUpdate ?? Date.now(),
         lastUA: loadedState.lastUA || randUA(),
         biliTicket: loadedState.biliTicket,
         ticketExpiresAt: loadedState.ticketExpiresAt,
         imgKey: loadedState.imgKey,
         subKey: loadedState.subKey,
         wbiKeysExpiresAt: loadedState.wbiKeysExpiresAt,
-        lastDynamicId: loadedState.lastDynamicId,
-        lastUpdate: loadedState.lastUpdate,
       };
     } catch (error) {
       logger.error("Error loading state:", error);
@@ -72,12 +80,12 @@ export class StateManager {
     }
   }
 
-  get lastDynamicId(): number {
-    return this.state.lastDynamicId ?? 0;
+  get lastDynamicId() {
+    return this.state.lastDynamicId;
   }
 
-  get lastUA(): string {
-    return this.state.lastUA ?? "";
+  get lastUA() {
+    return this.state.lastUA;
   }
 
   get biliTicket() {
@@ -100,16 +108,16 @@ export class StateManager {
     return this.state.wbiKeysExpiresAt;
   }
 
-  updateLastDynamicId(dynamicId: number) {
-    this.state.lastDynamicId = dynamicId;
-    this.state.lastUpdate = Date.now();
-    this.saveState();
-  }
-
   updateUA() {
     this.state.lastUA = randUA();
     this.saveState();
     return this.state.lastUA;
+  }
+
+  updateLastDynamicId(id: number) {
+    this.state.lastDynamicId = id;
+    this.state.lastUpdate = Date.now();
+    this.saveState();
   }
 
   isWithinHistoryWindow(timestamp: number) {
