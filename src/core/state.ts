@@ -4,7 +4,7 @@ import { config } from "../config";
 import { logger } from "../utils/logger";
 
 interface State {
-  lastDynamicId: number;
+  lastDynamicId: bigint;
   lastUpdate: number;
   lastUA: string;
   biliTicket?: string;
@@ -15,7 +15,7 @@ interface State {
 }
 
 const _defaultState: State = {
-  lastDynamicId: 0,
+  lastDynamicId: BigInt(0),
   lastUpdate: 0,
   lastUA: randUA(),
 };
@@ -31,7 +31,7 @@ export class StateManager {
 
   private getDefaultState(): State {
     return {
-      lastDynamicId: 0,
+      lastDynamicId: BigInt(0),
       lastUpdate: Date.now(),
       lastUA: randUA(),
     };
@@ -51,7 +51,7 @@ export class StateManager {
       const loadedState = JSON.parse(fileContent) as Partial<State>;
 
       return {
-        lastDynamicId: loadedState.lastDynamicId ?? 0,
+        lastDynamicId: loadedState.lastDynamicId ?? BigInt(0),
         lastUpdate: loadedState.lastUpdate ?? Date.now(),
         lastUA: loadedState.lastUA || randUA(),
         biliTicket: loadedState.biliTicket,
@@ -114,15 +114,15 @@ export class StateManager {
     return this.state.lastUA;
   }
 
-  updateLastDynamicId(id: number) {
+  updateLastDynamicId(id: bigint) {
     this.state.lastDynamicId = id;
     this.state.lastUpdate = Date.now();
     this.saveState();
   }
 
   isWithinHistoryWindow(timestamp: number) {
-    const cutoff =
-      Date.now() - config.application.maxHistoryDays * 86400 * 1000;
+    const cutoff = Date.now() -
+      config.application.maxHistoryDays * 86400 * 1000;
     return timestamp * 1000 > cutoff;
   }
 
@@ -156,9 +156,11 @@ export class StateManager {
     this.state.wbiKeysExpiresAt = expiresAt;
     this.saveState();
     logger.debug(
-      `WBI keys updated, expires at: ${new Date(
-        expiresAt * 1000,
-      ).toLocaleString()}`,
+      `WBI keys updated, expires at: ${
+        new Date(
+          expiresAt * 1000,
+        ).toLocaleString()
+      }`,
     );
   }
 }
