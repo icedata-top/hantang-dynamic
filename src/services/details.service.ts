@@ -49,8 +49,8 @@ export class DetailsService {
 
       // 3. Fetch details (with rate limiting)
       await this.rateLimiter.acquire();
-      const { videoData, relatedVideos } =
-        await this.fetchVideoDetailsWithRelated(bvid);
+      const { videoData, relatedVideos } = await this
+        .fetchVideoDetailsWithRelated(bvid);
 
       // 4. Filter video
       const filtered = await filterVideo(videoData);
@@ -89,8 +89,8 @@ export class DetailsService {
     // Fetch original dynamic
     try {
       await this.rateLimiter.acquire();
-      const originalDynamicId =
-        dynamic.desc.orig_dy_id_str || dynamic.desc.origin?.dynamic_id_str;
+      const originalDynamicId = dynamic.desc.orig_dy_id_str ||
+        dynamic.desc.origin?.dynamic_id_str;
       if (!originalDynamicId) {
         logger.warn(`Cannot find original dynamic ID for forward ${dynamicId}`);
         return "";
@@ -127,17 +127,8 @@ export class DetailsService {
     const view = fullDetail.data.View;
     const relatedVideos = fullDetail.data.Related || [];
 
-    // Fetch tags if enabled
     let tagString = "";
-    // Assuming config has this feature flag, otherwise default to true or check existing config
-    // For now, let's assume we always fetch tags or check a config if it exists
-    // In the original code, it was fetching tags.
-    try {
-      const { data: tags } = await fetchVideoTags(bvid);
-      tagString = tags.map((t) => t.tag_name).join(";");
-    } catch (e) {
-      logger.warn(`Failed to fetch tags for ${bvid}`, e);
-    }
+    tagString = fullDetail.data.Tags.map((t) => t.tag_name).join(";");
 
     const videoData: VideoData = {
       aid: view.aid,
