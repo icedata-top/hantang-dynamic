@@ -46,7 +46,7 @@ export async function notify(
   }
 
   if (promises.length === 0) {
-    logger.info(message);
+    logger.debug(message);
     return;
   }
 
