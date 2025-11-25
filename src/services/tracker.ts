@@ -69,8 +69,8 @@ export class DynamicTracker {
   private async checkDynamics() {
     const lastDynamicId = this.state.lastDynamicId;
     let maxDynamicId = lastDynamicId;
-    const minTimestamp =
-      Date.now() / 1000 - config.application.maxHistoryDays * 86400;
+    const minTimestamp = Date.now() / 1000 -
+      config.application.maxHistoryDays * 86400;
 
     logger.info(
       `Checking dynamics since ID: ${lastDynamicId}, Timestamp: ${minTimestamp}`,
@@ -123,26 +123,20 @@ export class DynamicTracker {
     const processResults = await Promise.all(
       dynamics.map(async (dynamic) => {
         try {
-          const { video, relatedVideos } =
-            await this.detailsService.processVideo(
+          const { video, relatedVideos } = await this.detailsService
+            .processVideo(
               dynamic,
               enableRecommendation && depth < maxDepth,
             );
 
           if (video) {
-            let converted: BiliDynamicCard[] = [];
             if (
               enableRecommendation &&
               depth < maxDepth &&
               relatedVideos.length > 0
             ) {
-              converted =
-                await this.recommendationService.trackAndConvertRecommendations(
-                  video.bvid,
-                  relatedVideos,
-                );
+              return { video, relatedVideos: relatedVideos };
             }
-            return { video, relatedVideos: converted };
           }
           return null;
         } catch (error) {
@@ -201,12 +195,12 @@ export class DynamicTracker {
   }
 
   startRetrospectiveSchedule() {
-    const interval =
-      config.application.retrospectiveInterval || 7 * 24 * 3600 * 1000;
+    const interval = config.application.retrospectiveInterval ||
+      7 * 24 * 3600 * 1000;
 
     setInterval(() => {
       this.runRetrospective().catch((err) =>
-        logger.error("Retrospective error:", err),
+        logger.error("Retrospective error:", err)
       );
     }, interval);
 
