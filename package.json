@@ -34,6 +34,7 @@
     "@vercel/ncc": "^0.38.3",
     "@yao-pkg/pkg": "^6.5.1",
     "tsx": "^4.20.1",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vitest": "^4.0.13"
   }
 }
