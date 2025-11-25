@@ -69,8 +69,8 @@ export class DynamicTracker {
   private async checkDynamics() {
     const lastDynamicId = this.state.lastDynamicId;
     let maxDynamicId = lastDynamicId;
-    const minTimestamp =
-      Date.now() / 1000 - config.application.maxHistoryDays * 86400;
+    const minTimestamp = Date.now() / 1000 -
+      config.application.maxHistoryDays * 86400;
 
     logger.info(
       `Checking dynamics since ID: ${lastDynamicId}, Timestamp: ${minTimestamp}`,
@@ -83,6 +83,9 @@ export class DynamicTracker {
     });
 
     for await (const dynamics of stream) {
+      logger.info(
+        `Got new dynamic page with ${dynamics.length} dynamics`,
+      );
       // Process page immediately
       const processedVideos = await this.processPage(dynamics);
 
@@ -133,8 +136,8 @@ export class DynamicTracker {
           depth < maxDepth &&
           relatedVideos.length > 0
         ) {
-          const converted =
-            await this.recommendationService.trackAndConvertRecommendations(
+          const converted = await this.recommendationService
+            .trackAndConvertRecommendations(
               video.bvid,
               relatedVideos,
             );
@@ -167,24 +170,23 @@ export class DynamicTracker {
     });
 
     for await (const dynamics of stream) {
+      // log we got a new page
+      logger.info(
+        `Got new page with ${dynamics.length} dynamics`,
+      );
       await this.processPage(dynamics);
-      // We don't necessarily need to notify for retrospective, or maybe we do?
-      // Usually retrospective is to fill gaps or update data.
-      // If we find NEW videos that were missed, maybe notify?
-      // But processPage returns videos that were NOT in DB (since DetailsService checks DB).
-      // So yes, these are effectively "newly processed" videos.
     }
 
     logger.info("Retrospective scan completed");
   }
 
   startRetrospectiveSchedule() {
-    const interval =
-      config.application.retrospectiveInterval || 7 * 24 * 3600 * 1000;
+    const interval = config.application.retrospectiveInterval ||
+      7 * 24 * 3600 * 1000;
 
     setInterval(() => {
       this.runRetrospective().catch((err) =>
-        logger.error("Retrospective error:", err),
+        logger.error("Retrospective error:", err)
       );
     }, interval);
 

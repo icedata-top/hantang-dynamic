@@ -34,7 +34,7 @@ export const filterVideo = async (
         }
       }
       if (!inwhite) {
-        logger.debug(`忽略类型 ${videoData.type_id}: ${videoData.title}`);
+        logger.info(`忽略类型 ${videoData.type_id}: ${videoData.title}`);
         return null;
       }
     }
@@ -47,7 +47,7 @@ export const filterVideo = async (
   ) {
     for (const keyword of config.processing.filtering.contentBlacklist) {
       if (contentToCheck.includes(keyword.toLowerCase())) {
-        logger.debug(`忽略包含黑名单关键字 "${keyword}": ${videoData.title}`);
+        logger.info(`忽略包含黑名单关键字 "${keyword}": ${videoData.title}`);
         return null;
       }
     }
