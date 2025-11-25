@@ -1,5 +1,5 @@
 import { getDynamic } from "../api/dynamic";
-import { fetchVideoFullDetail, fetchVideoTags } from "../api/video";
+import { fetchVideoFullDetail } from "../api/video";
 import { config } from "../config";
 import { Database } from "../core/database";
 import type { BiliDynamicCard, RecommendedVideo, VideoData } from "../types";
