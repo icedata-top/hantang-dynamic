@@ -22,11 +22,21 @@ async function main() {
   );
 
   // Graceful shutdown
-  process.on("SIGINT", () => {
+  const shutdown = async () => {
+    logger.info("Stopping Tracker...");
     clearInterval(interval);
+    try {
+      await Database.getInstance().close();
+      logger.info("Database connection closed");
+    } catch (error) {
+      logger.error("Error closing database connection:", error);
+    }
     logger.info("Tracker stopped");
     process.exit(0);
-  });
+  };
+
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 }
 
 main().catch((error) => {
