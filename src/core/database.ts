@@ -570,19 +570,6 @@ export class Database {
   }
 
   /**
-   * Get the last dynamic ID from processed videos
-   */
-  public async getLastDynamicId(): Promise<number> {
-    if (!this.connection) {
-      throw new Error("Database not initialized");
-    }
-
-    // Note: We don't store dynamic_id directly in processed_videos
-    // This returns 0 for now, but could be enhanced to store dynamic IDs if needed
-    return 0;
-  }
-
-  /**
    * Get database statistics
    */
   public async getStats(): Promise<DatabaseStats> {

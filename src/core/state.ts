@@ -10,11 +10,9 @@ interface State {
   imgKey?: string;
   subKey?: string;
   wbiKeysExpiresAt?: number;
+  lastDynamicId?: number;
+  lastUpdate?: number;
 }
-
-const _defaultState: State = {
-  lastUA: randUA(),
-};
 
 export class StateManager {
   private state: State;
@@ -51,6 +49,8 @@ export class StateManager {
         imgKey: loadedState.imgKey,
         subKey: loadedState.subKey,
         wbiKeysExpiresAt: loadedState.wbiKeysExpiresAt,
+        lastDynamicId: loadedState.lastDynamicId,
+        lastUpdate: loadedState.lastUpdate,
       };
     } catch (error) {
       logger.error("Error loading state:", error);
@@ -72,8 +72,12 @@ export class StateManager {
     }
   }
 
-  get lastUA() {
-    return this.state.lastUA;
+  get lastDynamicId(): number {
+    return this.state.lastDynamicId ?? 0;
+  }
+
+  get lastUA(): string {
+    return this.state.lastUA ?? "";
   }
 
   get biliTicket() {
@@ -94,6 +98,12 @@ export class StateManager {
 
   get wbiKeysExpiresAt() {
     return this.state.wbiKeysExpiresAt;
+  }
+
+  updateLastDynamicId(dynamicId: number) {
+    this.state.lastDynamicId = dynamicId;
+    this.state.lastUpdate = Date.now();
+    this.saveState();
   }
 
   updateUA() {
