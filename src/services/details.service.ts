@@ -49,8 +49,8 @@ export class DetailsService {
 
       // 3. Fetch details (with rate limiting)
       await this.rateLimiter.acquire();
-      const { videoData, relatedVideos } = await this
-        .fetchVideoDetailsWithRelated(bvid);
+      const { videoData, relatedVideos } =
+        await this.fetchVideoDetailsWithRelated(bvid);
 
       // 4. Filter video
       const filtered = await filterVideo(videoData);
@@ -89,8 +89,8 @@ export class DetailsService {
     // Fetch original dynamic
     try {
       await this.rateLimiter.acquire();
-      const originalDynamicId = dynamic.desc.orig_dy_id_str ||
-        dynamic.desc.origin?.dynamic_id_str;
+      const originalDynamicId =
+        dynamic.desc.orig_dy_id_str || dynamic.desc.origin?.dynamic_id_str;
       if (!originalDynamicId) {
         logger.warn(`Cannot find original dynamic ID for forward ${dynamicId}`);
         return "";
@@ -149,6 +149,7 @@ export class DetailsService {
       pic: view.pic,
       type_id: view.tid,
       user_id: view.owner.mid,
+      copyright: view.copyright,
     };
 
     // Extract and store user info

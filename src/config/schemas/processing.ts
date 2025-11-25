@@ -13,6 +13,7 @@ export const processingSchema = z.object({
     typeIdWhitelist: z.array(z.number()).default([]),
     contentBlacklist: z.array(z.string()).default([]),
     contentWhitelist: z.array(z.string()).default([]),
+    copyrightWhitelist: z.array(z.number()).default([]),
   }),
 });
 
@@ -76,6 +77,13 @@ export function createProcessingConfig(
           "CONTENT_WHITE_LIST",
         ) ||
         process.env.CONTENT_WHITE_LIST?.split(",").map((s) => s.trim()) ||
+        [],
+      copyrightWhitelist:
+        getConfigValue(
+          ["processing", "filtering", "copyright_whitelist"],
+          "COPYRIGHT_WHITE_LIST",
+        ) ||
+        process.env.COPYRIGHT_WHITE_LIST?.split(",").map(Number) ||
         [],
     },
   };

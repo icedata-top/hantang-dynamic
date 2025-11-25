@@ -41,6 +41,7 @@ max_recommendation_depth = 1   # Max depth for recommendation recursion (default
 [processing.filtering]
 # Content filtering settings
 type_id_whitelist = []         # Array of video type IDs to include (e.g., [28, 30, 130])
+copyright_whitelist = []       # Array of copyright types to include (1: Original, 2: Repost)
 content_blacklist = []         # Array of content blacklist keywords
 content_whitelist = []         # Array of content whitelist keywords
 

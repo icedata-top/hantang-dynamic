@@ -97,9 +97,7 @@ export function createClient(baseURL: string): AxiosInstance {
         : "";
 
       logger.debug(
-        `[${
-          new Date().toISOString()
-        }] ${baseURL}${response.config.url}${params}${data} (${timeUsed}ms)`,
+        `[${new Date().toISOString()}] ${baseURL}${response.config.url}${params}${data} (${timeUsed}ms)`,
       );
 
       if (response.status === ApiErrorResponseCode.IpBanned) {
@@ -112,16 +110,15 @@ export function createClient(baseURL: string): AxiosInstance {
 
       // Handle non-success response codes
       if (response.data.code !== ApiErrorCode.Success) {
-        const message = `API Error:\n` +
+        const message =
+          `API Error:\n` +
           `Code: ${response.data.code}\n` +
           `baseURL: ${baseURL + response.config.url}\n` +
           `Config: ${JSON.stringify(response.config)}\n` +
-          `Response: ${
-            JSON.stringify(response.data || "No message")?.slice(
-              0,
-              1000,
-            )
-          }`;
+          `Response: ${JSON.stringify(response.data || "No message")?.slice(
+            0,
+            1000,
+          )}`;
         notify(message);
 
         if (response.data.code === ApiErrorCode.CookieExpired) {

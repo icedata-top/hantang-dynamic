@@ -42,6 +42,41 @@ export const filterVideo = async (
     }
   }
 
+  // Check copyright whitelist
+  if (
+    Array.isArray(config.processing.filtering.copyrightWhitelist) &&
+    config.processing.filtering.copyrightWhitelist.length > 0 &&
+    videoData.copyright !== undefined
+  ) {
+    if (
+      !config.processing.filtering.copyrightWhitelist.includes(
+        videoData.copyright,
+      )
+    ) {
+      let inwhite = false;
+      if (
+        Array.isArray(config.processing.filtering.contentWhitelist) &&
+        config.processing.filtering.contentWhitelist.length > 0
+      ) {
+        for (const keyword of config.processing.filtering.contentWhitelist) {
+          if (contentToCheck.includes(keyword.toLowerCase())) {
+            logger.info(
+              `${videoData.bvid} 包含白名单关键字 "${keyword}"，忽略版权检查: ${videoData.title}`,
+            );
+            inwhite = true;
+            break;
+          }
+        }
+      }
+      if (!inwhite) {
+        logger.info(
+          `忽略版权 ${videoData.copyright}(${videoData.bvid}): ${videoData.title}`,
+        );
+        return null;
+      }
+    }
+  }
+
   // Check content blacklist
   if (
     Array.isArray(config.processing.filtering.contentBlacklist) &&

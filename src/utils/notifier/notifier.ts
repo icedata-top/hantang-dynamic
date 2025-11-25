@@ -61,7 +61,8 @@ export async function notifyNewVideos(videos: VideoData[]): Promise<void> {
 
   // Send individual notification for each video
   const promises = videos.map((video) => {
-    const message = `🎬 发现新视频: ${video.title}\n` +
+    const message =
+      `🎬 发现新视频: ${video.title}\n` +
       `🔗 链接: https://www.bilibili.com/video/${video.bvid}`;
 
     const videoData: VideoTemplateData = {
