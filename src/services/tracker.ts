@@ -8,14 +8,12 @@ import { logger } from "../utils/logger";
 import { notifyNewVideos } from "../utils/notifier/notifier";
 import { DetailsService } from "./details.service";
 import { DynamicsService } from "./dynamics.service";
-import { RecommendationService } from "./recommendation.service";
 
 export class DynamicTracker {
   private state = new StateManager();
   private isRunning = false;
   private dynamicsService = new DynamicsService();
   private detailsService = new DetailsService();
-  private recommendationService = new RecommendationService();
 
   async start() {
     if (this.isRunning) return;
@@ -69,8 +67,8 @@ export class DynamicTracker {
   private async checkDynamics() {
     const lastDynamicId = this.state.lastDynamicId;
     let maxDynamicId = lastDynamicId;
-    const minTimestamp = Date.now() / 1000 -
-      config.application.maxHistoryDays * 86400;
+    const minTimestamp =
+      Date.now() / 1000 - config.application.maxHistoryDays * 86400;
 
     logger.info(
       `Checking dynamics since ID: ${lastDynamicId}, Timestamp: ${minTimestamp}`,
@@ -123,8 +121,8 @@ export class DynamicTracker {
     const processResults = await Promise.all(
       dynamics.map(async (dynamic) => {
         try {
-          const { video, relatedVideos } = await this.detailsService
-            .processVideo(
+          const { video, relatedVideos } =
+            await this.detailsService.processVideo(
               dynamic,
               enableRecommendation && depth < maxDepth,
             );
@@ -195,12 +193,12 @@ export class DynamicTracker {
   }
 
   startRetrospectiveSchedule() {
-    const interval = config.application.retrospectiveInterval ||
-      7 * 24 * 3600 * 1000;
+    const interval =
+      config.application.retrospectiveInterval || 7 * 24 * 3600 * 1000;
 
     setInterval(() => {
       this.runRetrospective().catch((err) =>
-        logger.error("Retrospective error:", err)
+        logger.error("Retrospective error:", err),
       );
     }, interval);
 
