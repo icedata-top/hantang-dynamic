@@ -112,7 +112,10 @@ export function createClient(baseURL: string): AxiosInstance {
       }
 
       // Handle non-success response codes
-      if (response.data.code !== ApiErrorCode.Success) {
+      if (
+        response.data.code !== ApiErrorCode.Success &&
+        response.data.code !== 404
+      ) {
         const message =
           `API Error:\n` +
           `Code: ${response.data.code}\n` +
