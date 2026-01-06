@@ -5,6 +5,7 @@ export const telegramSchema = z.object({
   enabled: z.boolean().optional().default(false),
   botToken: z.string().optional(),
   chatId: z.string().optional(),
+  apiHost: z.string().optional().default("api.telegram.org"),
 });
 
 export type TelegramConfig = z.infer<typeof telegramSchema>;
@@ -32,6 +33,11 @@ export function createTelegramConfig(
     chatId: getConfigValue(
       ["notifications", "telegram", "chat_id"],
       "TELEGRAM_CHAT_ID",
+    ),
+    apiHost: getConfigValue(
+      ["notifications", "telegram", "api_host"],
+      "TELEGRAM_API_HOST",
+      "api.telegram.org",
     ),
   };
 }

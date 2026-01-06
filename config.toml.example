@@ -62,6 +62,7 @@ table = ""                     # MySQL table name
 enabled = false                # Enable Telegram notifications (default: false)
 bot_token = ""                 # Telegram bot token
 chat_id = ""                   # Telegram chat ID
+api_host = "api.telegram.org"  # Optional: Telegram API host (e.g., "api.telegram.org")
 
 [notifications.email]
 # Email notification settings (all required if using email)

@@ -13,7 +13,7 @@ export async function sendTelegramMessage(message: string) {
 
   try {
     await axios.post(
-      `https://api.telegram.org/bot${config.notifications.telegram.botToken}/sendMessage`,
+      `https://${config.notifications.telegram.apiHost}/bot${config.notifications.telegram.botToken}/sendMessage`,
       {
         chat_id: config.notifications.telegram.chatId,
         text: message,
