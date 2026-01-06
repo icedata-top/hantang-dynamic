@@ -11,9 +11,10 @@ import { notify } from "../utils/notifier/notifier";
 import { generateBiliTicket } from "./signatures/biliTicket";
 import { buildSignedQuery } from "./signatures/wbiSignature";
 
-interface RequestConfig extends InternalAxiosRequestConfig {
+export interface RequestConfig extends InternalAxiosRequestConfig {
   metadata?: {
     startTime: number;
+    silent?: boolean;
   };
 }
 
@@ -123,7 +124,9 @@ export function createClient(baseURL: string): AxiosInstance {
           )}`;
 
         // We must await notify before exiting, otherwise the message might not be sent
-        await notify(message);
+        if (!(response.config as RequestConfig).metadata?.silent) {
+          await notify(message);
+        }
 
         if (response.data.code === ApiErrorCode.CookieExpired) {
           logger.error(

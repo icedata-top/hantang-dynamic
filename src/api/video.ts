@@ -4,7 +4,11 @@ import type {
   VideoTagResponse,
 } from "../types";
 import { logger } from "../utils/logger";
-import { webInterfaceClient, webInterfaceDirectClient } from "./client";
+import {
+  type RequestConfig,
+  webInterfaceClient,
+  webInterfaceDirectClient,
+} from "./client";
 import { config } from "../config";
 
 export const fetchVideoTags = async (
@@ -73,6 +77,7 @@ export const fetchVideoFullDetail = async (params: {
       const response =
         await webInterfaceClient.get<BiliVideoFullDetailResponse>(endpoint, {
           params,
+          ...({ metadata: { silent: true } } as RequestConfig),
         });
       return response.data;
     } catch (proxyError) {
