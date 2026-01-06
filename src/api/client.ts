@@ -90,7 +90,9 @@ export function createClient(baseURL: string): AxiosInstance {
         (response.config as RequestConfig).metadata?.startTime ?? 0;
       const timeUsed = endTime - startTime;
       const params = response.config.params
-        ? ` params=${await buildSignedQuery(response.config.params)}`
+        ? ` params=${await buildSignedQuery(response.config.params).catch(
+            () => "failed_to_sign",
+          )}`
         : "";
       const data = response.config.data
         ? ` data=${JSON.stringify(response.config.data)}`
