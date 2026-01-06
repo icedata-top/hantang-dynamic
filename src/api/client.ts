@@ -197,6 +197,11 @@ export const webInterfaceClient = createClient(
     : "https://api.bilibili.com/x/web-interface",
 );
 
+// Direct client without proxy for fallback
+export const webInterfaceDirectClient = createClient(
+  "https://api.bilibili.com/x/web-interface",
+);
+
 export const relationClient = createClient(
   "https://api.bilibili.com/x/relation",
 );
