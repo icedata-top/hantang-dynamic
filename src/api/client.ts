@@ -103,10 +103,10 @@ export function createClient(baseURL: string): AxiosInstance {
       );
 
       if (response.status === ApiErrorResponseCode.IpBanned) {
-        logger.error(
-          "CRITICAL ERROR: IP has been banned! Terminating process." +
-            "致命错误：IP 被封禁！正在终止进程。",
-        );
+        const message =
+          "CRITICAL ERROR: IP has been banned! Terminating process.";
+        logger.error(message + "致命错误：IP 被封禁！正在终止进程。");
+        await notify(message);
         process.exit(2);
       }
 
@@ -121,7 +121,9 @@ export function createClient(baseURL: string): AxiosInstance {
             0,
             1000,
           )}`;
-        notify(message);
+
+        // We must await notify before exiting, otherwise the message might not be sent
+        await notify(message);
 
         if (response.data.code === ApiErrorCode.CookieExpired) {
           logger.error(
