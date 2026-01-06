@@ -55,7 +55,10 @@ export const simulateBrowserVisit = async (
   }
 };
 
-export function createClient(baseURL: string): AxiosInstance {
+export function createClient(
+  baseURL: string,
+  skipCookie = false,
+): AxiosInstance {
   const stateManager = new StateManager();
   const ua = stateManager.lastUA;
 
@@ -63,7 +66,7 @@ export function createClient(baseURL: string): AxiosInstance {
     baseURL,
     headers: {
       "User-Agent": ua,
-      Cookie: getCookieString(stateManager),
+      ...(skipCookie ? {} : { Cookie: getCookieString(stateManager) }),
     },
   });
 
@@ -73,12 +76,14 @@ export function createClient(baseURL: string): AxiosInstance {
       startTime: Date.now(),
     };
 
-    if (!stateManager.isTicketValid()) {
+    if (!skipCookie && !stateManager.isTicketValid()) {
       logger.info("BiliTicket expired or not set, requesting a new one");
       const ticketData = await generateBiliTicket();
       if (ticketData) {
         stateManager.updateTicket(ticketData.ticket, ticketData.expiresAt);
-        config.headers.Cookie = getCookieString(stateManager);
+        if (!skipCookie) {
+          config.headers.Cookie = getCookieString(stateManager);
+        }
       }
     }
     return config;
@@ -195,12 +200,14 @@ export const dynamicDetailClient = createClient(
   config.bilibili.dynamicProxyUrl
     ? `${config.bilibili.dynamicProxyUrl}/dynamic_svr/v1/dynamic_svr`
     : "https://api.vc.bilibili.com/dynamic_svr/v1/dynamic_svr",
+  !!config.bilibili.dynamicProxyUrl,
 );
 
 export const webInterfaceClient = createClient(
   config.bilibili.apiProxyUrl
     ? `${config.bilibili.apiProxyUrl}/x/web-interface`
     : "https://api.bilibili.com/x/web-interface",
+  !!config.bilibili.apiProxyUrl,
 );
 
 // Direct client without proxy for fallback
