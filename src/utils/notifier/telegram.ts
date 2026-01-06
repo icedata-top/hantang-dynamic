@@ -2,15 +2,7 @@ import axios from "axios";
 import { config } from "../../config";
 import { logger } from "../logger";
 
-export async function sendTelegramMessage(message: string) {
-  if (
-    !config.notifications.telegram.enabled ||
-    !config.notifications.telegram.botToken ||
-    !config.notifications.telegram.chatId
-  ) {
-    return;
-  }
-
+async function sendTelegramMessageInternal(message: string) {
   try {
     await axios.post(
       `https://${config.notifications.telegram.apiHost}/bot${config.notifications.telegram.botToken}/sendMessage`,
@@ -26,4 +18,35 @@ export async function sendTelegramMessage(message: string) {
       logger.error(error.stack);
     }
   }
+}
+
+export async function sendTelegramWarning(message: string) {
+  if (
+    !config.notifications.telegram.enabled ||
+    !config.notifications.telegram.warningEnabled ||
+    !config.notifications.telegram.botToken ||
+    !config.notifications.telegram.chatId
+  ) {
+    return;
+  }
+  await sendTelegramMessageInternal(message);
+}
+
+export async function sendTelegramNewVideo(message: string) {
+  if (
+    !config.notifications.telegram.enabled ||
+    !config.notifications.telegram.newVideoEnabled ||
+    !config.notifications.telegram.botToken ||
+    !config.notifications.telegram.chatId
+  ) {
+    return;
+  }
+  await sendTelegramMessageInternal(message);
+}
+
+/**
+ * @deprecated Use sendTelegramWarning or sendTelegramNewVideo instead
+ */
+export async function sendTelegramMessage(message: string) {
+  await sendTelegramWarning(message);
 }

@@ -47,8 +47,8 @@ main().catch(async (error) => {
 
   try {
     // Only import notify when needed to avoid circular dependency issues at startup if any
-    const { notify } = await import("./utils/notifier/notifier");
-    await notify(message);
+    const { notifyWarning } = await import("./utils/notifier/notifier");
+    await notifyWarning(message);
   } catch (notifyError) {
     logger.error("Failed to send notification for fatal error:", notifyError);
   }

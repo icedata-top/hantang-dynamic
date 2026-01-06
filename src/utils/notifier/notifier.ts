@@ -3,7 +3,7 @@ import type { VideoData } from "../../types";
 import { logger } from "../logger";
 import { sendEmailMessage } from "./email";
 import { sendHttpNotification } from "./http";
-import { sendTelegramMessage } from "./telegram";
+import { sendTelegramNewVideo, sendTelegramWarning } from "./telegram";
 
 // Template data interface for video notifications
 export interface VideoTemplateData {
@@ -18,19 +18,17 @@ export interface VideoTemplateData {
   [key: string]: unknown;
 }
 
-export async function notify(
+/**
+ * Send a general warning notification
+ */
+export async function notifyWarning(
   message: string,
   videoData?: VideoTemplateData,
 ): Promise<void> {
   const promises: Promise<void>[] = [];
 
-  if (
-    config.notifications.telegram.enabled &&
-    config.notifications.telegram.botToken &&
-    config.notifications.telegram.chatId
-  ) {
-    promises.push(sendTelegramMessage(message));
-  }
+  // Telegram - Uses warning logic
+  promises.push(sendTelegramWarning(message));
 
   if (
     config.notifications.email.enabled &&
@@ -54,13 +52,23 @@ export async function notify(
 }
 
 /**
+ * @deprecated Use notifyWarning or notifyNewVideos instead
+ */
+export async function notify(
+  message: string,
+  videoData?: VideoTemplateData,
+): Promise<void> {
+  return notifyWarning(message, videoData);
+}
+
+/**
  * Send notification for new video(s) discovered
  */
 export async function notifyNewVideos(videos: VideoData[]): Promise<void> {
   if (videos.length === 0) return;
 
   // Send individual notification for each video
-  const promises = videos.map((video) => {
+  const promises = videos.map(async (video) => {
     const message = `🎬 发现新视频: ${video.title} ${video.bvid}`;
 
     const videoData: VideoTemplateData = {
@@ -75,7 +83,31 @@ export async function notifyNewVideos(videos: VideoData[]): Promise<void> {
       tag: video.tag,
     };
 
-    return notify(message, videoData);
+    const notificationPromises: Promise<void>[] = [];
+
+    // Telegram - Uses new video logic
+    notificationPromises.push(sendTelegramNewVideo(message));
+
+    // Email
+    if (
+      config.notifications.email.enabled &&
+      config.notifications.email.host &&
+      config.notifications.email.username &&
+      config.notifications.email.to
+    ) {
+      notificationPromises.push(sendEmailMessage(message));
+    }
+
+    // HTTP
+    if (config.notifications.http.enabled) {
+      notificationPromises.push(sendHttpNotification(message, videoData));
+    }
+
+    if (notificationPromises.length > 0) {
+      await Promise.all(notificationPromises);
+    } else {
+      logger.debug(message);
+    }
   });
 
   await Promise.all(promises);
