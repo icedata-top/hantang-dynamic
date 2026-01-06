@@ -50,9 +50,15 @@ export const fetchVideoFullDetail = async (params: {
   aid?: number;
   bvid?: string;
 }): Promise<BiliVideoFullDetailResponse | null> => {
+  const endpoint = "/view/detail";
+  const baseUrl = webInterfaceClient.defaults.baseURL || "";
+  const fullUrl = `${baseUrl}${endpoint}?bvid=${params.bvid || ""}&aid=${
+    params.aid || ""
+  }`;
+
   try {
     const response = await webInterfaceClient.get<BiliVideoFullDetailResponse>(
-      "/view/detail",
+      endpoint,
       {
         params,
       },
@@ -72,10 +78,10 @@ export const fetchVideoFullDetail = async (params: {
       return null;
     }
 
-    logger.error("API Error:", error);
+    logger.error(`API Error for URL: ${fullUrl}`, error);
     if (error instanceof Error) {
       logger.error(error.stack);
     }
-    throw new Error("API Error: Fetch video full detail failed");
+    throw new Error(`API Error: Fetch video full detail failed (${fullUrl})`);
   }
 };
