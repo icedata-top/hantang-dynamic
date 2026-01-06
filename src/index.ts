@@ -39,10 +39,19 @@ async function main() {
   process.on("SIGTERM", shutdown);
 }
 
-main().catch((error) => {
-  logger.error("Fatal Error:", error);
-  if (error instanceof Error) {
-    logger.error(error.stack);
+main().catch(async (error) => {
+  const message = `Fatal Error: ${error}\n${
+    error instanceof Error ? error.stack : ""
+  }`;
+  logger.error(message);
+
+  try {
+    // Only import notify when needed to avoid circular dependency issues at startup if any
+    const { notify } = await import("./utils/notifier/notifier");
+    await notify(message);
+  } catch (notifyError) {
+    logger.error("Failed to send notification for fatal error:", notifyError);
   }
+
   process.exit(1);
 });
