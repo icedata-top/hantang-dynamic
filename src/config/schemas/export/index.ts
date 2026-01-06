@@ -1,17 +1,14 @@
 import { z } from "zod";
-import { createCsvConfig, csvSchema } from "./csv";
 import { createMysqlConfig, mysqlSchema } from "./mysql";
 
 // Combined export configuration
 export const exportSchema = z.object({
-  csv: csvSchema,
   mysql: mysqlSchema,
 });
 
 export type ExportConfig = z.infer<typeof exportSchema>;
 
 // Re-export individual types
-export type { CsvConfig } from "./csv";
 export type { MysqlConfig } from "./mysql";
 
 // Factory function to create export config from TOML/env
@@ -25,7 +22,6 @@ export function createExportConfig(
   ) => any,
 ): ExportConfig {
   return {
-    csv: createCsvConfig(getConfigValue),
     mysql: createMysqlConfig(getConfigValue),
   };
 }

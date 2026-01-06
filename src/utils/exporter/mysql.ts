@@ -11,7 +11,7 @@ export const saveToMysql = async (data: VideoData[]) => {
     !config.export.mysql.password ||
     !config.export.mysql.table
   ) {
-    logger.warn("Missing MySQL configuration. Falling back to CSV export.");
+    logger.warn("Missing MySQL configuration. Export skipped.");
     return false;
   }
 
@@ -49,7 +49,9 @@ export const saveToMysql = async (data: VideoData[]) => {
 
       await connection.query(insertQuery, [values]);
       logger.debug(
-        `Processed batch ${Math.floor(i / batchSize) + 1}: ${values.length} records at time ${new Date().toLocaleString()}`,
+        `Processed batch ${
+          Math.floor(i / batchSize) + 1
+        }: ${values.length} records at time ${new Date().toLocaleString()}`,
       );
     }
 
