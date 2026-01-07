@@ -105,9 +105,10 @@ export async function runImportCsv() {
   const bar = new cliProgress.SingleBar(
     {
       format:
-        "Importing [{bar}] {percentage}% | ETA: {eta}s | {value}/{total} | OK: {success} | SKIP: {skipped} | ERR: {errors} | {lastOp}",
+        "Importing [{bar}] {percentage}% | ETA: {eta_formatted} | {value}/{total} | OK: {success} | SKIP: {skipped} | ERR: {errors} | {lastOp}",
       hideCursor: true,
       clearOnComplete: false,
+      etaBuffer: 100,
     },
     cliProgress.Presets.shades_classic,
   );
