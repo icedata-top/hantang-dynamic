@@ -283,10 +283,10 @@ export class Database {
       await this.connection.run(
         `
       INSERT INTO processed_videos 
-        (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id, is_filtered)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      ON CONFLICT (aid) DO UPDATE SET
-        bvid = EXCLUDED.bvid,
+        (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id, is_filtered, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+      ON CONFLICT (bvid) DO UPDATE SET
+        aid = EXCLUDED.aid,
         pubdate = EXCLUDED.pubdate,
         title = EXCLUDED.title,
         description = EXCLUDED.description,
@@ -558,8 +558,7 @@ export class Database {
         stats.videosSeen !== undefined ||
         stats.videosFiltered !== undefined
       ) {
-        filterPassRateCalc =
-          "CASE WHEN (videos_seen" +
+        filterPassRateCalc = "CASE WHEN (videos_seen" +
           (stats.videosSeen !== undefined ? " + $videosSeen" : "") +
           ") > 0 THEN CAST((videos_filtered" +
           (stats.videosFiltered !== undefined ? " + $videosFiltered" : "") +
@@ -572,9 +571,11 @@ export class Database {
 
       if (updates.length > 0) {
         await this.connection.run(
-          `UPDATE discovered_users SET ${updates.join(
-            ", ",
-          )} WHERE user_id = $userId`,
+          `UPDATE discovered_users SET ${
+            updates.join(
+              ", ",
+            )
+          } WHERE user_id = $userId`,
           params,
         );
       }
