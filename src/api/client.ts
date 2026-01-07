@@ -72,7 +72,9 @@ export function createClient(
 
   client.interceptors.request.use(async (config) => {
     // Set start time for performance tracking
+    const existingMetadata = (config as RequestConfig).metadata || {};
     (config as RequestConfig).metadata = {
+      ...existingMetadata,
       startTime: Date.now(),
     };
 
@@ -120,7 +122,9 @@ export function createClient(
       if (
         response.data.code !== ApiErrorCode.Success &&
         response.data.code !== 404 &&
-        response.data.code !== -404
+        response.data.code !== -404 &&
+        response.data.code !== 62012 &&
+        response.data.code !== 62002
       ) {
         const message =
           `API Error:\n` +

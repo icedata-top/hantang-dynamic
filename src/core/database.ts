@@ -558,7 +558,8 @@ export class Database {
         stats.videosSeen !== undefined ||
         stats.videosFiltered !== undefined
       ) {
-        filterPassRateCalc = "CASE WHEN (videos_seen" +
+        filterPassRateCalc =
+          "CASE WHEN (videos_seen" +
           (stats.videosSeen !== undefined ? " + $videosSeen" : "") +
           ") > 0 THEN CAST((videos_filtered" +
           (stats.videosFiltered !== undefined ? " + $videosFiltered" : "") +
@@ -571,11 +572,9 @@ export class Database {
 
       if (updates.length > 0) {
         await this.connection.run(
-          `UPDATE discovered_users SET ${
-            updates.join(
-              ", ",
-            )
-          } WHERE user_id = $userId`,
+          `UPDATE discovered_users SET ${updates.join(
+            ", ",
+          )} WHERE user_id = $userId`,
           params,
         );
       }

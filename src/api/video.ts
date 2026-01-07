@@ -59,8 +59,14 @@ function isNotFoundError(error: unknown): boolean {
     (typeof error === "object" &&
       error !== null &&
       "code" in error &&
-      (error.code === 404 || error.code === -404)) ||
-    (error instanceof Error && error.message.includes("code -404"))
+      (error.code === 404 ||
+        error.code === -404 ||
+        error.code === 62002 ||
+        error.code === 62012)) ||
+    (error instanceof Error &&
+      (error.message.includes("code -404") ||
+        error.message.includes("code 62002") ||
+        error.message.includes("code 62012")))
   );
 }
 
@@ -74,11 +80,12 @@ export const fetchVideoFullDetail = async (params: {
   // Try proxy first if configured
   if (useProxy) {
     try {
-      const response =
-        await webInterfaceClient.get<BiliVideoFullDetailResponse>(endpoint, {
-          params,
-          ...({ metadata: { silent: true } } as RequestConfig),
-        });
+      const response = await webInterfaceClient.get<
+        BiliVideoFullDetailResponse
+      >(endpoint, {
+        params,
+        ...({ metadata: { silent: true } } as RequestConfig),
+      });
       return response.data;
     } catch (proxyError) {
       // If proxy returns 404, fallback to direct API
@@ -102,11 +109,15 @@ export const fetchVideoFullDetail = async (params: {
 
   // Try direct API (either as fallback or primary if no proxy)
   try {
-    const response =
-      await webInterfaceDirectClient.get<BiliVideoFullDetailResponse>(
-        endpoint,
-        { params },
-      );
+    const response = await webInterfaceDirectClient.get<
+      BiliVideoFullDetailResponse
+    >(
+      endpoint,
+      {
+        params,
+        ...({ metadata: { silent: true } } as RequestConfig),
+      },
+    );
     return response.data;
   } catch (error) {
     if (isNotFoundError(error)) {
