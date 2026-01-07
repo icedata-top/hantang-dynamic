@@ -298,7 +298,7 @@ export class Database {
         updated_at = NOW()
     `,
         {
-          1: video.aid,
+          1: BigInt(video.aid),
           2: video.bvid,
           3: video.pubdate,
           4: video.title,
@@ -306,7 +306,7 @@ export class Database {
           6: video.tag,
           7: video.pic,
           8: video.type_id,
-          9: video.user_id,
+          9: BigInt(video.user_id),
           10: filtered,
         },
       );
