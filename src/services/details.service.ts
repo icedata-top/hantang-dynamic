@@ -78,11 +78,12 @@ export class DetailsService {
         bvid = id;
       }
 
-      // 2. Check cache (only possible if we have BVID)
-      if (bvid) {
-        const exists = await this.db.hasProcessedVideo(bvid);
+      // 2. Check cache (using BVID or AID)
+      const checkId = bvid || aid;
+      if (checkId) {
+        const exists = await this.db.hasProcessedVideoById(checkId);
         if (exists) {
-          logger.debug(`Video ${bvid} already processed, skipping.`);
+          logger.debug(`Video ${checkId} already processed, skipping.`);
           return { video: null, relatedVideos: [] };
         }
       }

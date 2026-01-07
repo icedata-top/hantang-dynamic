@@ -76,7 +76,30 @@ export async function runImportCsv() {
     rows.push(row);
   }
 
-  logger.info(`Loaded ${rows.length} rows. Starting processing...`);
+  logger.info(`Loaded ${rows.length} rows. Fetching existing IDs...`);
+
+  const idType = targetCol === "aid" ? "aid" : "bvid";
+  const existingIds = await db.getAllProcessedIds(idType);
+
+  logger.info(`Found ${existingIds.size} existing videos in DB. Filtering...`);
+
+  // biome-ignore lint/suspicious/noExplicitAny: CSV row type
+  const rowsToProcess: any[] = [];
+  let skippedImmediately = 0;
+
+  for (const row of rows) {
+    const id = row[targetCol];
+    // Check if ID exists (handling both string/number input vs string in Set)
+    if (id && existingIds.has(String(id))) {
+      skippedImmediately++;
+    } else {
+      rowsToProcess.push(row);
+    }
+  }
+
+  logger.info(
+    `Skipped ${skippedImmediately} videos. Processing ${rowsToProcess.length} remaining...`,
+  );
 
   // Initialize Progress Bar
   const bar = new cliProgress.SingleBar(
@@ -90,75 +113,85 @@ export async function runImportCsv() {
   );
 
   let successCount = 0;
-  let skippedCount = 0;
+  let skippedCount = skippedImmediately;
   let errorCount = 0;
 
-  bar.start(rows.length, 0, {
+  bar.start(rows.length, skippedImmediately, {
     success: 0,
-    skipped: 0,
+    skipped: skippedImmediately,
     errors: 0,
     lastOp: "Starting...",
   });
 
   // Process using pool
-  const results = await runWithPool(rows, POOL_SIZE, async (row, _index) => {
-    const id = row[targetCol];
-    if (!id) {
-      skippedCount++;
-      bar.increment(1, {
-        skipped: skippedCount,
-        lastOp: "SKIP Empty ID",
-      });
-      return null;
-    }
-
-    try {
-      const { video, relatedVideos } = await detailsService.processVideoById(
-        id,
-        true,
-      );
-      if (video) {
-        successCount++;
-        bar.increment(1, { success: successCount, lastOp: `OK ${id}` });
-
-        // Handle relations recursively
-        const queue = [...relatedVideos];
-        const processedBvids = new Set<string>();
-        if (video.bvid) processedBvids.add(video.bvid);
-        const collectedVideos: VideoData[] = [video];
-
-        const enableRecommendation =
-          config.processing?.features?.enableRecommendation ?? false;
-        const maxDepth =
-          config.processing?.features?.maxRecommendationDepth ?? 1;
-
-        if (enableRecommendation) {
-          await processRelatedQueue(
-            detailsService,
-            queue,
-            1,
-            maxDepth,
-            collectedVideos,
-            processedBvids,
-          );
-        }
-
-        return collectedVideos;
+  const results = await runWithPool(
+    rowsToProcess,
+    POOL_SIZE,
+    async (row, _index) => {
+      const id = row[targetCol];
+      if (!id) {
+        skippedCount++;
+        bar.increment(1, {
+          skipped: skippedCount,
+          lastOp: "SKIP Empty ID",
+        });
+        return null;
       }
-      skippedCount++;
-      bar.increment(1, { skipped: skippedCount, lastOp: `SKIP ${id}` });
-    } catch (e: unknown) {
-      errorCount++;
-      const msg = e instanceof Error ? e.message : String(e);
-      // Shorten error message for display
-      const shortMsg = msg.length > 20 ? `${msg.substring(0, 20)}...` : msg;
-      bar.increment(1, {
-        errors: errorCount,
-        lastOp: `ERR ${id} ${shortMsg}`,
-      });
-    }
-    return null;
-  });
+
+      try {
+        const { video, relatedVideos } = await detailsService.processVideoById(
+          id,
+          true,
+        );
+        if (video) {
+          successCount++;
+          bar.increment(1, {
+            success: successCount,
+            lastOp: `OK ${id}`,
+          });
+
+          // Handle relations recursively
+          const queue = [...relatedVideos];
+          const processedBvids = new Set<string>();
+          if (video.bvid) processedBvids.add(video.bvid);
+          const collectedVideos: VideoData[] = [video];
+
+          const enableRecommendation =
+            config.processing?.features?.enableRecommendation ?? false;
+          const maxDepth =
+            config.processing?.features?.maxRecommendationDepth ?? 1;
+
+          if (enableRecommendation) {
+            await processRelatedQueue(
+              detailsService,
+              queue,
+              1,
+              maxDepth,
+              collectedVideos,
+              processedBvids,
+            );
+          }
+
+          return collectedVideos;
+        }
+        skippedCount++;
+        bar.increment(1, {
+          skipped: skippedCount,
+          lastOp: `SKIP ${id}`,
+        });
+      } catch (e: unknown) {
+        errorCount++;
+        const msg = e instanceof Error ? e.message : String(e);
+        // Shorten error message for display
+        const shortMsg = msg.length > 20 ? `${msg.substring(0, 20)}...` : msg;
+        bar.increment(1, {
+          errors: errorCount,
+          lastOp: `ERR ${id} ${shortMsg}`,
+        });
+      }
+      return null;
+    },
+  );
 
   bar.stop();
 

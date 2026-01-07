@@ -269,6 +269,59 @@ export class Database {
   }
 
   /**
+   * Check if a video has been processed by ID (AID or BVID)
+   */
+  public async hasProcessedVideoById(
+    id: string | number | bigint,
+  ): Promise<boolean> {
+    return this.withMutex(async () => {
+      if (!this.connection) {
+        throw new Error("Database not initialized");
+      }
+
+      const isBvid = typeof id === "string" && id.startsWith("BV");
+      const sql = isBvid
+        ? "SELECT COUNT(*) as count FROM processed_videos WHERE bvid = $1"
+        : "SELECT COUNT(*) as count FROM processed_videos WHERE aid = $1";
+
+      const param = isBvid ? id : BigInt(id);
+
+      const reader = await this.connection.runAndReadAll(sql, { 1: param });
+
+      const rows = reader.getRows();
+      return (rows[0]?.[0] as number) > 0;
+    });
+  }
+
+  /**
+   * Get all processed video IDs of a specific type (aid or bvid)
+   */
+  public async getAllProcessedIds(type: "aid" | "bvid"): Promise<Set<string>> {
+    return this.withMutex(async () => {
+      if (!this.connection) {
+        throw new Error("Database not initialized");
+      }
+
+      const column = type === "aid" ? "aid" : "bvid";
+      // Select only the specific column to minimize data transfer
+      const reader = await this.connection.runAndReadAll(
+        `SELECT ${column} FROM processed_videos`,
+      );
+
+      const rows = reader.getRows();
+      const ids = new Set<string>();
+
+      for (const row of rows) {
+        if (row[0] !== null && row[0] !== undefined) {
+          ids.add(row[0].toString());
+        }
+      }
+
+      return ids;
+    });
+  }
+
+  /**
    * Mark a video as processed
    */
   public async markVideoProcessed(
