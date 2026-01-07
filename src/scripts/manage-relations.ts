@@ -195,7 +195,7 @@ async function runInteractiveMode(): Promise<{
 /**
  * Main entry point
  */
-async function main() {
+export async function runManageRelations() {
   try {
     // Parse CLI arguments
     const options = parseArgs();
@@ -213,7 +213,9 @@ async function main() {
     const actionName = getActionName(options.action);
     logger.info(`Starting batch ${actionName} process`);
     logger.info(
-      `Parameters: Action=${actionName}, CSV=${options.csvPath || `data/${getDefaultFilename(options.action)}`}, Batch Size=${options.batchSize}, Wait Time=${options.waitTime}ms`,
+      `Parameters: Action=${actionName}, CSV=${
+        options.csvPath || `data/${getDefaultFilename(options.action)}`
+      }, Batch Size=${options.batchSize}, Wait Time=${options.waitTime}ms`,
     );
 
     // Run the appropriate action
@@ -231,6 +233,3 @@ async function main() {
     process.exit(1);
   }
 }
-
-// Start the application
-main();

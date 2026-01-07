@@ -23,8 +23,8 @@ async function processVideo(
     }
 
     const view = fullDetail.data.View;
-    const tagString =
-      fullDetail.data.Tags?.map((t) => t.tag_name).join(";") || "";
+    const tagString = fullDetail.data.Tags?.map((t) => t.tag_name).join(";") ||
+      "";
 
     const updatedVideo: VideoData = {
       aid: view.aid,
@@ -42,16 +42,17 @@ async function processVideo(
     await db.markVideoProcessed(updatedVideo, false);
 
     logger.info(
-      `[${index}/${total}] ${bvid}: aid=${BigInt(
-        updatedVideo.aid,
-      )}, user_id=${BigInt(updatedVideo.user_id)}`,
+      `[${index}/${total}] ${bvid}: aid=${
+        BigInt(
+          updatedVideo.aid,
+        )
+      }, user_id=${BigInt(updatedVideo.user_id)}`,
     );
     return { success: true, skipped: false };
   } catch (error) {
-    const errorMsg =
-      error instanceof Error
-        ? error.message
-        : JSON.stringify(error) || String(error);
+    const errorMsg = error instanceof Error
+      ? error.message
+      : JSON.stringify(error) || String(error);
     logger.error(`[${index}/${total}] Error processing ${bvid}: ${errorMsg}`);
     return { success: false, skipped: false };
   }
@@ -76,15 +77,16 @@ async function runWithPool<T, R>(
     }
   }
 
-  const workers = Array.from({ length: Math.min(poolSize, items.length) }, () =>
-    worker(),
+  const workers = Array.from(
+    { length: Math.min(poolSize, items.length) },
+    () => worker(),
   );
 
   await Promise.all(workers);
   return results;
 }
 
-async function main() {
+export async function runRepairVideos() {
   logger.info("Starting video data repair script");
   logger.info(`Pool size: ${POOL_SIZE}`);
 
@@ -131,8 +133,3 @@ async function main() {
     await db.close();
   }
 }
-
-main().catch((error) => {
-  logger.error("Fatal error:", error);
-  process.exit(1);
-});

@@ -3,7 +3,7 @@ import { Database } from "./core/database";
 import { DynamicTracker } from "./services/tracker";
 import { logger } from "./utils/logger";
 
-async function main() {
+async function runTracker() {
   logger.info("Starting Bilibili Video Tracker");
   logger.debug("Configuration:", config);
 
@@ -37,6 +37,26 @@ async function main() {
 
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+
+  // Check for tool mode
+  if (args.includes("--repair")) {
+    const { runRepairVideos } = await import("./scripts/repair-videos");
+    await runRepairVideos();
+    return;
+  }
+
+  if (args.includes("--relation")) {
+    const { runManageRelations } = await import("./scripts/manage-relations");
+    await runManageRelations();
+    return;
+  }
+
+  // Default: run tracker
+  await runTracker();
 }
 
 main().catch(async (error) => {
