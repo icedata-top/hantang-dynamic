@@ -55,6 +55,12 @@ async function main() {
     return;
   }
 
+  if (args.includes("--import")) {
+    const { runImportCsv } = await import("./scripts/import-csv");
+    await runImportCsv();
+    return;
+  }
+
   // Default: run tracker
   await runTracker();
 }

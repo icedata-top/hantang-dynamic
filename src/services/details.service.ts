@@ -40,11 +40,51 @@ export class DetailsService {
         }
       }
 
-      // 2. Check cache
-      const exists = await this.db.hasProcessedVideo(bvid);
-      if (exists) {
-        logger.debug(`Video ${bvid} already processed, skipping.`);
-        return { video: null, relatedVideos: [] };
+      return await this.processVideoById(bvid, processRelated);
+    } catch (error) {
+      logger.error(
+        `Error processing dynamic ${dynamic.desc.dynamic_id}:`,
+        error,
+      );
+      return { video: null, relatedVideos: [] };
+    }
+  }
+
+  /**
+   * Process a video by its ID (BVID or AID).
+   */
+  async processVideoById(
+    id: string | number,
+    processRelated = true,
+  ): Promise<{
+    video: VideoData | null;
+    relatedVideos: BiliDynamicCard[];
+  }> {
+    try {
+      let bvid: string | undefined;
+      let aid: number | undefined;
+
+      // Determine ID type
+      if (typeof id === "number" || typeof id === "bigint") {
+        aid = Number(id);
+      } else if (id.startsWith("BV")) {
+        bvid = id;
+      } else if (id.toLowerCase().startsWith("av")) {
+        aid = parseInt(id.substring(2));
+      } else if (!Number.isNaN(Number(id))) {
+        aid = Number(id);
+      } else {
+        // Fallback assumes BVID if string
+        bvid = id;
+      }
+
+      // 2. Check cache (only possible if we have BVID)
+      if (bvid) {
+        const exists = await this.db.hasProcessedVideo(bvid);
+        if (exists) {
+          logger.debug(`Video ${bvid} already processed, skipping.`);
+          return { video: null, relatedVideos: [] };
+        }
       }
 
       // 3. Fetch details (with concurrency limiting)
@@ -52,10 +92,22 @@ export class DetailsService {
       let videoData: VideoData;
       let relatedVideos: RecommendedVideo[];
       try {
-        ({ videoData, relatedVideos } =
-          await this.fetchVideoDetailsWithRelated(bvid));
+        ({ videoData, relatedVideos } = await this.fetchVideoDetailsWithRelated(
+          bvid || aid || 0,
+        ));
       } finally {
         release();
+      }
+
+      // Re-check cache using the true BVID from response (useful if we started with AID)
+      if (!bvid && videoData.bvid) {
+        const exists = await this.db.hasProcessedVideo(videoData.bvid);
+        if (exists) {
+          logger.debug(
+            `Video ${videoData.bvid} (from aid ${aid}) already processed, skipping.`,
+          );
+          return { video: null, relatedVideos: [] };
+        }
       }
 
       // 4. Filter video
@@ -80,14 +132,16 @@ export class DetailsService {
         error instanceof Error &&
         error.message.startsWith("VIDEO_DELETED:")
       ) {
-        const bvid = error.message.split(":")[1];
-        logger.debug(`Video ${bvid} has been deleted, marking as processed`);
+        const bvidFromError = error.message.split(":")[1] || String(id);
+        logger.debug(
+          `Video ${bvidFromError} has been deleted, marking as processed`,
+        );
 
         // Mark as processed with 'passed=false' since we couldn't process it
         // We need to create minimal VideoData for the database
         const minimalVideoData: VideoData = {
-          aid: BigInt(0),
-          bvid,
+          aid: BigInt(typeof id === "number" ? id : 0),
+          bvid: bvidFromError,
           pubdate: 0,
           title: "",
           description: "",
@@ -101,11 +155,7 @@ export class DetailsService {
         return { video: null, relatedVideos: [] };
       }
 
-      logger.error(
-        `Error processing video from dynamic ${dynamic.desc.dynamic_id} and bvid ${bvid}:`,
-        error,
-      );
-      return { video: null, relatedVideos: [] };
+      throw error;
     }
   }
 
@@ -121,8 +171,8 @@ export class DetailsService {
     // Fetch original dynamic
     const release = await this.rateLimiter.acquire();
     try {
-      const originalDynamicId =
-        dynamic.desc.orig_dy_id_str || dynamic.desc.origin?.dynamic_id_str;
+      const originalDynamicId = dynamic.desc.orig_dy_id_str ||
+        dynamic.desc.origin?.dynamic_id_str;
       if (!originalDynamicId) {
         logger.warn(`Cannot find original dynamic ID for forward ${dynamicId}`);
         return "";
@@ -152,16 +202,18 @@ export class DetailsService {
     return "";
   }
 
-  private async fetchVideoDetailsWithRelated(bvid: string): Promise<{
+  private async fetchVideoDetailsWithRelated(id: string | number): Promise<{
     videoData: VideoData;
     relatedVideos: RecommendedVideo[];
   }> {
+    const params = typeof id === "number" ? { aid: id } : { bvid: id };
+
     // Fetch full details including related videos
-    const fullDetail = await fetchVideoFullDetail({ bvid });
+    const fullDetail = await fetchVideoFullDetail(params);
 
     // Handle deleted videos
     if (!fullDetail) {
-      throw new Error(`VIDEO_DELETED:${bvid}`);
+      throw new Error(`VIDEO_DELETED:${id}`);
     }
 
     const view = fullDetail.data.View;
