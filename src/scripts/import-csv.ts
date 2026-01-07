@@ -1,14 +1,14 @@
+import { createReadStream } from "node:fs";
+import { resolve } from "node:path";
+import cliProgress from "cli-progress";
 import { parse } from "csv-parse";
-import { createReadStream } from "fs";
-import { resolve } from "path";
 import { config } from "../config";
 import { Database } from "../core/database";
 import { DetailsService } from "../services/details.service";
-import { logger } from "../utils/logger";
-import type { VideoData } from "../types";
+import type { BiliDynamicCard, VideoData } from "../types";
 import { exportData } from "../utils/exporter/exporter";
+import { logger } from "../utils/logger";
 import { notifyNewVideos } from "../utils/notifier/notifier";
-import type { BiliDynamicCard } from "../types";
 
 const POOL_SIZE = config.application.concurrencyLimit || 20;
 
@@ -62,6 +62,7 @@ export async function runImportCsv() {
   const detailsService = new DetailsService();
 
   // Read all rows into memory
+  // biome-ignore lint/suspicious/noExplicitAny: CSV parser returns distinct objects based on file content
   const rows: any[] = [];
   const parser = createReadStream(filePath).pipe(
     parse({
@@ -77,11 +78,37 @@ export async function runImportCsv() {
 
   logger.info(`Loaded ${rows.length} rows. Starting processing...`);
 
+  // Initialize Progress Bar
+  const bar = new cliProgress.SingleBar(
+    {
+      format:
+        "Importing [{bar}] {percentage}% | ETA: {eta}s | {value}/{total} | OK: {success} | SKIP: {skipped} | ERR: {errors} | {lastOp}",
+      hideCursor: true,
+      clearOnComplete: false,
+    },
+    cliProgress.Presets.shades_classic,
+  );
+
+  let successCount = 0;
+  let skippedCount = 0;
+  let errorCount = 0;
+
+  bar.start(rows.length, 0, {
+    success: 0,
+    skipped: 0,
+    errors: 0,
+    lastOp: "Starting...",
+  });
+
   // Process using pool
-  const results = await runWithPool(rows, POOL_SIZE, async (row, index) => {
+  const results = await runWithPool(rows, POOL_SIZE, async (row, _index) => {
     const id = row[targetCol];
     if (!id) {
-      // logger.warn(`Row ${index + 1}: Column '${targetCol}' not found or empty.`);
+      skippedCount++;
+      bar.increment(1, {
+        skipped: skippedCount,
+        lastOp: "SKIP Empty ID",
+      });
       return null;
     }
 
@@ -91,16 +118,10 @@ export async function runImportCsv() {
         true,
       );
       if (video) {
-        logger.info(
-          `[${index + 1}/${rows.length}] [OK] ${id} - ${video.title}`,
-        );
+        successCount++;
+        bar.increment(1, { success: successCount, lastOp: `OK ${id}` });
 
-        // Handle relations recursively (basic DFS/BFS as before, but per video)
-        // Note: Recursive relation processing currently is NOT pooled inside this task,
-        // but processVideoById's recursive logic (if we add it) would be.
-        // For now, let's just do single depth queue processing here as before,
-        // but inside the pooled worker.
-
+        // Handle relations recursively
         const queue = [...relatedVideos];
         const processedBvids = new Set<string>();
         if (video.bvid) processedBvids.add(video.bvid);
@@ -123,19 +144,23 @@ export async function runImportCsv() {
         }
 
         return collectedVideos;
-      } else {
-        // logger.info(
-        //   `[${
-        //     index + 1
-        //   }/${rows.length}] [SKIP] ${id} - Not found or skipped (already processed/filtered)`,
-        // );
       }
+      skippedCount++;
+      bar.increment(1, { skipped: skippedCount, lastOp: `SKIP ${id}` });
     } catch (e: unknown) {
+      errorCount++;
       const msg = e instanceof Error ? e.message : String(e);
-      logger.info(`[${index + 1}/${rows.length}] [ERR] ${id}: ${msg}`);
+      // Shorten error message for display
+      const shortMsg = msg.length > 20 ? `${msg.substring(0, 20)}...` : msg;
+      bar.increment(1, {
+        errors: errorCount,
+        lastOp: `ERR ${id} ${shortMsg}`,
+      });
     }
     return null;
   });
+
+  bar.stop();
 
   // Flatten results
   const allNewVideos = results.flat().filter((v): v is VideoData => v !== null);
@@ -166,14 +191,6 @@ async function processRelatedQueue(
 
   const nextQueue: BiliDynamicCard[] = [];
 
-  // Process current queue items
-  // Since we are already inside a worker, avoid spawning more heavy concurrency here to prevent deadlock or overload?
-  // Actually JS is single threaded event loop helper, so 'Promise.all' might be better than sequential for relations?
-  // But we are limited by rateLimiter in `detailsService` anyway.
-
-  // Let's stick to sequential for relations within a task to be safe, or small parallelism.
-  // 'processVideoById' uses rateLimiter.
-
   for (const item of queue) {
     const bvid = item.desc?.bvid;
     if (!bvid || seenBvids.has(bvid)) continue;
@@ -188,8 +205,8 @@ async function processRelatedQueue(
         results.push(video);
         nextQueue.push(...relatedVideos);
       }
-    } catch (e) {
-      // suppress error log for relations to avoid noise? or log debug
+    } catch (_e) {
+      // suppress error log for relations
     }
   }
 
