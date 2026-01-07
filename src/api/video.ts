@@ -80,12 +80,11 @@ export const fetchVideoFullDetail = async (params: {
   // Try proxy first if configured
   if (useProxy) {
     try {
-      const response = await webInterfaceClient.get<
-        BiliVideoFullDetailResponse
-      >(endpoint, {
-        params,
-        ...({ metadata: { silent: true } } as RequestConfig),
-      });
+      const response =
+        await webInterfaceClient.get<BiliVideoFullDetailResponse>(endpoint, {
+          params,
+          ...({ metadata: { silent: true } } as RequestConfig),
+        });
       return response.data;
     } catch (proxyError) {
       // If proxy returns 404, fallback to direct API
@@ -109,15 +108,14 @@ export const fetchVideoFullDetail = async (params: {
 
   // Try direct API (either as fallback or primary if no proxy)
   try {
-    const response = await webInterfaceDirectClient.get<
-      BiliVideoFullDetailResponse
-    >(
-      endpoint,
-      {
-        params,
-        ...({ metadata: { silent: true } } as RequestConfig),
-      },
-    );
+    const response =
+      await webInterfaceDirectClient.get<BiliVideoFullDetailResponse>(
+        endpoint,
+        {
+          params,
+          ...({ metadata: { silent: true } } as RequestConfig),
+        },
+      );
     return response.data;
   } catch (error) {
     if (isNotFoundError(error)) {

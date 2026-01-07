@@ -171,8 +171,8 @@ export class DetailsService {
     // Fetch original dynamic
     const release = await this.rateLimiter.acquire();
     try {
-      const originalDynamicId = dynamic.desc.orig_dy_id_str ||
-        dynamic.desc.origin?.dynamic_id_str;
+      const originalDynamicId =
+        dynamic.desc.orig_dy_id_str || dynamic.desc.origin?.dynamic_id_str;
       if (!originalDynamicId) {
         logger.warn(`Cannot find original dynamic ID for forward ${dynamicId}`);
         return "";
