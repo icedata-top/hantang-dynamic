@@ -119,7 +119,8 @@ export function createClient(
       // Handle non-success response codes
       if (
         response.data.code !== ApiErrorCode.Success &&
-        response.data.code !== 404
+        response.data.code !== 404 &&
+        response.data.code !== -404
       ) {
         const message =
           `API Error:\n` +
