@@ -159,6 +159,23 @@ export class Database {
       )
     `);
 
+    // Add new columns if they don't exist (schema migration)
+    const newColumns = [
+      "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS staff JSON",
+      "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS tid_v2 INTEGER",
+      "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS dynamic TEXT",
+      "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS tag_new JSON",
+      "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS participle JSON",
+      "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS ctime BIGINT",
+      "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE",
+      "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS copyright INTEGER",
+      "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS extras JSON",
+      "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS notes JSON",
+    ];
+    for (const sql of newColumns) {
+      await this.connection.run(sql);
+    }
+
     // Create indexes for processed_videos
     await this.connection.run(`
       CREATE INDEX IF NOT EXISTS idx_processed_bvid 
@@ -336,8 +353,10 @@ export class Database {
       await this.connection.run(
         `
       INSERT INTO processed_videos 
-        (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id, is_filtered, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+        (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id, is_filtered, 
+         staff, tid_v2, dynamic, tag_new, participle, ctime, is_deleted, copyright, extras, notes, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 
+              $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW())
       ON CONFLICT (bvid) DO UPDATE SET
         aid = EXCLUDED.aid,
         pubdate = EXCLUDED.pubdate,
@@ -348,6 +367,16 @@ export class Database {
         type_id = EXCLUDED.type_id,
         user_id = EXCLUDED.user_id,
         is_filtered = EXCLUDED.is_filtered,
+        staff = EXCLUDED.staff,
+        tid_v2 = EXCLUDED.tid_v2,
+        dynamic = EXCLUDED.dynamic,
+        tag_new = EXCLUDED.tag_new,
+        participle = EXCLUDED.participle,
+        ctime = EXCLUDED.ctime,
+        is_deleted = EXCLUDED.is_deleted,
+        copyright = EXCLUDED.copyright,
+        extras = EXCLUDED.extras,
+        notes = EXCLUDED.notes,
         updated_at = NOW()
     `,
         {
@@ -361,6 +390,18 @@ export class Database {
           8: video.type_id,
           9: BigInt(video.user_id),
           10: filtered,
+          11: video.staff
+            ? JSON.stringify(video.staff.map((id) => id.toString()))
+            : null,
+          12: video.tid_v2 ?? null,
+          13: video.dynamic ?? null,
+          14: video.tag_new ? JSON.stringify(video.tag_new) : null,
+          15: video.participle ? JSON.stringify(video.participle) : null,
+          16: video.ctime ?? null,
+          17: video.is_deleted ?? false,
+          18: video.copyright ?? null,
+          19: video.extras ? JSON.stringify(video.extras) : null,
+          20: video.notes ? JSON.stringify(video.notes) : null,
         },
       );
     });
@@ -403,6 +444,22 @@ export class Database {
         pic: row.pic as string,
         type_id: row.type_id as number,
         user_id: row.user_id as bigint,
+        staff: row.staff
+          ? (JSON.parse(row.staff as string) as string[]).map((id) =>
+              BigInt(id),
+            )
+          : undefined,
+        tid_v2: row.tid_v2 as number | undefined,
+        dynamic: row.dynamic as string | undefined,
+        tag_new: row.tag_new ? JSON.parse(row.tag_new as string) : undefined,
+        participle: row.participle
+          ? JSON.parse(row.participle as string)
+          : undefined,
+        ctime: row.ctime as number | undefined,
+        is_deleted: row.is_deleted as boolean | undefined,
+        copyright: row.copyright as number | undefined,
+        extras: row.extras ? JSON.parse(row.extras as string) : undefined,
+        notes: row.notes ? JSON.parse(row.notes as string) : undefined,
       }));
     });
   }

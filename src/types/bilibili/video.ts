@@ -219,9 +219,38 @@ export interface BiliVideoFullDetailResponse {
       stat: BiliVideoStat;
       state: number;
       tid: number;
+      tid_v2?: number;
       title: string;
       tname: string;
       videos: number;
+      mission_id?: number;
+      staff?: Array<{
+        mid: bigint;
+        title: string;
+        name: string;
+        face: string;
+        follower: number;
+      }>;
+      ugc_season?: {
+        id: number;
+        title: string;
+        mid: number;
+        intro: string;
+        ep_count: number;
+      };
+      argue_info?: {
+        argue_msg: string;
+        argue_type: number;
+        argue_link: string;
+      };
+      honor_reply?: {
+        honor?: Array<{
+          aid: number;
+          type: number;
+          desc: string;
+          weekly_recommend_num: number;
+        }>;
+      };
     };
     Card: {
       card: {
@@ -260,5 +289,6 @@ export interface BiliVideoFullDetailResponse {
       replies: Array<unknown>;
     };
     Related: RecommendedVideo[];
+    participle?: string[];
   };
 }
