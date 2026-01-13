@@ -369,15 +369,26 @@ export class Database {
   /**
    * Get processed videos
    */
-  public async getProcessedVideos(limit?: number): Promise<VideoData[]> {
+  public async getProcessedVideos(
+    limit?: number,
+    where?: string,
+  ): Promise<VideoData[]> {
     return this.withMutex(async () => {
       if (!this.connection) {
         throw new Error("Database not initialized");
       }
 
-      const sql = limit
-        ? `SELECT * FROM processed_videos ORDER BY created_at DESC LIMIT ${limit}`
-        : "SELECT * FROM processed_videos ORDER BY created_at DESC";
+      let sql = "SELECT * FROM processed_videos";
+
+      if (where) {
+        sql += ` WHERE ${where}`;
+      }
+
+      sql += " ORDER BY created_at DESC";
+
+      if (limit) {
+        sql += ` LIMIT ${limit}`;
+      }
 
       const reader = await this.connection.runAndReadAll(sql);
       const rows = reader.getRowObjects();

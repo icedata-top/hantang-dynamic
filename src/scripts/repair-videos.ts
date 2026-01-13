@@ -84,15 +84,18 @@ async function runWithPool<T, R>(
   return results;
 }
 
-export async function runRepairVideos() {
+export async function runRepairVideos(filter?: string) {
   logger.info("Starting video data repair script");
+  if (filter) {
+    logger.info(`Filter applied: ${filter}`);
+  }
   logger.info(`Pool size: ${POOL_SIZE}`);
 
   const db = Database.getInstance();
   await db.init(config.database.path);
 
   try {
-    const allVideos = await db.getProcessedVideos();
+    const allVideos = await db.getProcessedVideos(undefined, filter);
     // Deduplicate by bvid to avoid concurrent processing of same video
     const seenBvids = new Set<string>();
     const videos = allVideos.filter((v) => {
