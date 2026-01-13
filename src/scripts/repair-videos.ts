@@ -127,29 +127,21 @@ export async function runRepairVideos(filter?: string) {
   await db.init(config.database.path);
 
   try {
-    const allVideos = await db.getProcessedVideos(undefined, filter);
+    // Use lightweight getBvidList instead of loading full VideoData objects
+    const allBvids = await db.getBvidList(filter);
     // Deduplicate by bvid to avoid concurrent processing of same video
-    const seenBvids = new Set<string>();
-    const videos = allVideos.filter((v) => {
-      if (seenBvids.has(v.bvid)) return false;
-      seenBvids.add(v.bvid);
-      return true;
-    });
+    const bvids = [...new Set(allBvids)];
     logger.info(
-      `Found ${allVideos.length} videos, ${videos.length} unique bvids to repair`,
+      `Found ${allBvids.length} videos, ${bvids.length} unique bvids to repair`,
     );
 
     let successCount = 0;
     let errorCount = 0;
     let skippedCount = 0;
 
-    const results = await runWithPool(
-      videos,
-      POOL_SIZE,
-      async (video, index) => {
-        return processVideo(db, video.bvid, index + 1, videos.length);
-      },
-    );
+    const results = await runWithPool(bvids, POOL_SIZE, async (bvid, index) => {
+      return processVideo(db, bvid, index + 1, bvids.length);
+    });
 
     for (const result of results) {
       if (result.success) successCount++;
@@ -158,7 +150,7 @@ export async function runRepairVideos(filter?: string) {
     }
 
     logger.info("\n=== Repair Complete ===");
-    logger.info(`Total: ${videos.length}`);
+    logger.info(`Total: ${bvids.length}`);
     logger.info(`Success: ${successCount}`);
     logger.info(`Skipped: ${skippedCount}`);
     logger.info(`Errors: ${errorCount}`);

@@ -465,6 +465,27 @@ export class Database {
   }
 
   /**
+   * Get list of bvids only (lightweight, for batch processing)
+   */
+  public async getBvidList(where?: string): Promise<string[]> {
+    return this.withMutex(async () => {
+      if (!this.connection) {
+        throw new Error("Database not initialized");
+      }
+
+      let sql = "SELECT bvid FROM processed_videos";
+      if (where) {
+        sql += ` WHERE ${where}`;
+      }
+      sql += " ORDER BY created_at DESC";
+
+      const reader = await this.connection.runAndReadAll(sql);
+      const rows = reader.getRows();
+      return rows.map((row) => row[0] as string);
+    });
+  }
+
+  /**
    * Get cached forward dynamic BVID
    */
   public async getCachedForwardBvid(dynamicId: string): Promise<string | null> {
