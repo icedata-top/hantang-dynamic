@@ -1,6 +1,6 @@
+import { fetchVideoFullDetail } from "../api/video.js";
 import { config } from "../config/index.js";
 import { Database } from "../core/database.js";
-import { fetchVideoFullDetail } from "../api/video.js";
 import type { VideoData } from "../types/models/video.js";
 import { logger } from "../utils/logger.js";
 

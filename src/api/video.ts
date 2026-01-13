@@ -1,3 +1,4 @@
+import { config } from "../config";
 import type {
   BiliVideoDetailResponse,
   BiliVideoFullDetailResponse,
@@ -9,7 +10,6 @@ import {
   webInterfaceClient,
   webInterfaceDirectClient,
 } from "./client";
-import { config } from "../config";
 
 export const fetchVideoTags = async (
   bvid: string,

@@ -113,7 +113,7 @@ export function createClient(
       if (response.status === ApiErrorResponseCode.IpBanned) {
         const message =
           "CRITICAL ERROR: IP has been banned! Terminating process.";
-        logger.error(message + "致命错误：IP 被封禁！正在终止进程。");
+        logger.error(`${message}致命错误：IP·被封禁！正在终止进程。`);
         await notifyWarning(message);
         process.exit(2);
       }
