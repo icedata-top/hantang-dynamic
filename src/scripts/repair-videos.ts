@@ -27,16 +27,48 @@ async function processVideo(
       fullDetail.data.Tags?.map((t) => t.tag_name).join(";") || "";
 
     const updatedVideo: VideoData = {
+      // Core identifiers
       aid: view.aid,
       bvid: view.bvid,
-      pubdate: view.pubdate,
+
+      // User info
+      user_id: view.owner.mid,
+      staff: view.staff?.map((s) => BigInt(s.mid)),
+
+      // Category
+      type_id: view.tid,
+      tid_v2: view.tid_v2,
+
+      // Content
       title: view.title,
       description: view.desc,
-      tag: tagString,
+      dynamic: view.dynamic || undefined,
       pic: view.pic,
-      type_id: view.tid,
-      user_id: view.owner.mid,
+      tag: tagString,
+      tag_new: fullDetail.data.Tags?.map((t) => t.tag_name),
+      participle: fullDetail.data.participle,
+
+      // Timing
+      pubdate: view.pubdate,
+      ctime: view.ctime,
+
+      // Flags
+      is_deleted: false,
       copyright: view.copyright,
+
+      // Extras
+      extras: {
+        duration: view.duration,
+        videos: view.videos,
+        state: view.state,
+        cid: view.cid,
+        mission_id: view.mission_id,
+        ugc_season_id: view.ugc_season?.id,
+        dimension: view.dimension,
+        rights: view.rights,
+        argue_info: view.argue_info,
+        honor_reply: view.honor_reply,
+      },
     };
 
     await db.markVideoProcessed(updatedVideo, false);
