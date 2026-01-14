@@ -1,6 +1,10 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { type DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import {
+  type DuckDBConnection,
+  DuckDBInstance,
+  listValue,
+} from "@duckdb/node-api";
 import { config } from "../config/index.js";
 import type { VideoData } from "../types/models/video.js";
 import { AsyncMutex } from "../utils/asyncMutex.js";
@@ -161,11 +165,11 @@ export class Database {
 
     // Add new columns if they don't exist (schema migration)
     const newColumns = [
-      "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS staff JSON",
+      "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS staff BIGINT[]",
       "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS tid_v2 INTEGER",
       "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS dynamic TEXT",
-      "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS tag_new JSON",
-      "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS participle JSON",
+      "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS tag_new VARCHAR[]",
+      "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS participle VARCHAR[]",
       "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS ctime BIGINT",
       "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE",
       "ALTER TABLE processed_videos ADD COLUMN IF NOT EXISTS copyright INTEGER",
@@ -175,6 +179,9 @@ export class Database {
     for (const sql of newColumns) {
       await this.connection.run(sql);
     }
+
+    // Migrate JSON array columns to native array types if needed
+    await this.migrateArrayColumns();
 
     // Create indexes for processed_videos
     await this.connection.run(`
@@ -264,6 +271,68 @@ export class Database {
     `);
 
     logger.info("Database schema initialized");
+  }
+
+  /**
+   * Migrate JSON array columns to native array types if they exist as JSON.
+   * Uses CREATE TABLE AS SELECT approach for efficient bulk migration.
+   */
+  private async migrateArrayColumns(): Promise<void> {
+    if (!this.connection) {
+      throw new Error("Database not initialized");
+    }
+
+    // Check if migration is needed by inspecting column types
+    const columnsReader = await this.connection.runAndReadAll(`
+      SELECT column_name, data_type 
+      FROM information_schema.columns 
+      WHERE table_name = 'processed_videos' 
+        AND column_name IN ('staff', 'tag_new', 'participle')
+    `);
+
+    const columns = columnsReader.getRowObjects();
+    const needsMigration = columns.some(
+      (col) => (col.data_type as string).toUpperCase() === "JSON",
+    );
+
+    if (!needsMigration) {
+      logger.debug(
+        "Array columns already using native types, skipping migration",
+      );
+      return;
+    }
+
+    logger.info("Migrating JSON array columns to native array types...");
+
+    // Create new table with correct types using EXCLUDE + type cast
+    await this.connection.run(`
+      CREATE TABLE processed_videos_new AS
+      SELECT 
+        * EXCLUDE (staff, tag_new, participle),
+        staff::BIGINT[] AS staff,
+        tag_new::VARCHAR[] AS tag_new,
+        participle::VARCHAR[] AS participle
+      FROM processed_videos
+    `);
+
+    // Drop old table and rename new one
+    await this.connection.run("DROP TABLE processed_videos");
+    await this.connection.run(
+      "ALTER TABLE processed_videos_new RENAME TO processed_videos",
+    );
+
+    // Rebuild indexes
+    await this.connection.run(
+      "CREATE INDEX idx_processed_bvid ON processed_videos(bvid)",
+    );
+    await this.connection.run(
+      "CREATE INDEX idx_processed_user ON processed_videos(user_id)",
+    );
+    await this.connection.run(
+      "CREATE INDEX idx_processed_filtered ON processed_videos(is_filtered)",
+    );
+
+    logger.info("Array column migration completed");
   }
 
   /**
@@ -390,13 +459,11 @@ export class Database {
           8: video.type_id,
           9: BigInt(video.user_id),
           10: filtered,
-          11: video.staff
-            ? JSON.stringify(video.staff.map((id) => id.toString()))
-            : null,
+          11: video.staff ? listValue(video.staff) : null,
           12: video.tid_v2 ?? null,
           13: video.dynamic ?? null,
-          14: video.tag_new ? JSON.stringify(video.tag_new) : null,
-          15: video.participle ? JSON.stringify(video.participle) : null,
+          14: video.tag_new ? listValue(video.tag_new) : null,
+          15: video.participle ? listValue(video.participle) : null,
           16: video.ctime ?? null,
           17: video.is_deleted ?? false,
           18: video.copyright ?? null,
@@ -444,17 +511,11 @@ export class Database {
         pic: row.pic as string,
         type_id: row.type_id as number,
         user_id: row.user_id as bigint,
-        staff: row.staff
-          ? (JSON.parse(row.staff as string) as string[]).map((id) =>
-              BigInt(id),
-            )
-          : undefined,
+        staff: (row.staff as bigint[] | null) ?? undefined,
         tid_v2: row.tid_v2 as number | undefined,
         dynamic: row.dynamic as string | undefined,
-        tag_new: row.tag_new ? JSON.parse(row.tag_new as string) : undefined,
-        participle: row.participle
-          ? JSON.parse(row.participle as string)
-          : undefined,
+        tag_new: (row.tag_new as string[] | null) ?? undefined,
+        participle: (row.participle as string[] | null) ?? undefined,
         ctime: row.ctime as number | undefined,
         is_deleted: row.is_deleted as boolean | undefined,
         copyright: row.copyright as number | undefined,
