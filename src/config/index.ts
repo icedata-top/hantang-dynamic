@@ -84,8 +84,3 @@ export const config = configSchema.parse({
   export: createExportConfig(getConfigValue),
   notifications: createNotificationsConfig(getConfigValue),
 });
-
-export type Config = z.infer<typeof configSchema>;
-
-// Re-export all types and schemas for convenience
-export * from "./schemas";

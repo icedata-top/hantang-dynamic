@@ -1,16 +1,10 @@
 import { z } from "zod";
 
 // HTTP methods enum
-export const httpMethodSchema = z.enum([
-  "GET",
-  "POST",
-  "PUT",
-  "PATCH",
-  "DELETE",
-]);
+const httpMethodSchema = z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 
 // HTTP request configuration for a single endpoint
-export const httpRequestSchema = z.object({
+const httpRequestSchema = z.object({
   url: z.string(),
   method: httpMethodSchema,
   headers: z.record(z.string()).optional(),

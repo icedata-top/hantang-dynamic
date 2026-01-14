@@ -18,13 +18,13 @@ export interface RequestConfig extends InternalAxiosRequestConfig {
   };
 }
 
-export enum ApiErrorCode {
+enum ApiErrorCode {
   Success = 0,
   CookieExpired = 4100000, // Cookie/authentication expired
   RiskControlFailed = -352, // 风控失败
 }
 
-export enum ApiErrorResponseCode {
+enum ApiErrorResponseCode {
   IpBanned = 416, // IP has been banned
 }
 
@@ -55,10 +55,7 @@ export const simulateBrowserVisit = async (
   }
 };
 
-export function createClient(
-  baseURL: string,
-  skipCookie = false,
-): AxiosInstance {
+function createClient(baseURL: string, skipCookie = false): AxiosInstance {
   const stateManager = new StateManager();
   const ua = stateManager.lastUA;
 

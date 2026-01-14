@@ -7,39 +7,12 @@ export type {
   BiliDynamicNewResponse,
 } from "./api/dynamic";
 // API response types - Video
-export type {
-  BiliArgueInfo,
-  BiliHonorReply,
-  BiliUserGarb,
-  BiliVideoDescItem,
-  BiliVideoDescResponse,
-  BiliVideoDetailResponse,
-  BiliVideoPageListResponse,
-  BiliVideoSubtitle,
-  VideoTagResponse,
-} from "./api/video";
+export type { BiliVideoDetailResponse, VideoTagResponse } from "./api/video";
 // Bilibili dynamic types
-export type {
-  BiliDisplay,
-  BiliDynamicCard,
-  BiliDynamicDesc,
-  BiliOriginDynamic,
-  BiliRelation,
-  BiliUserProfile,
-} from "./bilibili/dynamic";
+export type { BiliDynamicCard } from "./bilibili/dynamic";
 // Bilibili video types
 export type {
-  BiliForwardCard,
-  BiliForwardItem,
-  BiliForwardOriginUser,
-  BiliForwardUser,
-  BiliVideoCard,
-  BiliVideoDimension,
   BiliVideoFullDetailResponse,
-  BiliVideoOwner,
-  BiliVideoPage,
-  BiliVideoRights,
-  BiliVideoStat,
   RecommendedVideo,
 } from "./bilibili/video";
-export type { VideoData, VideoTag } from "./models/video";
+export type { VideoData } from "./models/video";

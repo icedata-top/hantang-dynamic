@@ -9,7 +9,7 @@ import { logger } from "../utils/logger.js";
 /**
  * Discovered user data for tracking new UP主
  */
-export interface DiscoveredUserData {
+interface DiscoveredUserData {
   userId: bigint;
   userName: string;
   fans: number;
@@ -19,7 +19,7 @@ export interface DiscoveredUserData {
 /**
  * User statistics update
  */
-export interface UserStatsUpdate {
+interface UserStatsUpdate {
   videosSeen?: number;
   videosFiltered?: number;
   fans?: number;
@@ -29,7 +29,7 @@ export interface UserStatsUpdate {
 /**
  * Recommendation data
  */
-export interface RecommendationData {
+interface RecommendationData {
   videoBvid: string;
   recommendedByBvid: string;
   recommendCount: number;
@@ -41,7 +41,7 @@ export interface RecommendationData {
 /**
  * User data with statistics
  */
-export interface UserData {
+interface UserData {
   userId: bigint;
   userName: string;
   fans: number;
@@ -57,7 +57,7 @@ export interface UserData {
 /**
  * Database statistics
  */
-export interface DatabaseStats {
+interface DatabaseStats {
   processedVideosCount: number;
   forwardDynamicsCount: number;
   recommendationsCount: number;

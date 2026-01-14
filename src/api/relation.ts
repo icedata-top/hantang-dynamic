@@ -22,7 +22,7 @@ export enum RelationSource {
   ActivityPage = 222,
 }
 
-export enum RelationErrorCode {
+enum RelationErrorCode {
   Success = 0,
   NotLoggedIn = -101,
   AccountBanned = -102,
@@ -175,7 +175,7 @@ const autoUnblockUser = async (
  * @param csrf Optional override for CSRF token
  * @returns API response
  */
-export const modifyUserRelation = async (
+const modifyUserRelation = async (
   fid: number,
   act: UserRelationAction,
   reSource: RelationSource = RelationSource.Profile,

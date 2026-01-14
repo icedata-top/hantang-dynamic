@@ -41,7 +41,7 @@ export interface VideoData {
 /**
  * Extras container for miscellaneous video metadata
  */
-export interface VideoExtras {
+interface VideoExtras {
   duration?: number;
   videos?: number; // 分P数
   state?: number; // 视频状态
@@ -82,7 +82,7 @@ export interface VideoExtras {
 /**
  * Manual review notes
  */
-export interface VideoNotes {
+interface VideoNotes {
   check_status?: "unqualified" | "pending" | "checked";
   video_category?: "non_vocaloid" | "chinese_v" | "japanese_v" | string;
   custom_tags?: string[];

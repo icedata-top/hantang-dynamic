@@ -16,7 +16,7 @@ const DYNAMIC_TYPE_MAP: Record<DynamicType, number> = {
   video: 8,
 };
 
-export interface FetchDynamicsStreamOptions {
+interface FetchDynamicsStreamOptions {
   minDynamicId: bigint;
   minTimestamp: number;
   types: DynamicType[];

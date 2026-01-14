@@ -102,9 +102,9 @@ async function getWbiKeys(): Promise<{ imgKey: string; subKey: string }> {
  * @param params Parameters to sign
  * @returns Parameters with WBI signature added
  */
-export async function signWithWbi<
-  T extends Record<string, string | number | boolean>,
->(params: T): Promise<T & { w_rid: string; wts: number }> {
+async function signWithWbi<T extends Record<string, string | number | boolean>>(
+  params: T,
+): Promise<T & { w_rid: string; wts: number }> {
   const { imgKey, subKey } = await getWbiKeys();
   const mixinKey = getMixinKey(imgKey + subKey);
 

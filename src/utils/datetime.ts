@@ -7,9 +7,6 @@ export const sleep = (ms: number): Promise<void> => {
   return new Promise((resolve) => setTimeout(resolve, ms));
 };
 
-export const formatTimestamp = (ts: number) =>
-  new Date(ts * 1000).toISOString();
-
 /**
  * Get a random delay in milliseconds within the specified range
  * @param min Minimum delay in milliseconds

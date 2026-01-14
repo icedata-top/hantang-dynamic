@@ -1,22 +1,13 @@
 import { config } from "../config";
 import type {
-  BiliDynamicCard,
   BiliDynamicDetailResponse,
   BiliDynamicHistoryResponse,
   BiliDynamicNewResponse,
 } from "../types";
-import { sleep } from "../utils/datetime";
 import { logger } from "../utils/logger";
 import { dynamicClient, dynamicDetailClient } from "./client";
 
-type DynamicType = "video" | "forward";
-
-const DYNAMIC_TYPE_MAP: Record<DynamicType, number> = {
-  forward: 1,
-  video: 8,
-};
-
-export const fetchDynamicsAPI = async (
+const fetchDynamicsAPI = async (
   endpoint: string,
   params: Record<string, string | number | bigint>,
 ): Promise<BiliDynamicNewResponse | BiliDynamicHistoryResponse> => {
@@ -36,7 +27,7 @@ export const fetchDynamicsAPI = async (
   }
 };
 
-export const fetchDynamicAPI = async (
+const fetchDynamicAPI = async (
   endpoint: string,
   params: Record<string, string | number | bigint>,
 ): Promise<BiliDynamicDetailResponse> => {
@@ -77,74 +68,3 @@ export const getDynamic = (dynamicId: number | string) =>
   fetchDynamicAPI("/get_dynamic_detail", {
     dynamic_id: dynamicId,
   });
-
-export const fetchDynamics = async ({
-  minDynamicId = 0,
-  minTimestamp = Date.now() / 1000 - config.application.maxHistoryDays * 86400,
-  max_items = 0,
-  types = ["video", "forward"] as DynamicType[],
-  onPage,
-}: {
-  minDynamicId?: number;
-  minTimestamp?: number;
-  max_items?: number;
-  types?: DynamicType[];
-  onPage: (dynamics: BiliDynamicCard[]) => Promise<void>;
-}): Promise<void> => {
-  let totalItems = 0;
-
-  for (const type of types) {
-    const typeCode = DYNAMIC_TYPE_MAP[type];
-    let offset = BigInt(0);
-    let hasMore = true;
-    let firstRun = true;
-
-    while (hasMore) {
-      let response: BiliDynamicNewResponse | BiliDynamicHistoryResponse;
-
-      response = firstRun
-        ? await getNewDynamic(typeCode)
-        : await getHistoryDynamic(typeCode, offset);
-
-      if (response.code !== 0 || !response.data.cards?.length) {
-        logger.error(`API Error for ${type}:`, response);
-        break;
-      }
-
-      const validCards = response.data.cards.filter((card) => {
-        const isTimestampValid = card.desc.timestamp > minTimestamp;
-        const isDynamicIdValid = card.desc.dynamic_id > minDynamicId;
-        return isTimestampValid && isDynamicIdValid;
-      });
-
-      if (validCards.length > 0) {
-        totalItems += validCards.length;
-        await onPage(
-          validCards.sort((a, b) => a.desc.timestamp - b.desc.timestamp),
-        );
-      }
-
-      if (
-        !validCards.length ||
-        validCards.length < response.data.cards.length ||
-        (totalItems >= max_items && max_items > 0)
-      ) {
-        break;
-      }
-
-      if (firstRun) {
-        const newResponse = response as BiliDynamicNewResponse;
-        offset = newResponse.data.history_offset;
-        firstRun = false;
-      } else {
-        const historyResponse = response as BiliDynamicHistoryResponse;
-        hasMore = historyResponse.data.has_more === 1;
-        offset = historyResponse.data.next_offset;
-      }
-
-      if (config.application.apiWaitTime > 0) {
-        await sleep(config.application.apiWaitTime);
-      }
-    }
-  }
-};

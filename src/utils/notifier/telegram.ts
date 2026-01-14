@@ -43,10 +43,3 @@ export async function sendTelegramNewVideo(message: string) {
   }
   await sendTelegramMessageInternal(message);
 }
-
-/**
- * @deprecated Use sendTelegramWarning or sendTelegramNewVideo instead
- */
-export async function sendTelegramMessage(message: string) {
-  await sendTelegramWarning(message);
-}
