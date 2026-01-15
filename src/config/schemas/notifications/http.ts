@@ -28,7 +28,6 @@ export const httpSchema = z.object({
   delay: z.number().optional().default(100),
 });
 
-export type HttpMethod = z.infer<typeof httpMethodSchema>;
 export type HttpRequestConfig = z.infer<typeof httpRequestSchema>;
 export type HttpConfig = z.infer<typeof httpSchema>;
 

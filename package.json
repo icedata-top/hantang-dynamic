@@ -12,8 +12,6 @@
     "lint:fix": "biome lint --fix",
     "format:fix": "biome format --fix",
     "check:fix": "biome check --fix",
-    "test": "vitest run",
-    "test:watch": "vitest",
     "package": "pkg dist/index.js --out-path dist/executables/ --compress Gzip --targets node20-win-x64,node20-macos-x64,node20-macos-arm64,node20-linux-x64,node20-linux-arm64 --no-bytecode --public",
     "relation": "tsx src/index.ts --relation",
     "repair": "tsx src/index.ts --repair"
@@ -21,7 +19,6 @@
   "dependencies": {
     "@ahmedrangel/rand-user-agent": "^2.0.23",
     "@duckdb/node-api": "1.2.1-alpha.16",
-    "@json2csv/plainjs": "^7.0.6",
     "axios": "^1.9.0",
     "cli-progress": "^3.12.0",
     "csv-parse": "^5.6.0",
@@ -33,7 +30,6 @@
   "devDependencies": {
     "@biomejs/biome": "2.1.2",
     "@types/cli-progress": "^3.11.6",
-    "@types/json2csv": "^5.0.7",
     "@types/node": "^20.19.0",
     "@types/nodemailer": "^6.4.17",
     "@vercel/ncc": "^0.38.3",

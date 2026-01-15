@@ -8,9 +8,6 @@ export const exportSchema = z.object({
 
 export type ExportConfig = z.infer<typeof exportSchema>;
 
-// Re-export individual types
-export type { MysqlConfig } from "./mysql";
-
 // Factory function to create export config from TOML/env
 export function createExportConfig(
   getConfigValue: (

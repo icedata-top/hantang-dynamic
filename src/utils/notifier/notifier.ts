@@ -52,16 +52,6 @@ export async function notifyWarning(
 }
 
 /**
- * @deprecated Use notifyWarning or notifyNewVideos instead
- */
-export async function notify(
-  message: string,
-  videoData?: VideoTemplateData,
-): Promise<void> {
-  return notifyWarning(message, videoData);
-}
-
-/**
  * Send notification for new video(s) discovered
  */
 export async function notifyNewVideos(videos: VideoData[]): Promise<void> {
