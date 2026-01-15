@@ -15,4 +15,12 @@ export type {
   BiliVideoFullDetailResponse,
   RecommendedVideo,
 } from "./bilibili/video";
+// Database types
+export type {
+  DatabaseStats,
+  DiscoveredUserData,
+  RecommendationData,
+  UserData,
+  UserStatsUpdate,
+} from "./models/database";
 export type { VideoData } from "./models/video";

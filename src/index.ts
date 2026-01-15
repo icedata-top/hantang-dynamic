@@ -1,5 +1,5 @@
 import { config } from "./config";
-import { Database } from "./core/database";
+import { Database } from "./database";
 import { DynamicTracker } from "./services/tracker";
 import { logger } from "./utils/logger";
 

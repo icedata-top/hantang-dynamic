@@ -1,7 +1,7 @@
 import { getDynamic } from "../api/dynamic";
 import { fetchVideoFullDetail } from "../api/video";
 import { config } from "../config";
-import { Database } from "../core/database";
+import { Database } from "../database";
 import type { BiliDynamicCard, RecommendedVideo, VideoData } from "../types";
 import { filterVideo } from "../utils/filter";
 import { logger } from "../utils/logger";

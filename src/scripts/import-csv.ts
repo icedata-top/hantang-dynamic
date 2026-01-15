@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import cliProgress from "cli-progress";
 import { parse } from "csv-parse";
 import { config } from "../config";
-import { Database } from "../core/database";
+import { Database } from "../database";
 import { DetailsService } from "../services/details.service";
 import type { BiliDynamicCard, VideoData } from "../types";
 import { exportData } from "../utils/exporter/exporter";

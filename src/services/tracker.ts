@@ -1,7 +1,7 @@
 import { generateBiliTicket } from "../api/signatures/biliTicket";
 import { config } from "../config";
-import { Database } from "../core/database";
 import { StateManager } from "../core/state";
+import { Database } from "../database";
 import type { BiliDynamicCard, VideoData } from "../types";
 import { sleep } from "../utils/datetime";
 import { exportData } from "../utils/exporter/exporter";
