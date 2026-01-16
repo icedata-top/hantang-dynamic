@@ -40,7 +40,7 @@ export class DetailsService {
         }
       }
 
-      return await this.processVideoById(bvid, processRelated);
+      return await this.processVideoById(bvid, { processRelated });
     } catch (error) {
       logger.error(
         `Error processing dynamic ${dynamic.desc.dynamic_id}:`,
@@ -52,14 +52,20 @@ export class DetailsService {
 
   /**
    * Process a video by its ID (BVID or AID).
+   * @param id Video ID (BVID string or AID number)
+   * @param options Processing options
+   * @param options.processRelated Whether to process related videos (default: true)
+   * @param options.skipCacheCheck Whether to skip cache check for repair scenarios (default: false)
    */
   async processVideoById(
     id: string | number,
-    processRelated = true,
+    options: { processRelated?: boolean; skipCacheCheck?: boolean } = {},
   ): Promise<{
     video: VideoData | null;
     relatedVideos: BiliDynamicCard[];
   }> {
+    const { processRelated = true, skipCacheCheck = false } = options;
+
     try {
       let bvid: string | undefined;
       let aid: number | undefined;
@@ -78,9 +84,9 @@ export class DetailsService {
         bvid = id;
       }
 
-      // 2. Check cache (using BVID or AID)
+      // 2. Check cache (using BVID or AID) - skip if in repair mode
       const checkId = bvid || aid;
-      if (checkId) {
+      if (!skipCacheCheck && checkId) {
         const exists = await this.db.hasProcessedVideoById(checkId);
         if (exists) {
           logger.debug(`Video ${checkId} already processed, skipping.`);

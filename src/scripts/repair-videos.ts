@@ -1,84 +1,34 @@
-import { fetchVideoFullDetail } from "../api/video.js";
 import { config } from "../config/index.js";
 import { Database } from "../database/index.js";
-import type { VideoData } from "../types/models/video.js";
+import { DetailsService } from "../services/details.service.js";
 import { logger } from "../utils/logger.js";
 
 const POOL_SIZE = config.application.concurrencyLimit || 20;
 
 async function processVideo(
-  db: Database,
+  detailsService: DetailsService,
   bvid: string,
   index: number,
   total: number,
 ): Promise<{ success: boolean; skipped: boolean }> {
   try {
-    const fullDetail = await fetchVideoFullDetail({ bvid });
+    const { video } = await detailsService.processVideoById(bvid, {
+      processRelated: false,
+      skipCacheCheck: true,
+    });
 
-    if (!fullDetail) {
-      logger.warn(
-        `[${index}/${total}] Video ${bvid} not found (deleted?), skipping`,
+    if (video) {
+      logger.info(
+        `[${index}/${total}] ${bvid}: aid=${BigInt(video.aid)}, user_id=${BigInt(
+          video.user_id,
+        )}`,
       );
-      return { success: false, skipped: true };
+      return { success: true, skipped: false };
     }
 
-    const view = fullDetail.data.View;
-    const tagString =
-      fullDetail.data.Tags?.map((t) => t.tag_name).join(";") || "";
-
-    const updatedVideo: VideoData = {
-      // Core identifiers
-      aid: view.aid,
-      bvid: view.bvid,
-
-      // User info
-      user_id: view.owner.mid,
-      staff: view.staff?.map((s) => BigInt(s.mid)),
-
-      // Category
-      type_id: view.tid,
-      tid_v2: view.tid_v2,
-
-      // Content
-      title: view.title,
-      description: view.desc,
-      dynamic: view.dynamic || undefined,
-      pic: view.pic,
-      tag: tagString,
-      tag_new: fullDetail.data.Tags?.map((t) => t.tag_name),
-      participle: fullDetail.data.participle,
-
-      // Timing
-      pubdate: view.pubdate,
-      ctime: view.ctime,
-
-      // Flags
-      is_deleted: false,
-      copyright: view.copyright,
-
-      // Extras
-      extras: {
-        duration: view.duration,
-        videos: view.videos,
-        state: view.state,
-        cid: view.cid,
-        mission_id: view.mission_id,
-        ugc_season_id: view.ugc_season?.id,
-        dimension: view.dimension,
-        rights: view.rights,
-        argue_info: view.argue_info,
-        honor_reply: view.honor_reply,
-      },
-    };
-
-    await db.markVideoProcessed(updatedVideo, false);
-
-    logger.info(
-      `[${index}/${total}] ${bvid}: aid=${BigInt(
-        updatedVideo.aid,
-      )}, user_id=${BigInt(updatedVideo.user_id)}`,
-    );
-    return { success: true, skipped: false };
+    // video is null means it was deleted or filtered
+    logger.warn(`[${index}/${total}] Video ${bvid} not found or filtered`);
+    return { success: false, skipped: true };
   } catch (error) {
     const errorMsg =
       error instanceof Error
@@ -126,6 +76,8 @@ export async function runRepairVideos(filter?: string) {
   const db = Database.getInstance();
   await db.init(config.database.path);
 
+  const detailsService = new DetailsService();
+
   try {
     // Use lightweight getBvidList instead of loading full VideoData objects
     const allBvids = await db.getBvidList(filter);
@@ -140,7 +92,7 @@ export async function runRepairVideos(filter?: string) {
     let skippedCount = 0;
 
     const results = await runWithPool(bvids, POOL_SIZE, async (bvid, index) => {
-      return processVideo(db, bvid, index + 1, bvids.length);
+      return processVideo(detailsService, bvid, index + 1, bvids.length);
     });
 
     for (const result of results) {
