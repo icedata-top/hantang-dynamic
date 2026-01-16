@@ -144,7 +144,7 @@ export class DetailsService {
           `Video ${bvidFromError} has been deleted, marking as processed`,
         );
 
-        // Mark as processed with 'passed=false' since we couldn't process it
+        // Mark as processed with 'passed=false' and 'is_deleted=true' since video was deleted
         // We need to create minimal VideoData for the database
         const minimalVideoData: VideoData = {
           aid: BigInt(typeof id === "number" ? id : 0),
@@ -157,6 +157,7 @@ export class DetailsService {
           type_id: 0,
           user_id: BigInt(0),
           copyright: 0,
+          is_deleted: true,
         };
         await this.db.markVideoProcessed(minimalVideoData, false);
         return { video: null, relatedVideos: [] };
