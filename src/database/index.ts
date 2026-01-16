@@ -17,7 +17,8 @@ import { logger } from "../utils/logger.js";
 import { cacheForward, getCachedForwardBvid } from "./forwards.js";
 import {
   getTopRecommendedVideos,
-  trackRecommendation,
+  type RecommendationInput,
+  trackRecommendationsBatch,
 } from "./recommendations.js";
 import { initializeSchema } from "./schema.js";
 import { getStats } from "./stats.js";
@@ -239,20 +240,13 @@ export class Database {
   // ===== Recommendation Operations =====
 
   /**
-   * Track recommendation relationship
+   * Batch track recommendation relationships
    */
-  public async trackRecommendation(
-    videoBvid: string,
-    recommendedByBvid: string,
-    order: number,
+  public async trackRecommendationsBatch(
+    recommendations: RecommendationInput[],
   ): Promise<void> {
     return this.withMutex(() =>
-      trackRecommendation(
-        this.ensureConnection(),
-        videoBvid,
-        recommendedByBvid,
-        order,
-      ),
+      trackRecommendationsBatch(this.ensureConnection(), recommendations),
     );
   }
 

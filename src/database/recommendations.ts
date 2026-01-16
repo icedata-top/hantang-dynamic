@@ -1,52 +1,49 @@
 import type { DuckDBConnection } from "@duckdb/node-api";
 import type { RecommendationData } from "../types/models/database.js";
 
+export interface RecommendationInput {
+  videoBvid: string;
+  recommendedByBvid: string;
+  order: number;
+}
+
 /**
- * Track recommendation relationship
+ * Batch track recommendation relationships using UPSERT.
+ * Uses INSERT ... ON CONFLICT to avoid separate SELECT + UPDATE.
  */
-export async function trackRecommendation(
+export async function trackRecommendationsBatch(
   connection: DuckDBConnection,
-  videoBvid: string,
-  recommendedByBvid: string,
-  order: number,
+  recommendations: RecommendationInput[],
 ): Promise<void> {
-  // Check if recommendation already exists
-  const reader = await connection.runAndReadAll(
-    `SELECT recommend_count FROM recommendations 
-     WHERE video_bvid = $1 AND recommended_by_bvid = $2`,
-    { 1: videoBvid, 2: recommendedByBvid },
-  );
+  if (recommendations.length === 0) return;
 
-  const rows = reader.getRows();
+  // Build values list for batch insert
+  const placeholders: string[] = [];
+  const params: Record<number, string | number> = {};
+  let paramIndex = 1;
 
-  if (rows.length > 0) {
-    // Update existing recommendation
-    const currentCount = rows[0]?.[0] as number;
-    await connection.run(
-      `UPDATE recommendations 
-       SET recommend_count = $1, last_seen = CURRENT_TIMESTAMP, recommend_order = $2
-       WHERE video_bvid = $3 AND recommended_by_bvid = $4`,
-      {
-        1: currentCount + 1,
-        2: order,
-        3: videoBvid,
-        4: recommendedByBvid,
-      },
+  for (const rec of recommendations) {
+    placeholders.push(
+      `($${paramIndex}, $${paramIndex + 1}, 1, $${paramIndex + 2})`,
     );
-  } else {
-    // Insert new recommendation
-    await connection.run(
-      `INSERT INTO recommendations 
-       (video_bvid, recommended_by_bvid, recommend_count, recommend_order)
-       VALUES ($1, $2, $3, $4)`,
-      {
-        1: videoBvid,
-        2: recommendedByBvid,
-        3: 1,
-        4: order,
-      },
-    );
+    params[paramIndex] = rec.videoBvid;
+    params[paramIndex + 1] = rec.recommendedByBvid;
+    params[paramIndex + 2] = rec.order;
+    paramIndex += 3;
   }
+
+  const sql = `
+    INSERT INTO recommendations 
+      (video_bvid, recommended_by_bvid, recommend_count, recommend_order)
+    VALUES ${placeholders.join(", ")}
+    ON CONFLICT (video_bvid, recommended_by_bvid) 
+    DO UPDATE SET 
+      recommend_count = recommendations.recommend_count + 1,
+      recommend_order = EXCLUDED.recommend_order,
+      last_seen = CURRENT_TIMESTAMP
+  `;
+
+  await connection.run(sql, params);
 }
 
 /**

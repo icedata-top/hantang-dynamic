@@ -271,6 +271,16 @@ export class DetailsService {
     // Extract and store user info
     await this.extractAndStoreUser(fullDetail.data.Card.card);
 
+    // Batch write recommendation relationships
+    if (relatedVideos.length > 0) {
+      const recommendations = relatedVideos.map((v, index) => ({
+        videoBvid: v.bvid,
+        recommendedByBvid: view.bvid,
+        order: index,
+      }));
+      await this.db.trackRecommendationsBatch(recommendations);
+    }
+
     return { videoData, relatedVideos };
   }
 
