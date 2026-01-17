@@ -142,7 +142,7 @@ export async function runImportCsv() {
       try {
         const { video, relatedVideos } = await detailsService.processVideoById(
           id,
-          true,
+          { skipCacheCheck: true },
         );
         if (video) {
           successCount++;
@@ -233,7 +233,7 @@ async function processRelatedQueue(
     try {
       const { video, relatedVideos } = await service.processVideoById(
         bvid,
-        true,
+        { skipCacheCheck: true },
       );
       if (video) {
         results.push(video);
