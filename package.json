@@ -19,23 +19,23 @@
   "dependencies": {
     "@ahmedrangel/rand-user-agent": "^2.0.23",
     "@duckdb/node-api": "1.2.1-alpha.16",
-    "axios": "^1.9.0",
+    "axios": "^1.13.4",
     "cli-progress": "^3.12.0",
     "csv-parse": "^5.6.0",
-    "mysql2": "^3.14.1",
+    "mysql2": "^3.16.2",
     "nodemailer": "^6.10.1",
-    "smol-toml": "^1.4.1",
-    "zod": "^3.25.62"
+    "smol-toml": "^1.6.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@biomejs/biome": "2.1.2",
     "@types/cli-progress": "^3.11.6",
-    "@types/node": "^20.19.0",
-    "@types/nodemailer": "^6.4.17",
-    "@vercel/ncc": "^0.38.3",
-    "@yao-pkg/pkg": "^6.5.1",
-    "tsx": "^4.20.1",
-    "typescript": "^5.8.3",
-    "vitest": "^4.0.13"
+    "@types/node": "^20.19.30",
+    "@types/nodemailer": "^6.4.22",
+    "@vercel/ncc": "^0.38.4",
+    "@yao-pkg/pkg": "^6.12.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
   }
 }
