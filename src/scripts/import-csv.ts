@@ -231,10 +231,9 @@ async function processRelatedQueue(
     seenBvids.add(bvid);
 
     try {
-      const { video, relatedVideos } = await service.processVideoById(
-        bvid,
-        { skipCacheCheck: true },
-      );
+      const { video, relatedVideos } = await service.processVideoById(bvid, {
+        skipCacheCheck: true,
+      });
       if (video) {
         results.push(video);
         nextQueue.push(...relatedVideos);

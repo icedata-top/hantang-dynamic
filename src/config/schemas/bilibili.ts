@@ -1,16 +1,23 @@
 import { z } from "zod";
 
-// Bilibili authentication and API configuration
-export const bilibiliSchema = z.object({
+// Base schema without refinement for inference
+const bilibiliBaseSchema = z.object({
   uid: z.string(),
-  sessdata: z.string(),
+  sessdata: z.string().optional(), // Optional when cookieFile is used
   csrfToken: z.string().optional(),
   accessKey: z.string().optional(),
   apiProxyUrl: z.string().optional(),
   dynamicProxyUrl: z.string().optional(),
+  cookieFile: z.string().optional(), // Path to Netscape cookie file
 });
 
-export type BilibiliConfig = z.infer<typeof bilibiliSchema>;
+// Bilibili authentication and API configuration
+export const bilibiliSchema = bilibiliBaseSchema.refine(
+  (data) => data.cookieFile || data.sessdata,
+  { message: "Either cookieFile or sessdata must be provided" },
+);
+
+export type BilibiliConfig = z.infer<typeof bilibiliBaseSchema>;
 
 export function createBilibiliConfig(
   getConfigValue: (
@@ -33,6 +40,10 @@ export function createBilibiliConfig(
     dynamicProxyUrl: getConfigValue(
       ["bilibili", "dynamic_proxy_url"],
       "BILIBILI_DYNAMIC_PROXY_URL",
+    ),
+    cookieFile: getConfigValue(
+      ["bilibili", "cookie_file"],
+      "BILIBILI_COOKIE_FILE",
     ),
   };
 }

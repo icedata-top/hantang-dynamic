@@ -54,10 +54,21 @@ pnpm start
 
 The application is configured via `config.toml`. Key sections include:
 
-- **[bilibili]**: Authentication (UID, SessData).
+- **[bilibili]**: Authentication (UID, SessData or Cookie File).
 - **[database]**: DuckDB storage path.
 - **[application]**: Execution settings (interval, concurrency, history).
 - **[processing]**: Filter rules and feature flags (recommendations).
+
+### Cookie File Support
+
+Instead of configuring `sessdata` directly, you can use a Netscape-format cookie
+file (e.g., exported from browser extensions like "Cookie-Editor"):
+
+```toml
+[bilibili]
+uid = "12345678"
+cookie_file = "./.cookies.txt"  # Path to Netscape cookie file
+```
 
 ## Development
 

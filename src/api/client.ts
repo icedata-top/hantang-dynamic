@@ -3,8 +3,16 @@ import axios, {
   type AxiosResponse,
   type InternalAxiosRequestConfig,
 } from "axios";
+import { wrapper } from "axios-cookiejar-support";
+import type { CookieJar } from "tough-cookie";
 import { config } from "../config";
 import { StateManager } from "../core/state";
+import {
+  createCookieJarFromNetscape,
+  getCookieValue,
+  parseNetscapeCookieFile,
+  writeCookieJarToNetscape,
+} from "../utils/cookieFile";
 import { getRandomDelay, retryDelay, sleep } from "../utils/datetime";
 import { logger } from "../utils/logger";
 import { notifyWarning } from "../utils/notifier/notifier";
@@ -29,6 +37,26 @@ enum ApiErrorResponseCode {
 }
 
 const state = new StateManager();
+
+// Singleton cookie jar manager for cookie file support
+let globalCookieJar: CookieJar | null = null;
+let cookieFilePath: string | null = null;
+
+function getGlobalCookieJar(): CookieJar | null {
+  if (!config.bilibili.cookieFile) return null;
+  if (!globalCookieJar) {
+    const cookies = parseNetscapeCookieFile(config.bilibili.cookieFile);
+    globalCookieJar = createCookieJarFromNetscape(cookies);
+    cookieFilePath = config.bilibili.cookieFile;
+  }
+  return globalCookieJar;
+}
+
+function persistCookieJar(): void {
+  if (globalCookieJar && cookieFilePath) {
+    writeCookieJarToNetscape(globalCookieJar, cookieFilePath);
+  }
+}
 
 /**
  * Simulate a browser visit to a specific page with appropriate referrer
@@ -58,14 +86,23 @@ export const simulateBrowserVisit = async (
 function createClient(baseURL: string, skipCookie = false): AxiosInstance {
   const stateManager = new StateManager();
   const ua = stateManager.lastUA;
+  const jar = getGlobalCookieJar();
 
-  const client = axios.create({
-    baseURL,
-    headers: {
-      "User-Agent": ua,
-      ...(skipCookie ? {} : { Cookie: getCookieString(stateManager) }),
-    },
-  });
+  // If cookie jar is available, use axios-cookiejar-support
+  const axiosInstance = jar ? wrapper(axios.create()) : axios.create();
+  const client = axiosInstance;
+
+  client.defaults.baseURL = baseURL;
+  client.defaults.headers.common["User-Agent"] = ua;
+
+  if (jar) {
+    // Use tough-cookie jar for cookie management
+    client.defaults.jar = jar;
+    client.defaults.withCredentials = true;
+  } else if (!skipCookie) {
+    // Fall back to manual cookie string from config
+    client.defaults.headers.common.Cookie = getCookieString(stateManager);
+  }
 
   client.interceptors.request.use(async (config) => {
     // Set start time for performance tracking
@@ -159,6 +196,12 @@ function createClient(baseURL: string, skipCookie = false): AxiosInstance {
         );
       }
 
+      // Persist cookies if Set-Cookie header is present and using cookie jar
+      const setCookieHeader = response.headers["set-cookie"];
+      if (setCookieHeader && getGlobalCookieJar()) {
+        persistCookieJar();
+      }
+
       return response;
     },
     async (error) => {
@@ -181,7 +224,24 @@ function createClient(baseURL: string, skipCookie = false): AxiosInstance {
 }
 
 function getCookieString(stateManager: StateManager): string {
-  let cookie = `SESSDATA=${config.bilibili.sessdata}`;
+  const jar = getGlobalCookieJar();
+
+  // If using cookie jar, extract cookies from there
+  if (jar) {
+    const sessdata = getCookieValue(jar, "SESSDATA") || "";
+    const biliJct = getCookieValue(jar, "bili_jct") || "";
+    let cookie = `SESSDATA=${sessdata}`;
+    if (biliJct) {
+      cookie += `; bili_jct=${biliJct}`;
+    }
+    if (stateManager.biliTicket) {
+      cookie += `; bili_ticket=${stateManager.biliTicket}`;
+    }
+    return cookie;
+  }
+
+  // Fall back to config values (existing behavior)
+  let cookie = `SESSDATA=${config.bilibili.sessdata || ""}`;
 
   if (config.bilibili.csrfToken) {
     cookie += `; bili_jct=${config.bilibili.csrfToken}`;

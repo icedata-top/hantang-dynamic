@@ -3,9 +3,10 @@
 # Data flow: Input → Processing → Output
 
 [bilibili]
-# Required: Your Bilibili user ID and session data
+# Authentication: Either provide sessdata OR cookie_file (at least one required)
 uid = "12345678"               # Your Bilibili user ID
-sessdata = "your_sessdata"     # Your Bilibili session data
+sessdata = "your_sessdata"     # Your Bilibili session data (optional if cookie_file is set)
+cookie_file = ""               # Path to Netscape format cookie file (e.g., "./.cookies.txt")
 
 # Optional: Additional authentication tokens for user relation operations
 csrf_token = ""                # BILI_JCT - CSRF token for user relation operations
