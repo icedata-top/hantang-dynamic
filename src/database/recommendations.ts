@@ -40,7 +40,7 @@ export async function trackRecommendationsBatch(
     DO UPDATE SET 
       recommend_count = recommendations.recommend_count + 1,
       recommend_order = EXCLUDED.recommend_order,
-      last_seen = CURRENT_TIMESTAMP
+      last_seen = CURRENT_TIMESTAMP()
   `;
 
   await connection.run(sql, params);
