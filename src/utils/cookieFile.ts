@@ -28,7 +28,7 @@ export function parseNetscapeCookieFile(filePath: string): NetscapeCookie[] {
   }
 
   const content = fs.readFileSync(filePath, "utf-8");
-  const lines = content.split("\n");
+  const lines = content.split(/\r?\n/);
   const cookies: NetscapeCookie[] = [];
 
   for (const rawLine of lines) {
@@ -47,7 +47,12 @@ export function parseNetscapeCookieFile(filePath: string): NetscapeCookie[] {
       continue;
     }
 
-    const parts = line.split("\t");
+    // Support both tab-separated (standard) and space-separated (Cookie-Editor) formats
+    let parts = line.split("\t");
+    if (parts.length < 7) {
+      // Try splitting by whitespace (for Cookie-Editor exports that use spaces)
+      parts = line.split(/\s+/);
+    }
     if (parts.length < 7) {
       logger.warn(`Skipping malformed cookie line: ${line}`);
       continue;
