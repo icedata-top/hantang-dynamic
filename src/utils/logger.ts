@@ -13,8 +13,8 @@ class Logger {
   private currentLevel: number;
 
   constructor() {
-    this.currentLevel =
-      LOG_LEVELS[config.application.logLevel as LogLevel] ?? LOG_LEVELS.info;
+    this.currentLevel = LOG_LEVELS[config.application.logLevel as LogLevel] ??
+      LOG_LEVELS.info;
   }
 
   private shouldLog(level: LogLevel): boolean {
@@ -23,6 +23,11 @@ class Logger {
 
   private formatMessage(message: unknown): string {
     if (typeof message === "string") return message;
+    if (message instanceof Error) {
+      return `${message.name}: ${message.message}${
+        message.stack ? `\n${message.stack}` : ""
+      }`;
+    }
     return JSON.stringify(message);
   }
 
