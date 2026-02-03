@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-// Database configuration
+// Database configuration for PostgreSQL
 export const databaseSchema = z.object({
-  path: z.string(),
+  url: z.string(),
 });
 
 export type DatabaseConfig = z.infer<typeof databaseSchema>;
@@ -17,16 +17,11 @@ export function createDatabaseConfig(
     // biome-ignore lint/suspicious/noExplicitAny: Config values from TOML/env are inherently untyped and validated by zod
   ) => any,
 ): DatabaseConfig {
-  const bilibiliUid = getConfigValue(["bilibili", "uid"], "BILIBILI_UID");
-  const defaultDuckdbPath = bilibiliUid
-    ? `./exports/duckdb/${bilibiliUid}.duckdb`
-    : "./exports/duckdb/default.duckdb";
-
   return {
-    path: getConfigValue(
-      ["database", "path"],
-      "DATABASE_PATH",
-      defaultDuckdbPath,
+    url: getConfigValue(
+      ["database", "url"],
+      "DATABASE_URL",
+      "postgresql://localhost:5432/hantang",
     ),
   };
 }

@@ -1,4 +1,4 @@
-import type { DuckDBConnection } from "@duckdb/node-api";
+import type { Pool } from "pg";
 import type { RecommendationData } from "../types/models/database.js";
 
 export interface RecommendationInput {
@@ -12,23 +12,23 @@ export interface RecommendationInput {
  * Uses INSERT ... ON CONFLICT to avoid separate SELECT + UPDATE.
  */
 export async function trackRecommendationsBatch(
-  connection: DuckDBConnection,
+  pool: Pool,
   recommendations: RecommendationInput[],
 ): Promise<void> {
   if (recommendations.length === 0) return;
 
   // Build values list for batch insert
   const placeholders: string[] = [];
-  const params: Record<number, string | number> = {};
+  const params: (string | number)[] = [];
   let paramIndex = 1;
 
   for (const rec of recommendations) {
     placeholders.push(
       `($${paramIndex}, $${paramIndex + 1}, 1, $${paramIndex + 2})`,
     );
-    params[paramIndex] = rec.videoBvid;
-    params[paramIndex + 1] = rec.recommendedByBvid;
-    params[paramIndex + 2] = rec.order;
+    params.push(rec.videoBvid);
+    params.push(rec.recommendedByBvid);
+    params.push(rec.order);
     paramIndex += 3;
   }
 
@@ -40,34 +40,32 @@ export async function trackRecommendationsBatch(
     DO UPDATE SET 
       recommend_count = recommendations.recommend_count + 1,
       recommend_order = EXCLUDED.recommend_order,
-      last_seen = now()
+      last_seen = NOW()
   `;
 
-  await connection.run(sql, params);
+  await pool.query(sql, params);
 }
 
 /**
  * Get top recommended videos
  */
 export async function getTopRecommendedVideos(
-  connection: DuckDBConnection,
+  pool: Pool,
   limit: number,
 ): Promise<RecommendationData[]> {
-  const reader = await connection.runAndReadAll(
+  const result = await pool.query(
     `SELECT * FROM recommendations 
      ORDER BY recommend_count DESC 
      LIMIT $1`,
-    { 1: limit },
+    [limit],
   );
 
-  const rows = reader.getRowObjects();
-
-  return rows.map((row) => ({
+  return result.rows.map((row) => ({
     videoBvid: row.video_bvid as string,
     recommendedByBvid: row.recommended_by_bvid as string,
     recommendCount: row.recommend_count as number,
     recommendOrder: row.recommend_order as number,
-    firstSeen: new Date(row.first_seen as string),
-    lastSeen: new Date(row.last_seen as string),
+    firstSeen: new Date(row.first_seen),
+    lastSeen: new Date(row.last_seen),
   }));
 }

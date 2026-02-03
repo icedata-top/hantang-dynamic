@@ -9,12 +9,12 @@ See [Changelog](./changelog.md) for version history.
 
 - **Streaming Processing**: Efficiently handles large feeds with low memory
   usage.
-- **Smart Caching**: Uses DuckDB to cache video details and forwarded dynamics,
+- **Smart Caching**: Uses PostgreSQL to cache video details and forwarded dynamics,
   minimizing API calls.
 - **Retrospective Analysis**: Automatically scans historical data to fill gaps.
 - **Recommendation Discovery**: Discovers new content and UP hosts via video
   recommendations.
-- **Robust Storage**: Stores all data in a local DuckDB database for easy
+- **Robust Storage**: Stores all data in PostgreSQL database for easy
   analysis.
 - **Concurrency Control**: Built-in rate limiting and proxy support.
 
@@ -55,7 +55,7 @@ pnpm start
 The application is configured via `config.toml`. Key sections include:
 
 - **[bilibili]**: Authentication (UID, SessData or Cookie File).
-- **[database]**: DuckDB storage path.
+- **[database]**: PostgreSQL connection URL.
 - **[application]**: Execution settings (interval, concurrency, history).
 - **[processing]**: Filter rules and feature flags (recommendations).
 

@@ -1,28 +1,26 @@
-import type { DuckDBConnection } from "@duckdb/node-api";
-import { listValue } from "@duckdb/node-api";
+import type { Pool } from "pg";
 import type { VideoData } from "../types/models/video.js";
 
 /**
  * Check if a video has been processed
  */
 export async function hasProcessedVideo(
-  connection: DuckDBConnection,
+  pool: Pool,
   bvid: string,
 ): Promise<boolean> {
-  const reader = await connection.runAndReadAll(
+  const result = await pool.query(
     "SELECT COUNT(*) as count FROM processed_videos WHERE bvid = $1",
-    { 1: bvid },
+    [bvid],
   );
 
-  const rows = reader.getRows();
-  return (rows[0]?.[0] as number) > 0;
+  return Number.parseInt(result.rows[0]?.count || "0", 10) > 0;
 }
 
 /**
  * Check if a video has been processed by ID (AID or BVID)
  */
 export async function hasProcessedVideoById(
-  connection: DuckDBConnection,
+  pool: Pool,
   id: string | number | bigint,
 ): Promise<boolean> {
   const isBvid = typeof id === "string" && id.startsWith("BV");
@@ -30,33 +28,26 @@ export async function hasProcessedVideoById(
     ? "SELECT COUNT(*) as count FROM processed_videos WHERE bvid = $1"
     : "SELECT COUNT(*) as count FROM processed_videos WHERE aid = $1";
 
-  const param = isBvid ? id : BigInt(id);
+  const param = isBvid ? id : BigInt(id).toString();
 
-  const reader = await connection.runAndReadAll(sql, { 1: param });
-
-  const rows = reader.getRows();
-  return (rows[0]?.[0] as number) > 0;
+  const result = await pool.query(sql, [param]);
+  return Number.parseInt(result.rows[0]?.count || "0", 10) > 0;
 }
 
 /**
  * Get all processed video IDs of a specific type (aid or bvid)
  */
 export async function getAllProcessedIds(
-  connection: DuckDBConnection,
+  pool: Pool,
   type: "aid" | "bvid",
 ): Promise<Set<string>> {
   const column = type === "aid" ? "aid" : "bvid";
-  // Select only the specific column to minimize data transfer
-  const reader = await connection.runAndReadAll(
-    `SELECT ${column} FROM processed_videos`,
-  );
+  const result = await pool.query(`SELECT ${column} FROM processed_videos`);
 
-  const rows = reader.getRows();
   const ids = new Set<string>();
-
-  for (const row of rows) {
-    if (row[0] !== null && row[0] !== undefined) {
-      ids.add(row[0].toString());
+  for (const row of result.rows) {
+    if (row[column] !== null && row[column] !== undefined) {
+      ids.add(row[column].toString());
     }
   }
 
@@ -67,11 +58,11 @@ export async function getAllProcessedIds(
  * Mark a video as processed
  */
 export async function markVideoProcessed(
-  connection: DuckDBConnection,
+  pool: Pool,
   video: VideoData,
   filtered: boolean,
 ): Promise<void> {
-  await connection.run(
+  await pool.query(
     `
     INSERT INTO processed_videos 
       (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id, is_filtered, 
@@ -100,28 +91,28 @@ export async function markVideoProcessed(
       notes = EXCLUDED.notes,
       updated_at = NOW()
   `,
-    {
-      1: BigInt(video.aid),
-      2: video.bvid,
-      3: video.pubdate,
-      4: video.title,
-      5: video.description,
-      6: video.tag,
-      7: video.pic,
-      8: video.type_id,
-      9: BigInt(video.user_id),
-      10: filtered,
-      11: video.staff ? listValue(video.staff) : null,
-      12: video.tid_v2 ?? null,
-      13: video.dynamic ?? null,
-      14: video.tag_new ? listValue(video.tag_new) : null,
-      15: video.participle ? listValue(video.participle) : null,
-      16: video.ctime ?? null,
-      17: video.is_deleted ?? false,
-      18: video.copyright ?? null,
-      19: video.extras ? JSON.stringify(video.extras) : null,
-      20: video.notes ? JSON.stringify(video.notes) : null,
-    },
+    [
+      BigInt(video.aid).toString(),
+      video.bvid,
+      video.pubdate,
+      video.title,
+      video.description,
+      video.tag,
+      video.pic,
+      video.type_id,
+      BigInt(video.user_id).toString(),
+      filtered,
+      video.staff ? video.staff.map((s) => s.toString()) : null,
+      video.tid_v2 ?? null,
+      video.dynamic ?? null,
+      video.tag_new ?? null,
+      video.participle ?? null,
+      video.ctime ?? null,
+      video.is_deleted ?? false,
+      video.copyright ?? null,
+      video.extras ? JSON.stringify(video.extras) : null,
+      video.notes ? JSON.stringify(video.notes) : null,
+    ],
   );
 }
 
@@ -129,7 +120,7 @@ export async function markVideoProcessed(
  * Get processed videos
  */
 export async function getProcessedVideos(
-  connection: DuckDBConnection,
+  pool: Pool,
   limit?: number,
   where?: string,
 ): Promise<VideoData[]> {
@@ -145,11 +136,10 @@ export async function getProcessedVideos(
     sql += ` LIMIT ${limit}`;
   }
 
-  const reader = await connection.runAndReadAll(sql);
-  const rows = reader.getRowObjects();
+  const result = await pool.query(sql);
 
-  return rows.map((row) => ({
-    aid: row.aid as bigint,
+  return result.rows.map((row) => ({
+    aid: BigInt(row.aid),
     bvid: row.bvid as string,
     pubdate: row.pubdate as number,
     title: row.title as string,
@@ -157,17 +147,17 @@ export async function getProcessedVideos(
     tag: row.tag as string,
     pic: row.pic as string,
     type_id: row.type_id as number,
-    user_id: row.user_id as bigint,
-    staff: (row.staff as bigint[] | null) ?? undefined,
+    user_id: BigInt(row.user_id),
+    staff: row.staff ? row.staff.map((s: string) => BigInt(s)) : undefined,
     tid_v2: row.tid_v2 as number | undefined,
     dynamic: row.dynamic as string | undefined,
-    tag_new: (row.tag_new as string[] | null) ?? undefined,
-    participle: (row.participle as string[] | null) ?? undefined,
+    tag_new: row.tag_new as string[] | undefined,
+    participle: row.participle as string[] | undefined,
     ctime: row.ctime as number | undefined,
     is_deleted: row.is_deleted as boolean | undefined,
     copyright: row.copyright as number | undefined,
-    extras: row.extras ? JSON.parse(row.extras as string) : undefined,
-    notes: row.notes ? JSON.parse(row.notes as string) : undefined,
+    extras: row.extras ? row.extras : undefined,
+    notes: row.notes ? row.notes : undefined,
   }));
 }
 
@@ -175,7 +165,7 @@ export async function getProcessedVideos(
  * Get list of bvids only (lightweight, for batch processing)
  */
 export async function getBvidList(
-  connection: DuckDBConnection,
+  pool: Pool,
   where?: string,
 ): Promise<string[]> {
   let sql = "SELECT bvid FROM processed_videos";
@@ -184,7 +174,6 @@ export async function getBvidList(
   }
   sql += " ORDER BY created_at DESC";
 
-  const reader = await connection.runAndReadAll(sql);
-  const rows = reader.getRows();
-  return rows.map((row) => row[0] as string);
+  const result = await pool.query(sql);
+  return result.rows.map((row) => row.bvid as string);
 }

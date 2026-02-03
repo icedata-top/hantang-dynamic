@@ -1,30 +1,31 @@
-import type { DuckDBConnection } from "@duckdb/node-api";
+import type { Pool } from "pg";
 
 /**
  * Get cached forward dynamic BVID
  */
 export async function getCachedForwardBvid(
-  connection: DuckDBConnection,
+  pool: Pool,
   dynamicId: string,
 ): Promise<string | null> {
-  const reader = await connection.runAndReadAll(
+  const result = await pool.query(
     "SELECT original_bvid FROM forward_dynamics WHERE forward_dynamic_id = $1",
-    { 1: BigInt(dynamicId) },
+    [dynamicId],
   );
 
-  const rows = reader.getRows();
-  return rows.length > 0 ? (rows[0]?.[0] as string) : null;
+  return result.rows.length > 0
+    ? (result.rows[0]?.original_bvid as string)
+    : null;
 }
 
 /**
  * Cache forward dynamic relationship
  */
 export async function cacheForward(
-  connection: DuckDBConnection,
+  pool: Pool,
   dynamicId: string,
   bvid: string,
 ): Promise<void> {
-  await connection.run(
+  await pool.query(
     `
     INSERT INTO forward_dynamics 
       (forward_dynamic_id, original_bvid)
@@ -32,9 +33,6 @@ export async function cacheForward(
     ON CONFLICT (forward_dynamic_id) DO UPDATE SET
       original_bvid = EXCLUDED.original_bvid
   `,
-    {
-      1: BigInt(dynamicId),
-      2: bvid,
-    },
+    [dynamicId, bvid],
   );
 }

@@ -1,6 +1,4 @@
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-import { type DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import { Pool } from "pg";
 import { config } from "../config/index.js";
 import type {
   DatabaseStats,
@@ -38,14 +36,13 @@ import {
 } from "./videos.js";
 
 /**
- * DuckDB database manager - singleton pattern
- * Manages database connection, schema initialization, and CRUD operations
+ * PostgreSQL database manager - singleton pattern
+ * Manages database connection pool, schema initialization, and CRUD operations
  * Thread-safe through mutex locking
  */
 export class Database {
   private static instance: Database | null = null;
-  private duckDBInstance: DuckDBInstance | null = null;
-  private connection: DuckDBConnection | null = null;
+  private pool: Pool | null = null;
   private mutex = new AsyncMutex();
 
   private constructor() {}
@@ -61,32 +58,35 @@ export class Database {
   }
 
   /**
-   * Initialize the database connection and schema
+   * Initialize the database connection pool and schema
    */
-  public async init(path: string = config.database.path): Promise<void> {
-    if (this.connection) {
+  public async init(url: string = config.database.url): Promise<void> {
+    if (this.pool) {
       logger.warn("Database already initialized");
       return;
     }
 
-    logger.info(`Initializing DuckDB at ${path}`);
+    logger.info("Initializing PostgreSQL connection pool");
 
     try {
-      // Ensure the database directory exists
-      const dbDir = dirname(path);
-      mkdirSync(dbDir, { recursive: true });
-      logger.debug(`Database directory created/verified: ${dbDir}`);
+      // Create connection pool
+      this.pool = new Pool({
+        connectionString: url,
+        max: 10,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 10000,
+      });
 
-      // Create or connect to DuckDB instance
-      this.duckDBInstance = await DuckDBInstance.create(path);
-      this.connection = await this.duckDBInstance.connect();
+      // Test connection
+      const client = await this.pool.connect();
+      client.release();
 
       // Initialize schema
-      await initializeSchema(this.connection);
+      await initializeSchema(this.pool);
 
-      logger.info("DuckDB initialized successfully");
+      logger.info("PostgreSQL initialized successfully");
     } catch (error) {
-      logger.error("Failed to initialize DuckDB:", error);
+      logger.error("Failed to initialize PostgreSQL:", error);
       throw error;
     }
   }
@@ -104,13 +104,13 @@ export class Database {
   }
 
   /**
-   * Ensure connection is available
+   * Ensure pool is available
    */
-  private ensureConnection(): DuckDBConnection {
-    if (!this.connection) {
+  private ensurePool(): Pool {
+    if (!this.pool) {
       throw new Error("Database not initialized");
     }
-    return this.connection;
+    return this.pool;
   }
 
   // ===== Video Operations =====
@@ -119,9 +119,7 @@ export class Database {
    * Check if a video has been processed
    */
   public async hasProcessedVideo(bvid: string): Promise<boolean> {
-    return this.withMutex(() =>
-      hasProcessedVideo(this.ensureConnection(), bvid),
-    );
+    return this.withMutex(() => hasProcessedVideo(this.ensurePool(), bvid));
   }
 
   /**
@@ -130,18 +128,14 @@ export class Database {
   public async hasProcessedVideoById(
     id: string | number | bigint,
   ): Promise<boolean> {
-    return this.withMutex(() =>
-      hasProcessedVideoById(this.ensureConnection(), id),
-    );
+    return this.withMutex(() => hasProcessedVideoById(this.ensurePool(), id));
   }
 
   /**
    * Get all processed video IDs of a specific type (aid or bvid)
    */
   public async getAllProcessedIds(type: "aid" | "bvid"): Promise<Set<string>> {
-    return this.withMutex(() =>
-      getAllProcessedIds(this.ensureConnection(), type),
-    );
+    return this.withMutex(() => getAllProcessedIds(this.ensurePool(), type));
   }
 
   /**
@@ -152,7 +146,7 @@ export class Database {
     filtered: boolean,
   ): Promise<void> {
     return this.withMutex(() =>
-      markVideoProcessed(this.ensureConnection(), video, filtered),
+      markVideoProcessed(this.ensurePool(), video, filtered),
     );
   }
 
@@ -164,7 +158,7 @@ export class Database {
     where?: string,
   ): Promise<VideoData[]> {
     return this.withMutex(() =>
-      getProcessedVideos(this.ensureConnection(), limit, where),
+      getProcessedVideos(this.ensurePool(), limit, where),
     );
   }
 
@@ -172,7 +166,7 @@ export class Database {
    * Get list of bvids only (lightweight, for batch processing)
    */
   public async getBvidList(where?: string): Promise<string[]> {
-    return this.withMutex(() => getBvidList(this.ensureConnection(), where));
+    return this.withMutex(() => getBvidList(this.ensurePool(), where));
   }
 
   // ===== Forward Dynamics Operations =====
@@ -182,7 +176,7 @@ export class Database {
    */
   public async getCachedForwardBvid(dynamicId: string): Promise<string | null> {
     return this.withMutex(() =>
-      getCachedForwardBvid(this.ensureConnection(), dynamicId),
+      getCachedForwardBvid(this.ensurePool(), dynamicId),
     );
   }
 
@@ -191,7 +185,7 @@ export class Database {
    */
   public async cacheForward(dynamicId: string, bvid: string): Promise<void> {
     return this.withMutex(() =>
-      cacheForward(this.ensureConnection(), dynamicId, bvid),
+      cacheForward(this.ensurePool(), dynamicId, bvid),
     );
   }
 
@@ -201,16 +195,14 @@ export class Database {
    * Check if a user exists in the database
    */
   public async hasUser(userId: bigint): Promise<boolean> {
-    return this.withMutex(() => hasUser(this.ensureConnection(), userId));
+    return this.withMutex(() => hasUser(this.ensurePool(), userId));
   }
 
   /**
    * Add a discovered user
    */
   public async addDiscoveredUser(user: DiscoveredUserData): Promise<void> {
-    return this.withMutex(() =>
-      addDiscoveredUser(this.ensureConnection(), user),
-    );
+    return this.withMutex(() => addDiscoveredUser(this.ensurePool(), user));
   }
 
   /**
@@ -221,7 +213,7 @@ export class Database {
     stats: UserStatsUpdate,
   ): Promise<void> {
     return this.withMutex(() =>
-      updateUserStats(this.ensureConnection(), userId, stats),
+      updateUserStats(this.ensurePool(), userId, stats),
     );
   }
 
@@ -233,7 +225,7 @@ export class Database {
     limit: number,
   ): Promise<UserData[]> {
     return this.withMutex(() =>
-      getTopDiscoveredUsers(this.ensureConnection(), orderBy, limit),
+      getTopDiscoveredUsers(this.ensurePool(), orderBy, limit),
     );
   }
 
@@ -246,7 +238,7 @@ export class Database {
     recommendations: RecommendationInput[],
   ): Promise<void> {
     return this.withMutex(() =>
-      trackRecommendationsBatch(this.ensureConnection(), recommendations),
+      trackRecommendationsBatch(this.ensurePool(), recommendations),
     );
   }
 
@@ -257,7 +249,7 @@ export class Database {
     limit: number,
   ): Promise<RecommendationData[]> {
     return this.withMutex(() =>
-      getTopRecommendedVideos(this.ensureConnection(), limit),
+      getTopRecommendedVideos(this.ensurePool(), limit),
     );
   }
 
@@ -267,65 +259,26 @@ export class Database {
    * Get database statistics
    */
   public async getStats(): Promise<DatabaseStats> {
-    return this.withMutex(() => getStats(this.ensureConnection()));
+    return this.withMutex(() => getStats(this.ensurePool()));
   }
 
   // ===== Connection Management =====
 
   /**
-   * Checkpoint the database to flush WAL to disk
-   */
-  public async checkpoint(): Promise<void> {
-    return this.withMutex(async () => {
-      await this.ensureConnection().run("CHECKPOINT");
-      logger.debug("Database checkpointed");
-    });
-  }
-
-  /**
-   * Close and reopen the database connection to reduce WAL buildup
-   */
-  public async reconnect(): Promise<void> {
-    const release = await this.mutex.acquire();
-    try {
-      if (!this.duckDBInstance) {
-        throw new Error("Database instance not initialized");
-      }
-
-      logger.debug("Reconnecting to database...");
-
-      // Close existing connection
-      if (this.connection) {
-        await this.connection.disconnect();
-        this.connection = null;
-      }
-
-      // Create new connection
-      this.connection = await this.duckDBInstance.connect();
-      logger.info("Database reconnected successfully");
-    } finally {
-      release();
-    }
-  }
-
-  /**
-   * Close the database connection
+   * Close the database connection pool
    */
   public async close(): Promise<void> {
-    if (this.connection) {
-      await this.connection.disconnect();
-      this.connection = null;
+    if (this.pool) {
+      await this.pool.end();
+      this.pool = null;
     }
-    if (this.duckDBInstance) {
-      this.duckDBInstance = null;
-    }
-    logger.info("Database connection closed");
+    logger.info("Database connection pool closed");
   }
 
   /**
-   * Get the raw connection (for advanced usage)
+   * Get the connection pool (for advanced usage)
    */
-  public getConnection(): DuckDBConnection {
-    return this.ensureConnection();
+  public getPool(): Pool {
+    return this.ensurePool();
   }
 }

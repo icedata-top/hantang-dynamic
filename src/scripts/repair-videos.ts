@@ -74,7 +74,7 @@ export async function runRepairVideos(filter?: string) {
   logger.info(`Pool size: ${POOL_SIZE}`);
 
   const db = Database.getInstance();
-  await db.init(config.database.path);
+  await db.init(config.database.url);
 
   const detailsService = new DetailsService();
 

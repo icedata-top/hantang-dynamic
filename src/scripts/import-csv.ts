@@ -58,7 +58,7 @@ export async function runImportCsv() {
   logger.info(`Pool size: ${POOL_SIZE}`);
 
   const db = Database.getInstance();
-  await db.init(config.database.path);
+  await db.init(config.database.url);
   const detailsService = new DetailsService();
 
   // Read all rows into memory

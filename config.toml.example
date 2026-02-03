@@ -27,8 +27,8 @@ retrospective_interval = 604800000 # Interval for retrospective scan in ms (defa
 retrospective_days = 30        # Days to look back during retrospective scan (default: 30)
 
 [database]
-# Database settings
-path = ""                      # DuckDB file path (default: "./exports/duckdb/{BILIBILI_UID}.duckdb")
+# Database settings (PostgreSQL)
+url = "postgresql://localhost:5432/hantang"  # PostgreSQL connection URL
 
 [processing]
 [processing.features]

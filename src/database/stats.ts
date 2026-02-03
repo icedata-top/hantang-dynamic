@@ -1,13 +1,11 @@
-import type { DuckDBConnection } from "@duckdb/node-api";
+import type { Pool } from "pg";
 import type { DatabaseStats } from "../types/models/database.js";
 
 /**
  * Get database statistics
  */
-export async function getStats(
-  connection: DuckDBConnection,
-): Promise<DatabaseStats> {
-  const reader = await connection.runAndReadAll(`
+export async function getStats(pool: Pool): Promise<DatabaseStats> {
+  const result = await pool.query(`
     SELECT 
       (SELECT COUNT(*) FROM processed_videos) as processed_count,
       (SELECT COUNT(*) FROM forward_dynamics) as forward_count,
@@ -16,14 +14,13 @@ export async function getStats(
       (SELECT COUNT(*) FROM processed_videos WHERE is_filtered = true) as filtered_count
   `);
 
-  const rows = reader.getRows();
-  const row = rows[0];
+  const row = result.rows[0];
 
   return {
-    processedVideosCount: row[0] as number,
-    forwardDynamicsCount: row[1] as number,
-    recommendationsCount: row[2] as number,
-    discoveredUsersCount: row[3] as number,
-    filteredVideosCount: row[4] as number,
+    processedVideosCount: Number.parseInt(row.processed_count, 10),
+    forwardDynamicsCount: Number.parseInt(row.forward_count, 10),
+    recommendationsCount: Number.parseInt(row.rec_count, 10),
+    discoveredUsersCount: Number.parseInt(row.users_count, 10),
+    filteredVideosCount: Number.parseInt(row.filtered_count, 10),
   };
 }
