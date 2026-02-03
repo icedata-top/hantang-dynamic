@@ -45,9 +45,12 @@ async function fetchWbiKeys(
 
     const response = await axios.get(url, { headers });
 
-    if (response.data?.code === 0 && response.data?.data?.wbi_img) {
-      const imgUrl = response.data.data.wbi_img.img_url;
-      const subUrl = response.data.data.wbi_img.sub_url;
+    // Bilibili returns wbi_img even when not logged in (code: -101)
+    // We only need the keys, so check for their presence regardless of code
+    const wbiImg = response.data?.data?.wbi_img;
+    if (wbiImg?.img_url && wbiImg?.sub_url) {
+      const imgUrl = wbiImg.img_url;
+      const subUrl = wbiImg.sub_url;
 
       const imgKey = imgUrl.substring(
         imgUrl.lastIndexOf("/") + 1,
