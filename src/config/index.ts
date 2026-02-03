@@ -22,10 +22,11 @@ try {
   const configPath = resolve(process.cwd(), "config.toml");
   const tomlString = readFileSync(configPath, "utf-8");
   tomlData = parseToml(tomlString);
-} catch (_error) {
+} catch (error) {
   console.warn(
     "Warning: config.toml not found or invalid. Using environment variables as fallback.",
   );
+  console.warn("Actual error:", error);
 }
 
 // Helper function to get configuration value from TOML or environment variable
