@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import { Cookie, CookieJar } from "tough-cookie";
+import { CookieJar } from "tough-cookie";
 import { logger } from "./logger";
 
 /**
@@ -97,23 +97,31 @@ export function createCookieJarFromNetscape(
     try {
       // Determine protocol based on secure flag
       const protocol = c.secure ? "https" : "http";
-      // Build URL for the cookie
-      const url = `${protocol}://${
-        c.domain.startsWith(".") ? c.domain.substring(1) : c.domain
-      }${c.path}`;
+      // Remove leading dot from domain for URL (if present)
+      const urlDomain = c.domain.startsWith(".")
+        ? c.domain.substring(1)
+        : c.domain;
+      // Build URL for the cookie - use a subdomain to ensure proper domain cookie matching
+      const url = `${protocol}://www.${urlDomain}${c.path}`;
 
-      const cookie = new Cookie({
-        key: c.name,
-        value: c.value,
-        domain: c.domain,
-        path: c.path,
-        secure: c.secure,
-        httpOnly: c.httpOnly,
-        expires: c.expires > 0 ? new Date(c.expires * 1000) : "Infinity",
-        hostOnly: !c.includeSubdomains,
-      });
+      // Build cookie string format which tough-cookie v6 handles correctly
+      // Domain attribute should NOT have leading dot per RFC 6265
+      const domainForAttr = c.domain.startsWith(".")
+        ? c.domain.substring(1)
+        : c.domain;
 
-      jar.setCookieSync(cookie, url);
+      // Build cookie parts
+      const parts: string[] = [`${c.name}=${c.value}`];
+      parts.push(`Domain=${domainForAttr}`);
+      parts.push(`Path=${c.path}`);
+      if (c.secure) parts.push("Secure");
+      if (c.httpOnly) parts.push("HttpOnly");
+      if (c.expires > 0) {
+        parts.push(`Expires=${new Date(c.expires * 1000).toUTCString()}`);
+      }
+
+      const cookieString = parts.join("; ");
+      jar.setCookieSync(cookieString, url);
     } catch (error) {
       logger.warn(`Failed to add cookie ${c.name}: ${error}`);
     }
@@ -182,7 +190,12 @@ export function getCookieValue(
   domainPattern = "bilibili.com",
 ): string | null {
   try {
-    const cookies = jar.getCookiesSync(`https://${domainPattern}`, {
+    // Use "www." prefix to ensure proper matching of ".bilibili.com" domain cookies
+    // tough-cookie requires a valid subdomain to match domain cookies with leading dots
+    const url = domainPattern.startsWith("www.")
+      ? `https://${domainPattern}`
+      : `https://www.${domainPattern}`;
+    const cookies = jar.getCookiesSync(url, {
       allPaths: true,
     });
     const cookie = cookies.find((c) => c.key === name);
