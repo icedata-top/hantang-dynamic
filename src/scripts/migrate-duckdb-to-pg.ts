@@ -62,6 +62,26 @@ function convertTimestamp(ts: any): Date | null {
   return null;
 }
 
+function convertArray(arr: any): string[] | null {
+  if (!arr) return null;
+
+  // 如果已经是数组
+  if (Array.isArray(arr)) {
+    return arr.map((v: any) =>
+      typeof v === "bigint" ? v.toString() : String(v)
+    );
+  }
+
+  // 如果是 DuckDB 的对象格式 {"items": [...]}
+  if (typeof arr === "object" && arr.items && Array.isArray(arr.items)) {
+    return arr.items.map((v: any) =>
+      typeof v === "bigint" ? v.toString() : String(v)
+    );
+  }
+
+  return null;
+}
+
 interface MigrationStats {
   processed_videos: number;
   forward_dynamics: number;
@@ -200,9 +220,9 @@ async function migrateProcessedVideos(
         const row = rows[i];
 
         // Handle array conversions
-        const staff = row.staff ? (row.staff as bigint[]).map(String) : null;
-        const tagNew = row.tag_new as string[] | null;
-        const participle = row.participle as string[] | null;
+        const staff = convertArray(row.staff);
+        const tagNew = convertArray(row.tag_new);
+        const participle = convertArray(row.participle);
 
         // Handle JSON fields
         const extras = safeJsonStringify(row.extras);
