@@ -110,31 +110,35 @@ interface MigrationStats {
   discovered_users: number;
 }
 
-function parseArgs(): { duckdbPath: string; pgUrl: string } {
+function parseArgs(): { duckdbPath: string; pgUrl: string; offset: number } {
   const args = process.argv.slice(2);
   let duckdbPath = "";
   let pgUrl = "";
+  let offset = 0;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--duckdb" && args[i + 1]) {
       duckdbPath = args[++i];
     } else if (args[i] === "--pg" && args[i + 1]) {
       pgUrl = args[++i];
+    } else if (args[i] === "--offset" && args[i + 1]) {
+      offset = parseInt(args[++i], 10);
     }
   }
 
   if (!duckdbPath || !pgUrl) {
     console.error(
-      "Usage: npx tsx src/scripts/migrate-duckdb-to-pg.ts --duckdb <path> --pg <url>",
+      "Usage: npx tsx src/scripts/migrate-duckdb-to-pg.ts --duckdb <path> --pg <url> [--offset <n>]",
     );
     console.error("Example:");
     console.error("  npx tsx src/scripts/migrate-duckdb-to-pg.ts \\");
     console.error("    --duckdb ./exports/duckdb/12345.duckdb \\");
-    console.error("    --pg postgresql://localhost:5432/hantang");
+    console.error("    --pg postgresql://localhost:5432/hantang \\");
+    console.error("    --offset 3776000");
     process.exit(1);
   }
 
-  return { duckdbPath, pgUrl };
+  return { duckdbPath, pgUrl, offset };
 }
 
 async function initPgSchema(pool: Pool): Promise<void> {
@@ -208,6 +212,7 @@ async function initPgSchema(pool: Pool): Promise<void> {
 async function migrateProcessedVideos(
   duckConn: Awaited<ReturnType<DuckDBInstance["connect"]>>,
   pool: Pool,
+  startOffset = 0,
 ): Promise<number> {
   console.log("Migrating processed_videos...");
 
@@ -219,8 +224,11 @@ async function migrateProcessedVideos(
 
   if (total === 0) return 0;
 
-  let migrated = 0;
-  let offset = 0;
+  let migrated = startOffset;
+  let offset = startOffset;
+  if (startOffset > 0) {
+    console.log(`  Starting from offset: ${startOffset}`);
+  }
   const tableStartTime = Date.now();
 
   while (offset < total) {
@@ -297,7 +305,7 @@ async function migrateProcessedVideos(
            created_at, updated_at, staff, tid_v2, dynamic, tag_new, participle, ctime,
            is_deleted, copyright, extras, notes)
         VALUES ${placeholders.join(", ")}
-        ON CONFLICT (aid) DO NOTHING
+        ON CONFLICT DO NOTHING
       `;
 
       await client.query(query, values);
@@ -313,7 +321,7 @@ async function migrateProcessedVideos(
 
     offset += BATCH_SIZE;
     const elapsed = (Date.now() - tableStartTime) / 1000;
-    const rate = migrated / elapsed;
+    const rate = (migrated - startOffset) / elapsed;
     const remaining = total - migrated;
     const eta = formatEta(remaining / rate);
     process.stdout.write(`\r  Migrated: ${migrated}/${total} | ETA: ${eta}   `);
@@ -575,11 +583,14 @@ async function migrateDiscoveredUsers(
 }
 
 async function main() {
-  const { duckdbPath, pgUrl } = parseArgs();
+  const { duckdbPath, pgUrl, offset } = parseArgs();
 
   console.log("=== DuckDB to PostgreSQL Migration (Optimized) ===");
   console.log(`DuckDB: ${duckdbPath}`);
   console.log(`PostgreSQL: ${pgUrl.replace(/:[^:@]+@/, ":***@")}`);
+  if (offset > 0) {
+    console.log(`Starting offset: ${offset}`);
+  }
   console.log();
 
   // Connect to DuckDB
@@ -613,7 +624,7 @@ async function main() {
     discovered_users: 0,
   };
 
-  stats.processed_videos = await migrateProcessedVideos(duckConn, pool);
+  stats.processed_videos = await migrateProcessedVideos(duckConn, pool, offset);
   stats.forward_dynamics = await migrateForwardDynamics(duckConn, pool);
   stats.recommendations = await migrateRecommendations(duckConn, pool);
   stats.discovered_users = await migrateDiscoveredUsers(duckConn, pool);
