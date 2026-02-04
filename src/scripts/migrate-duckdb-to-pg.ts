@@ -222,6 +222,26 @@ async function migrateProcessedVideos(
   const total = Number(countReader.getRows()[0]?.[0] ?? 0);
   console.log(`  Total rows: ${total}`);
 
+  // Fetch existing BVIDs to avoid duplicates
+  console.log("Fetching existing BVIDs from PostgreSQL...");
+  const existingBvids = new Set<string>();
+  try {
+    const res = await pool.query("SELECT bvid FROM processed_videos");
+    for (const row of res.rows) {
+      existingBvids.add(row.bvid);
+    }
+  } catch (err: any) {
+    if (err.code === "42P01") {
+      // Table doesn't exist yet, which is fine
+      console.log(
+        "  Table processed_videos does not exist yet (skipping pre-fetch).",
+      );
+    } else {
+      throw err;
+    }
+  }
+  console.log(`  Found ${existingBvids.size} existing videos.`);
+
   if (total === 0) return 0;
 
   let migrated = startOffset;
@@ -237,94 +257,103 @@ async function migrateProcessedVideos(
     );
     const rows = reader.getRowObjects();
 
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
+    // Filter out existing videos
+    const newRows = rows.filter((row: any) =>
+      !existingBvids.has(String(row.bvid))
+    );
+    const skippedCount = rows.length - newRows.length;
 
-      // 准备批量数据
-      const values: any[] = [];
-      const placeholders: string[] = [];
-      let paramIndex = 1;
+    if (newRows.length > 0) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
 
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
+        // 准备批量数据
+        const values: any[] = [];
+        const placeholders: string[] = [];
+        let paramIndex = 1;
 
-        // Handle array conversions
-        const staff = convertArray(row.staff);
-        const tagNew = convertArray(row.tag_new);
-        const participle = convertArray(row.participle);
+        for (let i = 0; i < newRows.length; i++) {
+          const row = newRows[i];
 
-        // Handle JSON fields
-        const extras = safeJsonStringify(row.extras);
-        const notes = safeJsonStringify(row.notes);
+          // Handle array conversions
+          const staff = convertArray(row.staff);
+          const tagNew = convertArray(row.tag_new);
+          const participle = convertArray(row.participle);
 
-        // Convert timestamps
-        const createdAt = convertTimestamp(row.created_at);
-        const updatedAt = convertTimestamp(row.updated_at);
+          // Handle JSON fields
+          const extras = safeJsonStringify(row.extras);
+          const notes = safeJsonStringify(row.notes);
 
-        const rowValues = [
-          String(row.aid),
-          String(row.bvid),
-          row.pubdate != null ? String(row.pubdate) : null,
-          sanitizeString(row.title),
-          sanitizeString(row.description),
-          sanitizeString(row.tag),
-          sanitizeString(row.pic),
-          row.type_id != null ? Number(row.type_id) : null,
-          row.user_id != null ? String(row.user_id) : null,
-          row.is_filtered,
-          createdAt,
-          updatedAt,
-          staff,
-          row.tid_v2 != null ? Number(row.tid_v2) : null,
-          sanitizeString(row.dynamic),
-          tagNew,
-          participle,
-          row.ctime != null ? String(row.ctime) : null,
-          row.is_deleted ?? false,
-          row.copyright != null ? Number(row.copyright) : null,
-          extras,
-          notes,
-        ];
+          // Convert timestamps
+          const createdAt = convertTimestamp(row.created_at);
+          const updatedAt = convertTimestamp(row.updated_at);
 
-        values.push(...rowValues);
+          const rowValues = [
+            String(row.aid),
+            String(row.bvid),
+            row.pubdate != null ? String(row.pubdate) : null,
+            sanitizeString(row.title),
+            sanitizeString(row.description),
+            sanitizeString(row.tag),
+            sanitizeString(row.pic),
+            row.type_id != null ? Number(row.type_id) : null,
+            row.user_id != null ? String(row.user_id) : null,
+            row.is_filtered,
+            createdAt,
+            updatedAt,
+            staff,
+            row.tid_v2 != null ? Number(row.tid_v2) : null,
+            sanitizeString(row.dynamic),
+            tagNew,
+            participle,
+            row.ctime != null ? String(row.ctime) : null,
+            row.is_deleted ?? false,
+            row.copyright != null ? Number(row.copyright) : null,
+            extras,
+            notes,
+          ];
 
-        // 生成占位符 ($1, $2, ..., $22), ($23, $24, ..., $44), ...
-        const placeholderGroup = Array.from(
-          { length: 22 },
-          (_, j) => `$${paramIndex + j}`,
-        ).join(", ");
-        placeholders.push(`(${placeholderGroup})`);
-        paramIndex += 22;
+          values.push(...rowValues);
+
+          // 生成占位符 ($1, $2, ..., $22), ($23, $24, ..., $44), ...
+          const placeholderGroup = Array.from(
+            { length: 22 },
+            (_, j) => `$${paramIndex + j}`,
+          ).join(", ");
+          placeholders.push(`(${placeholderGroup})`);
+          paramIndex += 22;
+        }
+
+        // 执行批量插入
+        const query = `
+          INSERT INTO processed_videos
+            (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id, is_filtered,
+             created_at, updated_at, staff, tid_v2, dynamic, tag_new, participle, ctime,
+             is_deleted, copyright, extras, notes)
+          VALUES ${placeholders.join(", ")}
+          ON CONFLICT DO NOTHING
+        `;
+
+        await client.query(query, values);
+        await client.query("COMMIT");
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+      } finally {
+        client.release();
       }
-
-      // 执行批量插入
-      const query = `
-        INSERT INTO processed_videos
-          (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id, is_filtered,
-           created_at, updated_at, staff, tid_v2, dynamic, tag_new, participle, ctime,
-           is_deleted, copyright, extras, notes)
-        VALUES ${placeholders.join(", ")}
-        ON CONFLICT DO NOTHING
-      `;
-
-      await client.query(query, values);
-      await client.query("COMMIT");
-
-      migrated += rows.length;
-    } catch (err) {
-      await client.query("ROLLBACK");
-      throw err;
-    } finally {
-      client.release();
     }
 
+    migrated += rows.length;
     offset += BATCH_SIZE;
     const elapsed = (Date.now() - tableStartTime) / 1000;
     const rate = (migrated - startOffset) / elapsed;
     const remaining = total - migrated;
     const eta = formatEta(remaining / rate);
-    process.stdout.write(`\r  Migrated: ${migrated}/${total} | ETA: ${eta}   `);
+    process.stdout.write(
+      `\r  Migrated: ${migrated}/${total} | ETA: ${eta} | Skipped: ${skippedCount}   `,
+    );
   }
 
   console.log();
