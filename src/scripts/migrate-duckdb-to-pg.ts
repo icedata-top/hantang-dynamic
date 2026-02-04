@@ -19,7 +19,7 @@
 import { DuckDBInstance } from "@duckdb/node-api";
 import { Pool } from "pg";
 
-const BATCH_SIZE = 1000;
+const BATCH_SIZE = 5000;
 
 (BigInt.prototype as any).toJSON = function () {
   return this.toString();
@@ -80,6 +80,19 @@ function convertArray(arr: any): string[] | null {
   }
 
   return null;
+}
+
+/**
+ * Format elapsed time to human-readable ETA string
+ */
+function formatEta(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "--";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
 }
 
 interface MigrationStats {
@@ -200,6 +213,7 @@ async function migrateProcessedVideos(
 
   let migrated = 0;
   let offset = 0;
+  const tableStartTime = Date.now();
 
   while (offset < total) {
     const reader = await duckConn.runAndReadAll(
@@ -290,7 +304,11 @@ async function migrateProcessedVideos(
     }
 
     offset += BATCH_SIZE;
-    process.stdout.write(`\r  Migrated: ${migrated}/${total}`);
+    const elapsed = (Date.now() - tableStartTime) / 1000;
+    const rate = migrated / elapsed;
+    const remaining = total - migrated;
+    const eta = formatEta(remaining / rate);
+    process.stdout.write(`\r  Migrated: ${migrated}/${total} | ETA: ${eta}   `);
   }
 
   console.log();
@@ -313,6 +331,7 @@ async function migrateForwardDynamics(
 
   let migrated = 0;
   let offset = 0;
+  const tableStartTime = Date.now();
 
   while (offset < total) {
     const reader = await duckConn.runAndReadAll(
@@ -363,7 +382,11 @@ async function migrateForwardDynamics(
     }
 
     offset += BATCH_SIZE;
-    process.stdout.write(`\r  Migrated: ${migrated}/${total}`);
+    const elapsed = (Date.now() - tableStartTime) / 1000;
+    const rate = migrated / elapsed;
+    const remaining = total - migrated;
+    const eta = formatEta(remaining / rate);
+    process.stdout.write(`\r  Migrated: ${migrated}/${total} | ETA: ${eta}   `);
   }
 
   console.log();
@@ -386,6 +409,7 @@ async function migrateRecommendations(
 
   let migrated = 0;
   let offset = 0;
+  const tableStartTime = Date.now();
 
   while (offset < total) {
     const reader = await duckConn.runAndReadAll(
@@ -442,7 +466,11 @@ async function migrateRecommendations(
     }
 
     offset += BATCH_SIZE;
-    process.stdout.write(`\r  Migrated: ${migrated}/${total}`);
+    const elapsed = (Date.now() - tableStartTime) / 1000;
+    const rate = migrated / elapsed;
+    const remaining = total - migrated;
+    const eta = formatEta(remaining / rate);
+    process.stdout.write(`\r  Migrated: ${migrated}/${total} | ETA: ${eta}   `);
   }
 
   console.log();
@@ -465,6 +493,7 @@ async function migrateDiscoveredUsers(
 
   let migrated = 0;
   let offset = 0;
+  const tableStartTime = Date.now();
 
   while (offset < total) {
     const reader = await duckConn.runAndReadAll(
@@ -526,7 +555,11 @@ async function migrateDiscoveredUsers(
     }
 
     offset += BATCH_SIZE;
-    process.stdout.write(`\r  Migrated: ${migrated}/${total}`);
+    const elapsed = (Date.now() - tableStartTime) / 1000;
+    const rate = migrated / elapsed;
+    const remaining = total - migrated;
+    const eta = formatEta(remaining / rate);
+    process.stdout.write(`\r  Migrated: ${migrated}/${total} | ETA: ${eta}   `);
   }
 
   console.log();
