@@ -30,10 +30,22 @@ const BATCH_SIZE = 2000;
  */
 function safeJsonStringify(obj: any): string | null {
   if (!obj) return null;
-  return JSON.stringify(
+  const json = JSON.stringify(
     obj,
     (key, value) => typeof value === "bigint" ? value.toString() : value,
   );
+  // Remove null bytes which are not allowed in Postgres JSONB
+  return json.replace(/\u0000/g, "");
+}
+
+/**
+ * Remove null bytes from string which Postgres doesn't support
+ */
+function sanitizeString(val: any): string | null {
+  if (val === null || val === undefined) return null;
+  const str = typeof val === "bigint" ? val.toString() : String(val);
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\u0000/g, "");
 }
 
 /**
@@ -67,16 +79,12 @@ function convertArray(arr: any): string[] | null {
 
   // 如果已经是数组
   if (Array.isArray(arr)) {
-    return arr.map((v: any) =>
-      typeof v === "bigint" ? v.toString() : String(v)
-    );
+    return arr.map((v: any) => sanitizeString(v) || "");
   }
 
   // 如果是 DuckDB 的对象格式 {"items": [...]}
   if (typeof arr === "object" && arr.items && Array.isArray(arr.items)) {
-    return arr.items.map((v: any) =>
-      typeof v === "bigint" ? v.toString() : String(v)
-    );
+    return arr.items.map((v: any) => sanitizeString(v) || "");
   }
 
   return null;
@@ -248,12 +256,12 @@ async function migrateProcessedVideos(
 
         const rowValues = [
           String(row.aid),
-          row.bvid,
+          String(row.bvid),
           row.pubdate != null ? String(row.pubdate) : null,
-          row.title,
-          row.description,
-          row.tag,
-          row.pic,
+          sanitizeString(row.title),
+          sanitizeString(row.description),
+          sanitizeString(row.tag),
+          sanitizeString(row.pic),
           row.type_id != null ? Number(row.type_id) : null,
           row.user_id != null ? String(row.user_id) : null,
           row.is_filtered,
@@ -261,7 +269,7 @@ async function migrateProcessedVideos(
           updatedAt,
           staff,
           row.tid_v2 != null ? Number(row.tid_v2) : null,
-          row.dynamic,
+          sanitizeString(row.dynamic),
           tagNew,
           participle,
           row.ctime != null ? String(row.ctime) : null,
@@ -353,7 +361,7 @@ async function migrateForwardDynamics(
 
         values.push(
           String(row.forward_dynamic_id),
-          row.original_bvid,
+          sanitizeString(row.original_bvid),
           createdAt,
         );
 
@@ -431,8 +439,8 @@ async function migrateRecommendations(
         const lastSeen = convertTimestamp(row.last_seen);
 
         values.push(
-          row.video_bvid,
-          row.recommended_by_bvid,
+          sanitizeString(row.video_bvid),
+          sanitizeString(row.recommended_by_bvid),
           row.recommend_count,
           row.recommend_order,
           firstSeen,
@@ -516,12 +524,12 @@ async function migrateDiscoveredUsers(
 
         values.push(
           String(row.user_id),
-          row.user_name,
+          sanitizeString(row.user_name),
           row.fans,
           row.videos_seen,
           row.videos_filtered,
           row.filter_pass_rate,
-          row.discovered_from,
+          sanitizeString(row.discovered_from),
           discoveredAt,
           row.is_following,
           lastUpdated,
