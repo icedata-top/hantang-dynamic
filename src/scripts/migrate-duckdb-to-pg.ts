@@ -19,7 +19,7 @@
 import { DuckDBInstance } from "@duckdb/node-api";
 import { Pool } from "pg";
 
-const BATCH_SIZE = 100;
+const BATCH_SIZE = 2000;
 
 (BigInt.prototype as any).toJSON = function () {
   return this.toString();
@@ -222,137 +222,170 @@ async function migrateProcessedVideos(
   const total = Number(countReader.getRows()[0]?.[0] ?? 0);
   console.log(`  Total rows: ${total}`);
 
-  // Fetch existing BVIDs to avoid duplicates
-  console.log("Fetching existing BVIDs from PostgreSQL...");
-  const existingBvids = new Set<string>();
+  console.log("Fetching existing AIDs from PostgreSQL...");
+  const existingAids = new Set<string>();
   try {
-    const res = await pool.query("SELECT bvid FROM processed_videos");
+    const res = await pool.query("SELECT aid FROM processed_videos");
     for (const row of res.rows) {
-      existingBvids.add(row.bvid);
+      existingAids.add(row.aid);
     }
   } catch (err: any) {
     if (err.code === "42P01") {
-      // Table doesn't exist yet, which is fine
-      console.log(
-        "  Table processed_videos does not exist yet (skipping pre-fetch).",
-      );
+      console.log("  Table processed_videos does not exist yet.");
     } else {
       throw err;
     }
   }
-  console.log(`  Found ${existingBvids.size} existing videos.`);
+  console.log(`  Found ${existingAids.size} existing videos.`);
 
   if (total === 0) return 0;
 
-  let migrated = startOffset;
-  let offset = startOffset;
-  if (startOffset > 0) {
-    console.log(`  Starting from offset: ${startOffset}`);
-  }
+  let migrated = 0; // Count of newly migrated
+  let scanned = 0; // Count of rows scanned from DuckDB
+
+  // Use keyset pagination based on AID for specialized "diff" logic
+  // DuckDB 'aid' is BIGINT.
+  // We can scan just IDs in large batches to find what's missing.
+
+  const SCAN_BATCH_SIZE = 10000;
+  const INSERT_BATCH_SIZE = 100;
+
+  let lastAid = -1n;
   const tableStartTime = Date.now();
 
-  while (offset < total) {
-    const reader = await duckConn.runAndReadAll(
-      `SELECT * FROM processed_videos ORDER BY aid LIMIT ${BATCH_SIZE} OFFSET ${offset}`,
+  if (startOffset > 0) {
+    console.log(
+      "  Note: --offset ignored for optimized ID scanning (scanning is fast).",
     );
-    const rows = reader.getRowObjects();
+  }
 
-    // Filter out existing videos
-    const newRows = rows.filter((row: any) =>
-      !existingBvids.has(String(row.bvid))
+  while (scanned < total) {
+    // 1. Fetch a large batch of IDs only
+    const idReader = await duckConn.runAndReadAll(
+      `SELECT aid FROM processed_videos WHERE aid > ${lastAid} ORDER BY aid ASC LIMIT ${SCAN_BATCH_SIZE}`,
     );
-    const skippedCount = rows.length - newRows.length;
+    const idRows = idReader.getRowObjects();
 
-    if (newRows.length > 0) {
-      const client = await pool.connect();
-      try {
-        await client.query("BEGIN");
+    if (idRows.length === 0) break;
 
-        // 准备批量数据
-        const values: any[] = [];
-        const placeholders: string[] = [];
-        let paramIndex = 1;
+    // Update lastAid for next iteration
+    const lastRow = idRows[idRows.length - 1];
+    lastAid = BigInt(lastRow.aid);
 
-        for (let i = 0; i < newRows.length; i++) {
-          const row = newRows[i];
-
-          // Handle array conversions
-          const staff = convertArray(row.staff);
-          const tagNew = convertArray(row.tag_new);
-          const participle = convertArray(row.participle);
-
-          // Handle JSON fields
-          const extras = safeJsonStringify(row.extras);
-          const notes = safeJsonStringify(row.notes);
-
-          // Convert timestamps
-          const createdAt = convertTimestamp(row.created_at);
-          const updatedAt = convertTimestamp(row.updated_at);
-
-          const rowValues = [
-            String(row.aid),
-            String(row.bvid),
-            row.pubdate != null ? String(row.pubdate) : null,
-            sanitizeString(row.title),
-            sanitizeString(row.description),
-            sanitizeString(row.tag),
-            sanitizeString(row.pic),
-            row.type_id != null ? Number(row.type_id) : null,
-            row.user_id != null ? String(row.user_id) : null,
-            row.is_filtered,
-            createdAt,
-            updatedAt,
-            staff,
-            row.tid_v2 != null ? Number(row.tid_v2) : null,
-            sanitizeString(row.dynamic),
-            tagNew,
-            participle,
-            row.ctime != null ? String(row.ctime) : null,
-            row.is_deleted ?? false,
-            row.copyright != null ? Number(row.copyright) : null,
-            extras,
-            notes,
-          ];
-
-          values.push(...rowValues);
-
-          // 生成占位符 ($1, $2, ..., $22), ($23, $24, ..., $44), ...
-          const placeholderGroup = Array.from(
-            { length: 22 },
-            (_, j) => `$${paramIndex + j}`,
-          ).join(", ");
-          placeholders.push(`(${placeholderGroup})`);
-          paramIndex += 22;
-        }
-
-        // 执行批量插入
-        const query = `
-          INSERT INTO processed_videos
-            (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id, is_filtered,
-             created_at, updated_at, staff, tid_v2, dynamic, tag_new, participle, ctime,
-             is_deleted, copyright, extras, notes)
-          VALUES ${placeholders.join(", ")}
-          ON CONFLICT DO NOTHING
-        `;
-
-        await client.query(query, values);
-        await client.query("COMMIT");
-      } catch (err) {
-        await client.query("ROLLBACK");
-        throw err;
-      } finally {
-        client.release();
+    // 2. Identify missing IDs
+    const missingAids: string[] = [];
+    for (const row of idRows) {
+      const aidStr = row.aid.toString();
+      if (!existingAids.has(aidStr)) {
+        missingAids.push(aidStr);
       }
     }
 
-    migrated += rows.length;
-    offset += BATCH_SIZE;
+    scanned += idRows.length;
+    // const skippedCount = idRows.length - missingAids.length; // Not strictly per-chunk stats anymore
+
+    // 3. Fetch full data for missing IDs in smaller chunks
+    if (missingAids.length > 0) {
+      // Process missingAids in chunks
+      for (let i = 0; i < missingAids.length; i += INSERT_BATCH_SIZE) {
+        const chunk = missingAids.slice(i, i + INSERT_BATCH_SIZE);
+        const chunkIds = chunk.join(",");
+
+        // Fetch full rows for this chunk
+        const dataReader = await duckConn.runAndReadAll(
+          `SELECT * FROM processed_videos WHERE aid IN (${chunkIds})`,
+        );
+        const rows = dataReader.getRowObjects();
+
+        // Insert batch
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN");
+
+          const values: any[] = [];
+          const placeholders: string[] = [];
+          let paramIndex = 1;
+
+          for (let j = 0; j < rows.length; j++) {
+            const row = rows[j];
+
+            // Handle array conversions
+            const staff = convertArray(row.staff);
+            const tagNew = convertArray(row.tag_new);
+            const participle = convertArray(row.participle);
+
+            // Handle JSON fields
+            const extras = safeJsonStringify(row.extras);
+            const notes = safeJsonStringify(row.notes);
+
+            // Convert timestamps
+            const createdAt = convertTimestamp(row.created_at);
+            const updatedAt = convertTimestamp(row.updated_at);
+
+            const rowValues = [
+              String(row.aid),
+              String(row.bvid),
+              row.pubdate != null ? String(row.pubdate) : null,
+              sanitizeString(row.title),
+              sanitizeString(row.description),
+              sanitizeString(row.tag),
+              sanitizeString(row.pic),
+              row.type_id != null ? Number(row.type_id) : null,
+              row.user_id != null ? String(row.user_id) : null,
+              row.is_filtered,
+              createdAt,
+              updatedAt,
+              staff,
+              row.tid_v2 != null ? Number(row.tid_v2) : null,
+              sanitizeString(row.dynamic),
+              tagNew,
+              participle,
+              row.ctime != null ? String(row.ctime) : null,
+              row.is_deleted ?? false,
+              row.copyright != null ? Number(row.copyright) : null,
+              extras,
+              notes,
+            ];
+
+            values.push(...rowValues);
+
+            const placeholderGroup = Array.from(
+              { length: 22 },
+              (_, k) => `$${paramIndex + k}`,
+            ).join(", ");
+            placeholders.push(`(${placeholderGroup})`);
+            paramIndex += 22;
+          }
+
+          const query = `
+            INSERT INTO processed_videos
+              (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id, is_filtered,
+               created_at, updated_at, staff, tid_v2, dynamic, tag_new, participle, ctime,
+               is_deleted, copyright, extras, notes)
+            VALUES ${placeholders.join(", ")}
+            ON CONFLICT (aid) DO NOTHING
+          `;
+
+          await client.query(query, values);
+          await client.query("COMMIT");
+
+          migrated += rows.length;
+        } catch (err) {
+          await client.query("ROLLBACK");
+          throw err;
+        } finally {
+          client.release();
+        }
+      }
+    }
+
     const elapsed = (Date.now() - tableStartTime) / 1000;
-    const rate = (migrated - startOffset) / elapsed;
-    const remaining = total - migrated;
+    const rate = scanned / elapsed;
+    const remaining = total - scanned;
     const eta = formatEta(remaining / rate);
+
     process.stdout.write(
-      `\r  Migrated: ${migrated}/${total} | ETA: ${eta} | Skipped: ${skippedCount}   `,
+      `\r  Scanned: ${scanned}/${total} | Inserted: ${migrated} | Skipped: ${existingAids.size} (Total) | ETA: ${eta}   `,
     );
   }
 
