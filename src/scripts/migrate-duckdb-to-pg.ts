@@ -19,7 +19,7 @@
 import { DuckDBInstance } from "@duckdb/node-api";
 import { Pool } from "pg";
 
-const BATCH_SIZE = 5000;
+const BATCH_SIZE = 2000;
 
 (BigInt.prototype as any).toJSON = function () {
   return this.toString();
