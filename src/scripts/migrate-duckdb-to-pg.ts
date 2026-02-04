@@ -363,7 +363,7 @@ async function migrateProcessedVideos(
                created_at, updated_at, staff, tid_v2, dynamic, tag_new, participle, ctime,
                is_deleted, copyright, extras, notes)
             VALUES ${placeholders.join(", ")}
-            ON CONFLICT (aid) DO NOTHING
+            ON CONFLICT DO NOTHING
           `;
 
           await client.query(query, values);
