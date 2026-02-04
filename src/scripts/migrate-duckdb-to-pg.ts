@@ -21,6 +21,47 @@ import { Pool } from "pg";
 
 const BATCH_SIZE = 1000;
 
+(BigInt.prototype as any).toJSON = function () {
+  return this.toString();
+};
+
+/**
+ * 安全的 JSON 序列化
+ */
+function safeJsonStringify(obj: any): string | null {
+  if (!obj) return null;
+  return JSON.stringify(
+    obj,
+    (key, value) => typeof value === "bigint" ? value.toString() : value,
+  );
+}
+
+/**
+ * 转换 DuckDB 时间戳到 PostgreSQL 格式
+ */
+function convertTimestamp(ts: any): Date | null {
+  if (!ts) return null;
+
+  if (ts instanceof Date) return ts;
+
+  // DuckDB timestamp object with micros
+  if (typeof ts === "object" && ts.micros) {
+    const micros = BigInt(ts.micros);
+    const millis = Number(micros / 1000n);
+    return new Date(millis);
+  }
+
+  if (typeof ts === "string") {
+    return new Date(ts);
+  }
+
+  if (typeof ts === "number") {
+    return new Date(ts);
+  }
+
+  return null;
+}
+
 interface MigrationStats {
   processed_videos: number;
   forward_dynamics: number;
@@ -42,7 +83,9 @@ function parseArgs(): { duckdbPath: string; pgUrl: string } {
   }
 
   if (!duckdbPath || !pgUrl) {
-    console.error("Usage: npx tsx src/scripts/migrate-duckdb-to-pg.ts --duckdb <path> --pg <url>");
+    console.error(
+      "Usage: npx tsx src/scripts/migrate-duckdb-to-pg.ts --duckdb <path> --pg <url>",
+    );
     console.error("Example:");
     console.error("  npx tsx src/scripts/migrate-duckdb-to-pg.ts \\");
     console.error("    --duckdb ./exports/duckdb/12345.duckdb \\");
@@ -144,24 +187,32 @@ async function migrateProcessedVideos(
     );
     const rows = reader.getRowObjects();
 
-    for (const row of rows) {
-      // Handle array conversions
-      const staff = row.staff ? (row.staff as bigint[]).map(String) : null;
-      const tagNew = row.tag_new as string[] | null;
-      const participle = row.participle as string[] | null;
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
 
-      // Handle JSON fields
-      const extras = row.extras ? JSON.stringify(row.extras) : null;
-      const notes = row.notes ? JSON.stringify(row.notes) : null;
+      // 准备批量数据
+      const values: any[] = [];
+      const placeholders: string[] = [];
+      let paramIndex = 1;
 
-      await pool.query(
-        `INSERT INTO processed_videos
-          (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id, is_filtered,
-           created_at, updated_at, staff, tid_v2, dynamic, tag_new, participle, ctime,
-           is_deleted, copyright, extras, notes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
-         ON CONFLICT (aid) DO NOTHING`,
-        [
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+
+        // Handle array conversions
+        const staff = row.staff ? (row.staff as bigint[]).map(String) : null;
+        const tagNew = row.tag_new as string[] | null;
+        const participle = row.participle as string[] | null;
+
+        // Handle JSON fields
+        const extras = safeJsonStringify(row.extras);
+        const notes = safeJsonStringify(row.notes);
+
+        // Convert timestamps
+        const createdAt = convertTimestamp(row.created_at);
+        const updatedAt = convertTimestamp(row.updated_at);
+
+        const rowValues = [
           String(row.aid),
           row.bvid,
           row.pubdate != null ? String(row.pubdate) : null,
@@ -172,8 +223,8 @@ async function migrateProcessedVideos(
           row.type_id != null ? Number(row.type_id) : null,
           row.user_id != null ? String(row.user_id) : null,
           row.is_filtered,
-          row.created_at,
-          row.updated_at,
+          createdAt,
+          updatedAt,
           staff,
           row.tid_v2 != null ? Number(row.tid_v2) : null,
           row.dynamic,
@@ -184,9 +235,38 @@ async function migrateProcessedVideos(
           row.copyright != null ? Number(row.copyright) : null,
           extras,
           notes,
-        ],
-      );
-      migrated++;
+        ];
+
+        values.push(...rowValues);
+
+        // 生成占位符 ($1, $2, ..., $22), ($23, $24, ..., $44), ...
+        const placeholderGroup = Array.from(
+          { length: 22 },
+          (_, j) => `$${paramIndex + j}`,
+        ).join(", ");
+        placeholders.push(`(${placeholderGroup})`);
+        paramIndex += 22;
+      }
+
+      // 执行批量插入
+      const query = `
+        INSERT INTO processed_videos
+          (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id, is_filtered,
+           created_at, updated_at, staff, tid_v2, dynamic, tag_new, participle, ctime,
+           is_deleted, copyright, extras, notes)
+        VALUES ${placeholders.join(", ")}
+        ON CONFLICT (aid) DO NOTHING
+      `;
+
+      await client.query(query, values);
+      await client.query("COMMIT");
+
+      migrated += rows.length;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
     }
 
     offset += BATCH_SIZE;
@@ -220,14 +300,46 @@ async function migrateForwardDynamics(
     );
     const rows = reader.getRowObjects();
 
-    for (const row of rows) {
-      await pool.query(
-        `INSERT INTO forward_dynamics (forward_dynamic_id, original_bvid, created_at)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (forward_dynamic_id) DO NOTHING`,
-        [String(row.forward_dynamic_id), row.original_bvid, row.created_at],
-      );
-      migrated++;
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const values: any[] = [];
+      const placeholders: string[] = [];
+      let paramIndex = 1;
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const createdAt = convertTimestamp(row.created_at);
+
+        values.push(
+          String(row.forward_dynamic_id),
+          row.original_bvid,
+          createdAt,
+        );
+
+        const placeholderGroup = `($${paramIndex}, $${paramIndex + 1}, $${
+          paramIndex + 2
+        })`;
+        placeholders.push(placeholderGroup);
+        paramIndex += 3;
+      }
+
+      const query = `
+        INSERT INTO forward_dynamics (forward_dynamic_id, original_bvid, created_at)
+        VALUES ${placeholders.join(", ")}
+        ON CONFLICT (forward_dynamic_id) DO NOTHING
+      `;
+
+      await client.query(query, values);
+      await client.query("COMMIT");
+
+      migrated += rows.length;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
     }
 
     offset += BATCH_SIZE;
@@ -261,22 +373,52 @@ async function migrateRecommendations(
     );
     const rows = reader.getRowObjects();
 
-    for (const row of rows) {
-      await pool.query(
-        `INSERT INTO recommendations
-          (video_bvid, recommended_by_bvid, recommend_count, recommend_order, first_seen, last_seen)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (video_bvid, recommended_by_bvid) DO NOTHING`,
-        [
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const values: any[] = [];
+      const placeholders: string[] = [];
+      let paramIndex = 1;
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const firstSeen = convertTimestamp(row.first_seen);
+        const lastSeen = convertTimestamp(row.last_seen);
+
+        values.push(
           row.video_bvid,
           row.recommended_by_bvid,
           row.recommend_count,
           row.recommend_order,
-          row.first_seen,
-          row.last_seen,
-        ],
-      );
-      migrated++;
+          firstSeen,
+          lastSeen,
+        );
+
+        const placeholderGroup = Array.from(
+          { length: 6 },
+          (_, j) => `$${paramIndex + j}`,
+        ).join(", ");
+        placeholders.push(`(${placeholderGroup})`);
+        paramIndex += 6;
+      }
+
+      const query = `
+        INSERT INTO recommendations
+          (video_bvid, recommended_by_bvid, recommend_count, recommend_order, first_seen, last_seen)
+        VALUES ${placeholders.join(", ")}
+        ON CONFLICT (video_bvid, recommended_by_bvid) DO NOTHING
+      `;
+
+      await client.query(query, values);
+      await client.query("COMMIT");
+
+      migrated += rows.length;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
     }
 
     offset += BATCH_SIZE;
@@ -310,14 +452,20 @@ async function migrateDiscoveredUsers(
     );
     const rows = reader.getRowObjects();
 
-    for (const row of rows) {
-      await pool.query(
-        `INSERT INTO discovered_users
-          (user_id, user_name, fans, videos_seen, videos_filtered, filter_pass_rate,
-           discovered_from, discovered_at, is_following, last_updated)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         ON CONFLICT (user_id) DO NOTHING`,
-        [
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const values: any[] = [];
+      const placeholders: string[] = [];
+      let paramIndex = 1;
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const discoveredAt = convertTimestamp(row.discovered_at);
+        const lastUpdated = convertTimestamp(row.last_updated);
+
+        values.push(
           String(row.user_id),
           row.user_name,
           row.fans,
@@ -325,12 +473,36 @@ async function migrateDiscoveredUsers(
           row.videos_filtered,
           row.filter_pass_rate,
           row.discovered_from,
-          row.discovered_at,
+          discoveredAt,
           row.is_following,
-          row.last_updated,
-        ],
-      );
-      migrated++;
+          lastUpdated,
+        );
+
+        const placeholderGroup = Array.from(
+          { length: 10 },
+          (_, j) => `$${paramIndex + j}`,
+        ).join(", ");
+        placeholders.push(`(${placeholderGroup})`);
+        paramIndex += 10;
+      }
+
+      const query = `
+        INSERT INTO discovered_users
+          (user_id, user_name, fans, videos_seen, videos_filtered, filter_pass_rate,
+           discovered_from, discovered_at, is_following, last_updated)
+        VALUES ${placeholders.join(", ")}
+        ON CONFLICT (user_id) DO NOTHING
+      `;
+
+      await client.query(query, values);
+      await client.query("COMMIT");
+
+      migrated += rows.length;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
     }
 
     offset += BATCH_SIZE;
@@ -344,21 +516,23 @@ async function migrateDiscoveredUsers(
 async function main() {
   const { duckdbPath, pgUrl } = parseArgs();
 
-  console.log("=== DuckDB to PostgreSQL Migration ===");
+  console.log("=== DuckDB to PostgreSQL Migration (Optimized) ===");
   console.log(`DuckDB: ${duckdbPath}`);
   console.log(`PostgreSQL: ${pgUrl.replace(/:[^:@]+@/, ":***@")}`);
   console.log();
 
   // Connect to DuckDB
   console.log("Connecting to DuckDB...");
-  const duckdb = await DuckDBInstance.create(duckdbPath, { access_mode: "READ_ONLY" });
+  const duckdb = await DuckDBInstance.create(duckdbPath, {
+    access_mode: "READ_ONLY",
+  });
   const duckConn = await duckdb.connect();
 
   // Connect to PostgreSQL
   console.log("Connecting to PostgreSQL...");
   const pool = new Pool({
     connectionString: pgUrl,
-    max: 5,
+    max: 20,
   });
   await pool.query("SELECT 1"); // Test connection
 
@@ -367,6 +541,8 @@ async function main() {
   // Initialize schema
   await initPgSchema(pool);
   console.log();
+
+  const startTime = Date.now();
 
   // Migrate tables
   const stats: MigrationStats = {
@@ -383,16 +559,37 @@ async function main() {
 
   // Create indexes
   console.log("\nCreating indexes...");
-  await pool.query("CREATE INDEX IF NOT EXISTS idx_processed_bvid ON processed_videos(bvid)");
-  await pool.query("CREATE INDEX IF NOT EXISTS idx_processed_user ON processed_videos(user_id)");
-  await pool.query("CREATE INDEX IF NOT EXISTS idx_processed_filtered ON processed_videos(is_filtered)");
-  await pool.query("CREATE INDEX IF NOT EXISTS idx_forward_bvid ON forward_dynamics(original_bvid)");
-  await pool.query("CREATE INDEX IF NOT EXISTS idx_rec_video ON recommendations(video_bvid)");
-  await pool.query("CREATE INDEX IF NOT EXISTS idx_rec_count ON recommendations(recommend_count DESC)");
-  await pool.query("CREATE INDEX IF NOT EXISTS idx_user_source ON discovered_users(discovered_from)");
-  await pool.query("CREATE INDEX IF NOT EXISTS idx_user_rate ON discovered_users(filter_pass_rate DESC)");
-  await pool.query("CREATE INDEX IF NOT EXISTS idx_user_fans ON discovered_users(fans DESC)");
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS idx_processed_bvid ON processed_videos(bvid)",
+  );
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS idx_processed_user ON processed_videos(user_id)",
+  );
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS idx_processed_filtered ON processed_videos(is_filtered)",
+  );
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS idx_forward_bvid ON forward_dynamics(original_bvid)",
+  );
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS idx_rec_video ON recommendations(video_bvid)",
+  );
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS idx_rec_count ON recommendations(recommend_count DESC)",
+  );
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS idx_user_source ON discovered_users(discovered_from)",
+  );
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS idx_user_rate ON discovered_users(filter_pass_rate DESC)",
+  );
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS idx_user_fans ON discovered_users(fans DESC)",
+  );
   console.log("Indexes created.");
+
+  const endTime = Date.now();
+  const duration = ((endTime - startTime) / 1000).toFixed(2);
 
   // Summary
   console.log("\n=== Migration Complete ===");
@@ -400,6 +597,7 @@ async function main() {
   console.log(`forward_dynamics: ${stats.forward_dynamics} rows`);
   console.log(`recommendations: ${stats.recommendations} rows`);
   console.log(`discovered_users: ${stats.discovered_users} rows`);
+  console.log(`\nTotal time: ${duration}s`);
 
   // Cleanup
   await pool.end();
