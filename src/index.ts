@@ -45,9 +45,14 @@ async function main() {
   // Check for tool mode
   if (args.includes("--repair")) {
     const repairIndex = args.indexOf("--repair");
-    const filter = args[repairIndex + 1];
+    const filterCandidate = args[repairIndex + 1];
+    const filter =
+      filterCandidate && !filterCandidate.startsWith("--")
+        ? filterCandidate
+        : undefined;
+    const fixAids = args.includes("--fix-aids");
     const { runRepairVideos } = await import("./scripts/repair-videos");
-    await runRepairVideos(filter);
+    await runRepairVideos(filter, { fixAids });
     return;
   }
 
