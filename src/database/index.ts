@@ -32,6 +32,7 @@ import {
   getProcessedVideos,
   hasProcessedVideo,
   hasProcessedVideoById,
+  markVideoDeleted,
   markVideoProcessed,
 } from "./videos.js";
 
@@ -136,6 +137,19 @@ export class Database {
    */
   public async getAllProcessedIds(type: "aid" | "bvid"): Promise<Set<string>> {
     return this.withMutex(() => getAllProcessedIds(this.ensurePool(), type));
+  }
+
+  /**
+   * Mark a video as deleted, preserving existing fields.
+   * Optionally records the API error code and message in notes.
+   */
+  public async markVideoDeleted(
+    bvid: string,
+    notes?: { api_code?: number; api_message?: string },
+  ): Promise<void> {
+    return this.withMutex(() =>
+      markVideoDeleted(this.ensurePool(), bvid, notes),
+    );
   }
 
   /**

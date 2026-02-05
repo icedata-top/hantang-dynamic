@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import type { VideoData } from "../types/models/video.js";
+import { bv2av } from "../utils/bvid.js";
 
 /**
  * Check if a video has been processed
@@ -159,6 +160,39 @@ export async function getProcessedVideos(
     extras: row.extras ? row.extras : undefined,
     notes: row.notes ? row.notes : undefined,
   }));
+}
+
+/**
+ * Mark a video as deleted, preserving existing fields if the row already exists.
+ * Uses UPDATE-first to avoid overwriting real data; falls back to INSERT for new rows.
+ */
+export async function markVideoDeleted(
+  pool: Pool,
+  bvid: string,
+  notes?: { api_code?: number; api_message?: string },
+): Promise<void> {
+  const notesJson = notes ? JSON.stringify(notes) : null;
+
+  const result = await pool.query(
+    `UPDATE processed_videos
+     SET is_deleted = true, notes = $1, updated_at = NOW()
+     WHERE bvid = $2`,
+    [notesJson, bvid],
+  );
+
+  if (result.rowCount === 0) {
+    // Video not yet tracked — insert a minimal record with the computed aid
+    const aid = bv2av(bvid);
+    await pool.query(
+      `INSERT INTO processed_videos (aid, bvid, is_filtered, is_deleted, notes)
+       VALUES ($1, $2, false, true, $3)
+       ON CONFLICT (bvid) DO UPDATE SET
+         is_deleted = true,
+         notes = EXCLUDED.notes,
+         updated_at = NOW()`,
+      [aid.toString(), bvid, notesJson],
+    );
+  }
 }
 
 /**
