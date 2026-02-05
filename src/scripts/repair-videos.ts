@@ -20,11 +20,9 @@ async function processVideo(
 
     if (video) {
       logger.info(
-        `[${index}/${total}] ${bvid}: aid=${BigInt(video.aid)}, user_id=${
-          BigInt(
-            video.user_id,
-          )
-        }`,
+        `[${index}/${total}] ${bvid}: aid=${BigInt(video.aid)}, user_id=${BigInt(
+          video.user_id,
+        )}`,
       );
       return { success: true, skipped: false };
     }
@@ -33,9 +31,10 @@ async function processVideo(
     // logger.warn(`[${index}/${total}] Video ${bvid} not found or filtered`);
     return { success: false, skipped: true };
   } catch (error) {
-    const errorMsg = error instanceof Error
-      ? error.message
-      : JSON.stringify(error) || String(error);
+    const errorMsg =
+      error instanceof Error
+        ? error.message
+        : JSON.stringify(error) || String(error);
     logger.error(`[${index}/${total}] Error processing ${bvid}: ${errorMsg}`);
     return { success: false, skipped: false };
   }
@@ -60,9 +59,8 @@ async function runWithPool<T, R>(
     }
   }
 
-  const workers = Array.from(
-    { length: Math.min(poolSize, items.length) },
-    () => worker(),
+  const workers = Array.from({ length: Math.min(poolSize, items.length) }, () =>
+    worker(),
   );
 
   await Promise.all(workers);

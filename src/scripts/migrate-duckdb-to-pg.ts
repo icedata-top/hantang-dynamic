@@ -30,9 +30,8 @@ const BATCH_SIZE = 2000;
  */
 function safeJsonStringify(obj: any): string | null {
   if (!obj) return null;
-  const json = JSON.stringify(
-    obj,
-    (key, value) => typeof value === "bigint" ? value.toString() : value,
+  const json = JSON.stringify(obj, (_key, value) =>
+    typeof value === "bigint" ? value.toString() : value,
   );
   // Remove null bytes which are not allowed in Postgres JSONB
   return json.replace(/\u0000/g, "");
