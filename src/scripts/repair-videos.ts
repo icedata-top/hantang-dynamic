@@ -86,7 +86,7 @@ export async function runRepairVideos(
 
   try {
     if (options.fixAids) {
-      logger.info("\n=== Repairing aid mismatches ===");
+      logger.info("=== Repairing aid mismatches ===");
       await repairAids(db);
     }
     // Use lightweight getBvidList instead of loading full VideoData objects
