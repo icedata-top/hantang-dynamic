@@ -8,7 +8,6 @@ import type {
   UserStatsUpdate,
 } from "../types/models/database.js";
 import type { VideoData } from "../types/models/video.js";
-import { AsyncMutex } from "../utils/asyncMutex.js";
 import { logger } from "../utils/logger.js";
 
 // Import operation modules
@@ -39,12 +38,10 @@ import {
 /**
  * PostgreSQL database manager - singleton pattern
  * Manages database connection pool, schema initialization, and CRUD operations
- * Thread-safe through mutex locking
  */
 export class Database {
   private static instance: Database | null = null;
   private pool: Pool | null = null;
-  private mutex = new AsyncMutex();
 
   private constructor() {}
 
@@ -73,7 +70,7 @@ export class Database {
       // Create connection pool
       this.pool = new Pool({
         connectionString: url,
-        max: 10,
+        max: config.application.concurrencyLimit || 20,
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 10000,
       });
@@ -93,18 +90,6 @@ export class Database {
   }
 
   /**
-   * Execute a database operation with mutex protection
-   */
-  private async withMutex<T>(operation: () => Promise<T>): Promise<T> {
-    const release = await this.mutex.acquire();
-    try {
-      return await operation();
-    } finally {
-      release();
-    }
-  }
-
-  /**
    * Ensure pool is available
    */
   private ensurePool(): Pool {
@@ -120,7 +105,7 @@ export class Database {
    * Check if a video has been processed
    */
   public async hasProcessedVideo(bvid: string): Promise<boolean> {
-    return this.withMutex(() => hasProcessedVideo(this.ensurePool(), bvid));
+    return hasProcessedVideo(this.ensurePool(), bvid);
   }
 
   /**
@@ -129,14 +114,14 @@ export class Database {
   public async hasProcessedVideoById(
     id: string | number | bigint,
   ): Promise<boolean> {
-    return this.withMutex(() => hasProcessedVideoById(this.ensurePool(), id));
+    return hasProcessedVideoById(this.ensurePool(), id);
   }
 
   /**
    * Get all processed video IDs of a specific type (aid or bvid)
    */
   public async getAllProcessedIds(type: "aid" | "bvid"): Promise<Set<string>> {
-    return this.withMutex(() => getAllProcessedIds(this.ensurePool(), type));
+    return getAllProcessedIds(this.ensurePool(), type);
   }
 
   /**
@@ -147,9 +132,7 @@ export class Database {
     bvid: string,
     notes?: { api_code?: number; api_message?: string },
   ): Promise<void> {
-    return this.withMutex(() =>
-      markVideoDeleted(this.ensurePool(), bvid, notes),
-    );
+    return markVideoDeleted(this.ensurePool(), bvid, notes);
   }
 
   /**
@@ -159,9 +142,7 @@ export class Database {
     video: VideoData,
     filtered: boolean,
   ): Promise<void> {
-    return this.withMutex(() =>
-      markVideoProcessed(this.ensurePool(), video, filtered),
-    );
+    return markVideoProcessed(this.ensurePool(), video, filtered);
   }
 
   /**
@@ -171,16 +152,14 @@ export class Database {
     limit?: number,
     where?: string,
   ): Promise<VideoData[]> {
-    return this.withMutex(() =>
-      getProcessedVideos(this.ensurePool(), limit, where),
-    );
+    return getProcessedVideos(this.ensurePool(), limit, where);
   }
 
   /**
    * Get list of bvids only (lightweight, for batch processing)
    */
   public async getBvidList(where?: string): Promise<string[]> {
-    return this.withMutex(() => getBvidList(this.ensurePool(), where));
+    return getBvidList(this.ensurePool(), where);
   }
 
   // ===== Forward Dynamics Operations =====
@@ -189,18 +168,14 @@ export class Database {
    * Get cached forward dynamic BVID
    */
   public async getCachedForwardBvid(dynamicId: string): Promise<string | null> {
-    return this.withMutex(() =>
-      getCachedForwardBvid(this.ensurePool(), dynamicId),
-    );
+    return getCachedForwardBvid(this.ensurePool(), dynamicId);
   }
 
   /**
    * Cache forward dynamic relationship
    */
   public async cacheForward(dynamicId: string, bvid: string): Promise<void> {
-    return this.withMutex(() =>
-      cacheForward(this.ensurePool(), dynamicId, bvid),
-    );
+    return cacheForward(this.ensurePool(), dynamicId, bvid);
   }
 
   // ===== User Operations =====
@@ -209,14 +184,14 @@ export class Database {
    * Check if a user exists in the database
    */
   public async hasUser(userId: bigint): Promise<boolean> {
-    return this.withMutex(() => hasUser(this.ensurePool(), userId));
+    return hasUser(this.ensurePool(), userId);
   }
 
   /**
    * Add a discovered user
    */
   public async addDiscoveredUser(user: DiscoveredUserData): Promise<void> {
-    return this.withMutex(() => addDiscoveredUser(this.ensurePool(), user));
+    return addDiscoveredUser(this.ensurePool(), user);
   }
 
   /**
@@ -226,9 +201,7 @@ export class Database {
     userId: bigint,
     stats: UserStatsUpdate,
   ): Promise<void> {
-    return this.withMutex(() =>
-      updateUserStats(this.ensurePool(), userId, stats),
-    );
+    return updateUserStats(this.ensurePool(), userId, stats);
   }
 
   /**
@@ -238,9 +211,7 @@ export class Database {
     orderBy: "filter_pass_rate" | "fans",
     limit: number,
   ): Promise<UserData[]> {
-    return this.withMutex(() =>
-      getTopDiscoveredUsers(this.ensurePool(), orderBy, limit),
-    );
+    return getTopDiscoveredUsers(this.ensurePool(), orderBy, limit);
   }
 
   // ===== Recommendation Operations =====
@@ -251,9 +222,7 @@ export class Database {
   public async trackRecommendationsBatch(
     recommendations: RecommendationInput[],
   ): Promise<void> {
-    return this.withMutex(() =>
-      trackRecommendationsBatch(this.ensurePool(), recommendations),
-    );
+    return trackRecommendationsBatch(this.ensurePool(), recommendations);
   }
 
   /**
@@ -262,9 +231,7 @@ export class Database {
   public async getTopRecommendedVideos(
     limit: number,
   ): Promise<RecommendationData[]> {
-    return this.withMutex(() =>
-      getTopRecommendedVideos(this.ensurePool(), limit),
-    );
+    return getTopRecommendedVideos(this.ensurePool(), limit);
   }
 
   // ===== Stats Operations =====
@@ -273,7 +240,7 @@ export class Database {
    * Get database statistics
    */
   public async getStats(): Promise<DatabaseStats> {
-    return this.withMutex(() => getStats(this.ensurePool()));
+    return getStats(this.ensurePool());
   }
 
   // ===== Connection Management =====
