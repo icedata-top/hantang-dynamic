@@ -158,7 +158,8 @@ function createClient(baseURL: string, skipCookie = false): AxiosInstance {
         response.data.code !== 404 &&
         response.data.code !== -404 &&
         response.data.code !== 62012 &&
-        response.data.code !== 62002
+        response.data.code !== 62002 &&
+        response.data.code !== 62004
       ) {
         const message =
           `API Error:\n` +

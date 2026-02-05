@@ -143,23 +143,26 @@ export class DetailsService {
         logger.debug(
           `Video ${bvidFromError} has been deleted, marking as processed`,
         );
+        await this.db.markVideoDeleted(bvidFromError);
+        return { video: null, relatedVideos: [] };
+      }
 
-        // Mark as processed with 'passed=false' and 'is_deleted=true' since video was deleted
-        // We need to create minimal VideoData for the database
-        const minimalVideoData: VideoData = {
-          aid: BigInt(typeof id === "number" ? id : 0),
-          bvid: bvidFromError,
-          pubdate: 0,
-          title: "",
-          description: "",
-          tag: "",
-          pic: "",
-          type_id: 0,
-          user_id: BigInt(0),
-          copyright: 0,
-          is_deleted: true,
-        };
-        await this.db.markVideoProcessed(minimalVideoData, false);
+      // Handle videos that are invisible / under review / private (62002/62004/62012)
+      if (
+        error instanceof Error &&
+        error.message.startsWith("VIDEO_UNAVAILABLE:")
+      ) {
+        const parts = error.message.split(":");
+        const bvidFromError = parts[1] || String(id);
+        const apiCode = Number(parts[2]);
+        const apiMessage = parts.slice(3).join(":") || "";
+        logger.debug(
+          `Video ${bvidFromError} unavailable (code ${apiCode}: ${apiMessage}), marking as deleted`,
+        );
+        await this.db.markVideoDeleted(bvidFromError, {
+          api_code: apiCode,
+          api_message: apiMessage,
+        });
         return { video: null, relatedVideos: [] };
       }
 

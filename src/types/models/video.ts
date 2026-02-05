@@ -86,6 +86,8 @@ interface VideoNotes {
   check_status?: "unqualified" | "pending" | "checked";
   video_category?: "non_vocaloid" | "chinese_v" | "japanese_v" | string;
   custom_tags?: string[];
+  api_code?: number;
+  api_message?: string;
 }
 
 /**

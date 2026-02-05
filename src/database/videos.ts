@@ -164,7 +164,8 @@ export async function getProcessedVideos(
 
 /**
  * Mark a video as deleted, preserving existing fields if the row already exists.
- * Uses UPDATE-first to avoid overwriting real data; falls back to INSERT for new rows.
+ * Sets aid to the value computed from bvid.
+ * Note: if stale aid collisions exist, run `--repair --fix-aids` first.
  */
 export async function markVideoDeleted(
   pool: Pool,
@@ -172,27 +173,18 @@ export async function markVideoDeleted(
   notes?: { api_code?: number; api_message?: string },
 ): Promise<void> {
   const notesJson = notes ? JSON.stringify(notes) : null;
+  const correctAid = bv2av(bvid);
 
-  const result = await pool.query(
-    `UPDATE processed_videos
-     SET is_deleted = true, notes = $1, updated_at = NOW()
-     WHERE bvid = $2`,
-    [notesJson, bvid],
+  await pool.query(
+    `INSERT INTO processed_videos (aid, bvid, is_filtered, is_deleted, notes)
+     VALUES ($1, $2, false, true, $3)
+     ON CONFLICT (bvid) DO UPDATE SET
+       aid = EXCLUDED.aid,
+       is_deleted = true,
+       notes = EXCLUDED.notes,
+       updated_at = NOW()`,
+    [correctAid.toString(), bvid, notesJson],
   );
-
-  if (result.rowCount === 0) {
-    // Video not yet tracked — insert a minimal record with the computed aid
-    const aid = bv2av(bvid);
-    await pool.query(
-      `INSERT INTO processed_videos (aid, bvid, is_filtered, is_deleted, notes)
-       VALUES ($1, $2, false, true, $3)
-       ON CONFLICT (bvid) DO UPDATE SET
-         is_deleted = true,
-         notes = EXCLUDED.notes,
-         updated_at = NOW()`,
-      [aid.toString(), bvid, notesJson],
-    );
-  }
 }
 
 /**
