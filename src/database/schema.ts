@@ -7,17 +7,6 @@ import { logger } from "../utils/logger.js";
 export async function initializeSchema(pool: Pool): Promise<void> {
   logger.info("Initializing database schema");
 
-  // Enable TimescaleDB extension if not already enabled
-  try {
-    await pool.query(`CREATE EXTENSION IF NOT EXISTS timescaledb`);
-    logger.info("TimescaleDB extension enabled");
-  } catch (error) {
-    logger.warn(
-      "Failed to enable TimescaleDB extension. Video daily stats will use regular table.",
-      error,
-    );
-  }
-
   // Create processed_videos table
   await pool.query(`
     CREATE TABLE IF NOT EXISTS processed_videos (
@@ -131,87 +120,6 @@ export async function initializeSchema(pool: Pool): Promise<void> {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_user_fans
     ON discovered_users(fans DESC)
-  `);
-
-  // Create video_daily table for time-series statistics
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS video_daily (
-      record_date DATE NOT NULL,
-      aid BIGINT NOT NULL,
-      coin INTEGER NOT NULL DEFAULT 0,
-      favorite INTEGER NOT NULL DEFAULT 0,
-      danmaku INTEGER NOT NULL DEFAULT 0,
-      view INTEGER NOT NULL DEFAULT 0,
-      reply INTEGER NOT NULL DEFAULT 0,
-      share INTEGER NOT NULL DEFAULT 0,
-      "like" INTEGER NOT NULL DEFAULT 0,
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (record_date, aid)
-    )
-  `);
-
-  // Convert to TimescaleDB hypertable if extension is available
-  try {
-    // Check if table is already a hypertable
-    const hypertableCheck = await pool.query(`
-      SELECT * FROM timescaledb_information.hypertables
-      WHERE hypertable_name = 'video_daily'
-    `);
-
-    if (hypertableCheck.rows.length === 0) {
-      await pool.query(`
-        SELECT create_hypertable('video_daily', 'record_date',
-          if_not_exists => TRUE,
-          chunk_time_interval => INTERVAL '7 days'
-        )
-      `);
-      logger.info("video_daily converted to TimescaleDB hypertable");
-
-      // Add compression policy (compress data older than 7 days)
-      await pool.query(`
-        ALTER TABLE video_daily SET (
-          timescaledb.compress,
-          timescaledb.compress_segmentby = 'aid'
-        )
-      `);
-
-      await pool.query(`
-        SELECT add_compression_policy('video_daily',
-          INTERVAL '7 days',
-          if_not_exists => TRUE
-        )
-      `);
-      logger.info("Compression policy added for video_daily");
-
-      // Optional: Add data retention policy (keep data for 1 year)
-      // Uncomment if you want automatic data cleanup
-      // await pool.query(`
-      //   SELECT add_retention_policy('video_daily',
-      //     INTERVAL '1 year',
-      //     if_not_exists => TRUE
-      //   )
-      // `);
-    }
-  } catch (_error) {
-    logger.warn(
-      "TimescaleDB hypertable setup skipped (extension not available)",
-    );
-  }
-
-  // Create indexes for video_daily
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_video_daily_aid
-    ON video_daily(aid, record_date DESC)
-  `);
-
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_video_daily_view
-    ON video_daily(view DESC)
-  `);
-
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_video_daily_date
-    ON video_daily(record_date DESC)
   `);
 
   logger.info("Database schema initialized");
