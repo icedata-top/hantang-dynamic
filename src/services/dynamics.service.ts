@@ -82,7 +82,8 @@ export class DynamicsService {
           // 过滤有效卡片
           const validCards = response.data.cards.filter((card) => {
             const isTimestampValid = card.desc.timestamp > minTimestamp;
-            const isDynamicIdValid = card.desc.dynamic_id > minDynamicId;
+            const isDynamicIdValid =
+              BigInt(card.desc.dynamic_id_str) > minDynamicId;
             return isTimestampValid && isDynamicIdValid;
           });
 

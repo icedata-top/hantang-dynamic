@@ -123,7 +123,7 @@ export class DynamicTracker {
 
       // Update per-type max watermark
       for (const card of cards) {
-        const id = card.desc.dynamic_id;
+        const id = BigInt(card.desc.dynamic_id_str);
         const prev = maxIdByType.get(typeCode) ?? BigInt(0);
         if (id > prev) maxIdByType.set(typeCode, id);
       }

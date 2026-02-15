@@ -23,6 +23,9 @@ export async function initDynamicsSchema(pool: Pool): Promise<void> {
   await pool.query(`ALTER TABLE dynamics ALTER COLUMN user_id DROP NOT NULL`);
   await pool.query(`ALTER TABLE dynamics ALTER COLUMN timestamp DROP NOT NULL`);
 
+  // Add title column for article dynamics (type=64)
+  await pool.query(`ALTER TABLE dynamics ADD COLUMN IF NOT EXISTS title TEXT`);
+
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_dynamics_user_id
     ON dynamics(user_id)

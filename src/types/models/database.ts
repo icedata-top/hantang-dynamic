@@ -105,8 +105,10 @@ export interface DynamicData {
   origDynamicId?: bigint;
   /** Type of the original dynamic (type=1) */
   origType?: number;
-  /** Caption text (type=8) or post body (type=4) */
+  /** Caption text (type=8) or post body (type=4) or article summary (type=64) */
   textContent?: string;
+  /** Article title (type=64) */
+  title?: string;
   /** Text written when forwarding (type=1) */
   forwardText?: string;
   /** Image list (type=2) */

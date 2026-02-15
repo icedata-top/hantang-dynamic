@@ -190,9 +190,9 @@ export class DetailsService {
   }
 
   private async resolveForward(dynamic: BiliDynamicCard): Promise<string> {
-    const dynamicId = dynamic.desc.dynamic_id;
+    const dynamicId = dynamic.desc.dynamic_id_str;
 
-    const cachedBvid = await this.db.getCachedForwardBvid(dynamicId.toString());
+    const cachedBvid = await this.db.getCachedForwardBvid(dynamicId);
     if (cachedBvid) {
       return cachedBvid;
     }
@@ -365,6 +365,7 @@ export class DetailsService {
       }
 
       let textContent: string | undefined;
+      let title: string | undefined;
       let forwardText: string | undefined;
       let images:
         | Array<{ img_src: string; img_width?: number; img_height?: number }>
@@ -375,9 +376,35 @@ export class DetailsService {
         switch (dynamic.desc.type) {
           case 8: // Video post — caption text lives in card.dynamic
             textContent = (card.dynamic as string | undefined) || undefined;
+            // Video data is fully captured in processed_videos; skip storing the card.
+            card = undefined;
             break;
           case 1: // Forward — text written by the forwarder
             forwardText = (item?.content as string | undefined) || undefined;
+            // Strip origin (original video's card string) — data lives in processed_videos.
+            // Patch imprecise number IDs in item with precise _str values.
+            if (item) {
+              const patchedItem = { ...item };
+              if (dynamic.desc.dynamic_id_str)
+                patchedItem.rp_id = dynamic.desc.dynamic_id_str;
+              if (
+                dynamic.desc.orig_dy_id_str &&
+                dynamic.desc.orig_dy_id_str !== "0"
+              )
+                patchedItem.orig_dy_id = dynamic.desc.orig_dy_id_str;
+              if (
+                dynamic.desc.pre_dy_id_str &&
+                dynamic.desc.pre_dy_id_str !== "0"
+              )
+                patchedItem.pre_dy_id = dynamic.desc.pre_dy_id_str;
+              const stripped = { ...card, item: patchedItem };
+              if ("origin" in stripped) delete stripped.origin;
+              card = stripped;
+            } else if ("origin" in card) {
+              const stripped = { ...card };
+              delete stripped.origin;
+              card = stripped;
+            }
             break;
           case 2: // Image post
             textContent =
@@ -390,10 +417,22 @@ export class DetailsService {
                     img_height?: number;
                   }>
                 | undefined) || undefined;
+            // Text and images are in dedicated columns; card is redundant.
+            card = undefined;
             break;
           case 4: // Text-only post
             textContent = (item?.content as string | undefined) || undefined;
             break;
+          case 64: {
+            // Article post
+            title = (card.title as string | undefined) || undefined;
+            textContent = (card.summary as string | undefined) || undefined;
+            const rawImageUrls = card.image_urls as string[] | undefined;
+            if (rawImageUrls?.length) {
+              images = rawImageUrls.map((src) => ({ img_src: src }));
+            }
+            break;
+          }
         }
       }
 
@@ -402,18 +441,16 @@ export class DetailsService {
         (dynamic.desc.bvid ? dynamic.desc.bvid : undefined) ||
         (dynamic.desc.origin?.bvid ? dynamic.desc.origin.bvid : undefined);
 
+      const origDyIdStr = dynamic.desc.orig_dy_id_str;
       const origDyId =
-        dynamic.desc.orig_dy_id && dynamic.desc.orig_dy_id !== BigInt(0)
-          ? dynamic.desc.orig_dy_id
-          : undefined;
+        origDyIdStr && origDyIdStr !== "0" ? BigInt(origDyIdStr) : undefined;
 
-      const origType =
-        dynamic.desc.orig_type && dynamic.desc.orig_type !== BigInt(0)
-          ? Number(dynamic.desc.orig_type)
-          : undefined;
+      const origType = dynamic.desc.orig_type
+        ? Number(dynamic.desc.orig_type)
+        : undefined;
 
       const data: DynamicData = {
-        dynamicId: dynamic.desc.dynamic_id,
+        dynamicId: BigInt(dynamic.desc.dynamic_id_str),
         userId: dynamic.desc.uid,
         type: dynamic.desc.type,
         timestamp: dynamic.desc.timestamp,
@@ -421,6 +458,7 @@ export class DetailsService {
         origDynamicId: origDyId,
         origType,
         textContent,
+        title,
         forwardText,
         images,
         card,
