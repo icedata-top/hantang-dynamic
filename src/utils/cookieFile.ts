@@ -182,6 +182,24 @@ export function writeCookieJarToNetscape(
 }
 
 /**
+ * Get all cookies from the jar as a semicolon-separated string for use in Cookie header.
+ */
+export function getAllCookiesAsString(
+  jar: CookieJar,
+  domainPattern = "bilibili.com",
+): string {
+  try {
+    const url = domainPattern.startsWith("www.")
+      ? `https://${domainPattern}`
+      : `https://www.${domainPattern}`;
+    const cookies = jar.getCookiesSync(url, { allPaths: true });
+    return cookies.map((c) => `${c.key}=${c.value}`).join("; ");
+  } catch {
+    return "";
+  }
+}
+
+/**
  * Extract a specific cookie value from the jar by name and optional domain pattern.
  */
 export function getCookieValue(

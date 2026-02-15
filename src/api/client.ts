@@ -9,7 +9,7 @@ import { config } from "../config";
 import { StateManager } from "../core/state";
 import {
   createCookieJarFromNetscape,
-  getCookieValue,
+  getAllCookiesAsString,
   parseNetscapeCookieFile,
   writeCookieJarToNetscape,
 } from "../utils/cookieFile";
@@ -227,14 +227,9 @@ function createClient(baseURL: string, skipCookie = false): AxiosInstance {
 function getCookieString(stateManager: StateManager): string {
   const jar = getGlobalCookieJar();
 
-  // If using cookie jar, extract cookies from there
+  // If using cookie jar, use the full cookie string from the jar
   if (jar) {
-    const sessdata = getCookieValue(jar, "SESSDATA") || "";
-    const biliJct = getCookieValue(jar, "bili_jct") || "";
-    let cookie = `SESSDATA=${sessdata}`;
-    if (biliJct) {
-      cookie += `; bili_jct=${biliJct}`;
-    }
+    let cookie = getAllCookiesAsString(jar);
     if (stateManager.biliTicket) {
       cookie += `; bili_ticket=${stateManager.biliTicket}`;
     }
