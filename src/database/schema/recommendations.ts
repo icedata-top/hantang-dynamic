@@ -13,16 +13,8 @@ export async function initRecommendationsSchema(pool: Pool): Promise<void> {
     )
   `);
 
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_rec_video
-    ON recommendations(video_aid)
-  `);
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_rec_count
-    ON recommendations(recommend_count DESC)
-  `);
-
   // Migration: rename bvid columns to aid (BIGINT) for existing databases
+  // Must run before index creation so video_aid is guaranteed to exist.
   await pool.query(`
     DO $$
     BEGIN
@@ -53,5 +45,15 @@ export async function initRecommendationsSchema(pool: Pool): Promise<void> {
         ALTER TABLE recommendations ADD PRIMARY KEY (video_aid, recommended_by_aid);
       END IF;
     END $$
+  `);
+
+  // Create indexes after migration so video_aid is guaranteed to exist
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_rec_video
+    ON recommendations(video_aid)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_rec_count
+    ON recommendations(recommend_count DESC)
   `);
 }
