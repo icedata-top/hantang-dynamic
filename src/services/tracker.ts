@@ -130,7 +130,6 @@ export class DynamicTracker {
             await this.detailsService.processVideo(
               dynamic,
               enableRecommendation && depth < maxDepth,
-              depth > 0 ? "recommendation" : "following",
             );
 
           if (video) {

@@ -37,17 +37,17 @@ export async function initializeSchema(pool: Pool): Promise<void> {
 
   // Create indexes for processed_videos
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_processed_bvid 
+    CREATE INDEX IF NOT EXISTS idx_processed_bvid
     ON processed_videos(bvid)
   `);
 
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_processed_user 
+    CREATE INDEX IF NOT EXISTS idx_processed_user
     ON processed_videos(user_id)
   `);
 
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_processed_filtered 
+    CREATE INDEX IF NOT EXISTS idx_processed_filtered
     ON processed_videos(is_filtered)
   `);
 
@@ -62,7 +62,7 @@ export async function initializeSchema(pool: Pool): Promise<void> {
 
   // Create index for forward_dynamics
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_forward_bvid 
+    CREATE INDEX IF NOT EXISTS idx_forward_bvid
     ON forward_dynamics(original_bvid)
   `);
 
@@ -81,12 +81,12 @@ export async function initializeSchema(pool: Pool): Promise<void> {
 
   // Create indexes for recommendations
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_rec_video 
+    CREATE INDEX IF NOT EXISTS idx_rec_video
     ON recommendations(video_bvid)
   `);
 
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_rec_count 
+    CREATE INDEX IF NOT EXISTS idx_rec_count
     ON recommendations(recommend_count DESC)
   `);
 
@@ -95,11 +95,11 @@ export async function initializeSchema(pool: Pool): Promise<void> {
     CREATE TABLE IF NOT EXISTS discovered_users (
       user_id BIGINT PRIMARY KEY,
       user_name VARCHAR,
+      face VARCHAR,
       fans INTEGER DEFAULT 0,
       videos_seen INTEGER DEFAULT 0,
       videos_filtered INTEGER DEFAULT 0,
       filter_pass_rate REAL DEFAULT 0.0,
-      discovered_from VARCHAR,
       discovered_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
       is_following BOOLEAN DEFAULT FALSE,
       followed_by BIGINT[] DEFAULT '{}',
@@ -109,12 +109,7 @@ export async function initializeSchema(pool: Pool): Promise<void> {
 
   // Create indexes for discovered_users
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_user_source 
-    ON discovered_users(discovered_from)
-  `);
-
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_user_rate 
+    CREATE INDEX IF NOT EXISTS idx_user_rate
     ON discovered_users(filter_pass_rate DESC)
   `);
 
@@ -123,10 +118,18 @@ export async function initializeSchema(pool: Pool): Promise<void> {
     ON discovered_users(fans DESC)
   `);
 
-  // Add followed_by column if it doesn't exist yet (migration-safe)
+  // Migrations for existing databases
   await pool.query(`
     ALTER TABLE discovered_users
     ADD COLUMN IF NOT EXISTS followed_by BIGINT[] DEFAULT '{}'
+  `);
+  await pool.query(`
+    ALTER TABLE discovered_users
+    ADD COLUMN IF NOT EXISTS face VARCHAR
+  `);
+  await pool.query(`
+    ALTER TABLE discovered_users
+    DROP COLUMN IF EXISTS discovered_from
   `);
 
   logger.info("Database schema initialized");

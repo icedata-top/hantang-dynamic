@@ -4,9 +4,8 @@
 export interface DiscoveredUserData {
   userId: bigint;
   userName: string;
-  fans: number;
-  source: "following" | "recommendation";
-  isFollowing?: boolean;
+  face?: string;
+  fans?: number;
 }
 
 /**
@@ -37,11 +36,11 @@ export interface RecommendationData {
 export interface UserData {
   userId: bigint;
   userName: string;
+  face: string;
   fans: number;
   videosSeen: number;
   videosFiltered: number;
   filterPassRate: number;
-  discoveredFrom: "following" | "recommendation";
   discoveredAt: Date;
   isFollowing: boolean;
   /** Which crawler UIDs are currently following this user */

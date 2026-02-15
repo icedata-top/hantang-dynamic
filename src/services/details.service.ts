@@ -20,28 +20,27 @@ export class DetailsService {
 
   /**
    * Process a single dynamic card to extract video data.
-   * Handles caching, forwarding resolution, and filtering.
+   * For forward dynamics (type=1), also stores the forwarder as a discovered user.
    */
   async processVideo(
     dynamic: BiliDynamicCard,
     processRelated = true,
-    source: "following" | "recommendation" = "following",
   ): Promise<{
     video: VideoData | null;
     relatedVideos: BiliDynamicCard[];
   }> {
     let bvid = dynamic.desc.bvid;
     try {
-      // 1. Resolve BVID (handle forwards)
       if (dynamic.desc.type === 1) {
-        // Forward type
+        // Forward type: save the forwarder, then process the original video
+        await this.storeForwarder(dynamic);
         bvid = await this.resolveForward(dynamic);
         if (!bvid) {
           return { video: null, relatedVideos: [] };
         }
       }
 
-      return await this.processVideoById(bvid, { processRelated, source });
+      return await this.processVideoById(bvid, { processRelated });
     } catch (error) {
       logger.error(
         `Error processing dynamic ${dynamic.desc.dynamic_id}:`,
@@ -63,17 +62,12 @@ export class DetailsService {
     options: {
       processRelated?: boolean;
       skipCacheCheck?: boolean;
-      source?: "following" | "recommendation";
     } = {},
   ): Promise<{
     video: VideoData | null;
     relatedVideos: BiliDynamicCard[];
   }> {
-    const {
-      processRelated = true,
-      skipCacheCheck = false,
-      source = "following",
-    } = options;
+    const { processRelated = true, skipCacheCheck = false } = options;
 
     try {
       let bvid: string | undefined;
@@ -89,7 +83,6 @@ export class DetailsService {
       } else if (!Number.isNaN(Number(id))) {
         aid = Number(id);
       } else {
-        // Fallback assumes BVID if string
         bvid = id;
       }
 
@@ -110,7 +103,6 @@ export class DetailsService {
       try {
         ({ videoData, relatedVideos } = await this.fetchVideoDetailsWithRelated(
           bvid || aid || 0,
-          source,
         ));
       } finally {
         release();
@@ -144,7 +136,6 @@ export class DetailsService {
 
       return { video: filtered, relatedVideos: relatedDynamics };
     } catch (error) {
-      // Handle deleted videos gracefully - mark as processed to avoid retrying
       if (
         error instanceof Error &&
         error.message.startsWith("VIDEO_DELETED:")
@@ -157,7 +148,6 @@ export class DetailsService {
         return { video: null, relatedVideos: [] };
       }
 
-      // Handle videos that are invisible / under review / private (62002/62004/62012)
       if (
         error instanceof Error &&
         error.message.startsWith("VIDEO_UNAVAILABLE:")
@@ -180,16 +170,31 @@ export class DetailsService {
     }
   }
 
+  /**
+   * Store the user who forwarded a dynamic (type=1).
+   * The forwarder is someone we follow — their info comes from dynamic.desc.
+   */
+  private async storeForwarder(dynamic: BiliDynamicCard): Promise<void> {
+    const uid = dynamic.desc.uid;
+    const profile = dynamic.desc.user_profile?.info;
+    if (!uid || !profile) return;
+
+    await this.storeUser({
+      mid: uid,
+      name: profile.uname,
+      face: profile.face,
+      fans: 0,
+    });
+  }
+
   private async resolveForward(dynamic: BiliDynamicCard): Promise<string> {
     const dynamicId = dynamic.desc.dynamic_id;
 
-    // Check cache first
     const cachedBvid = await this.db.getCachedForwardBvid(dynamicId.toString());
     if (cachedBvid) {
       return cachedBvid;
     }
 
-    // Fetch original dynamic
     const release = await this.rateLimiter.acquire();
     try {
       const originalDynamicId =
@@ -199,9 +204,6 @@ export class DetailsService {
         return "";
       }
 
-      // We might need to fetch the *forward* dynamic itself to get the origin if it's not in the card
-      // But usually `desc.origin` or `desc.orig_dy_id_str` has it.
-      // If we need to fetch the original dynamic details:
       const response = await getDynamic(originalDynamicId);
 
       if (response.code !== 0 || !response.data.card) {
@@ -223,19 +225,14 @@ export class DetailsService {
     return "";
   }
 
-  private async fetchVideoDetailsWithRelated(
-    id: string | number,
-    source: "following" | "recommendation" = "following",
-  ): Promise<{
+  private async fetchVideoDetailsWithRelated(id: string | number): Promise<{
     videoData: VideoData;
     relatedVideos: RecommendedVideo[];
   }> {
     const params = typeof id === "number" ? { aid: id } : { bvid: id };
 
-    // Fetch full details including related videos
     const fullDetail = await fetchVideoFullDetail(params);
 
-    // Handle deleted videos
     if (!fullDetail) {
       throw new Error(`VIDEO_DELETED:${id}`);
     }
@@ -243,23 +240,15 @@ export class DetailsService {
     const view = fullDetail.data.View;
     const relatedVideos = fullDetail.data.Related || [];
 
-    let tagString = "";
-    tagString = fullDetail.data.Tags.map((t) => t.tag_name).join(";");
+    const tagString = fullDetail.data.Tags.map((t) => t.tag_name).join(";");
 
     const videoData: VideoData = {
-      // Core identifiers
       aid: view.aid,
       bvid: view.bvid,
-
-      // User info
       user_id: view.owner.mid,
       staff: view.staff?.map((s) => BigInt(s.mid)),
-
-      // Category
       type_id: view.tid,
       tid_v2: view.tid_v2,
-
-      // Content
       title: view.title,
       description: view.desc,
       dynamic: view.dynamic || undefined,
@@ -267,16 +256,10 @@ export class DetailsService {
       tag: tagString,
       tag_new: fullDetail.data.Tags?.map((t) => t.tag_name),
       participle: fullDetail.data.participle,
-
-      // Timing
       pubdate: view.pubdate,
       ctime: view.ctime,
-
-      // Flags
       is_deleted: false,
       copyright: view.copyright,
-
-      // Extras
       extras: {
         duration: view.duration,
         videos: view.videos,
@@ -291,10 +274,9 @@ export class DetailsService {
       },
     };
 
-    // Extract and store user info
-    await this.extractAndStoreUser(fullDetail.data.Card.card, source);
+    // Store the video owner (may or may not be someone we follow directly)
+    await this.storeUser(fullDetail.data.Card.card);
 
-    // Batch write recommendation relationships
     if (relatedVideos.length > 0) {
       const recommendations = relatedVideos.map((v, index) => ({
         videoBvid: v.bvid,
@@ -307,27 +289,24 @@ export class DetailsService {
     return { videoData, relatedVideos };
   }
 
-  private async extractAndStoreUser(
-    owner: {
-      mid: bigint | string;
-      name: string;
-      face: string;
-      fans: number;
-    },
-    source: "following" | "recommendation" = "following",
-  ) {
+  /**
+   * Store a user in discovered_users if not already known.
+   * is_following / followed_by are managed by syncFollowingStatus, not here.
+   */
+  private async storeUser(owner: {
+    mid: bigint | string;
+    name: string;
+    face: string;
+    fans: number;
+  }) {
     const mid = BigInt(owner.mid);
     try {
-      const isKnown = await this.db.hasUser(mid);
-      if (!isKnown) {
-        await this.db.addDiscoveredUser({
-          userId: mid,
-          userName: owner.name,
-          fans: owner.fans,
-          source,
-          isFollowing: source === "following",
-        });
-      }
+      await this.db.addDiscoveredUser({
+        userId: mid,
+        userName: owner.name,
+        face: owner.face,
+        fans: owner.fans,
+      });
     } catch (e) {
       logger.error(`Failed to store user ${owner.mid}`, e);
     }
@@ -341,8 +320,8 @@ export class DetailsService {
         ({
           desc: {
             bvid: video.bvid,
-            dynamic_id: 0, // No dynamic ID for related videos
-            type: 8, // Video type
+            dynamic_id: 0,
+            type: 8,
             timestamp: video.pubdate,
             user_profile: {
               info: {
@@ -351,7 +330,6 @@ export class DetailsService {
                 face: video.owner.face,
               },
             },
-            // Fill other necessary fields with defaults or derived data
             uid: video.owner.mid,
             rid: video.tid,
             view: video.stat.view,
@@ -363,7 +341,6 @@ export class DetailsService {
             status: 1,
           },
           card: JSON.stringify({
-            // Minimal card data if needed
             aid: video.aid,
             owner: video.owner,
             pic: video.pic,

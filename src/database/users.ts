@@ -18,27 +18,22 @@ export async function hasUser(pool: Pool, userId: bigint): Promise<boolean> {
 }
 
 /**
- * Add a discovered user
+ * Add a discovered user. On conflict, updates name and face.
+ * is_following / followed_by are managed exclusively by syncFollowingStatus.
  */
 export async function addDiscoveredUser(
   pool: Pool,
   user: DiscoveredUserData,
 ): Promise<void> {
-  const isFollowing = user.isFollowing ?? user.source === "following";
   await pool.query(
     `INSERT INTO discovered_users
-     (user_id, user_name, fans, discovered_from, is_following, videos_seen, videos_filtered, filter_pass_rate)
-     VALUES ($1, $2, $3, $4, $5, 0, 0, 0.0)
+     (user_id, user_name, face, fans, videos_seen, videos_filtered, filter_pass_rate)
+     VALUES ($1, $2, $3, $4, 0, 0, 0.0)
      ON CONFLICT (user_id) DO UPDATE SET
        user_name = EXCLUDED.user_name,
-       fans = EXCLUDED.fans`,
-    [
-      user.userId.toString(),
-      user.userName,
-      user.fans,
-      user.source,
-      isFollowing,
-    ],
+       face = COALESCE(EXCLUDED.face, discovered_users.face),
+       fans = GREATEST(EXCLUDED.fans, discovered_users.fans)`,
+    [user.userId.toString(), user.userName, user.face ?? null, user.fans ?? 0],
   );
 }
 
@@ -153,11 +148,11 @@ export async function getTopDiscoveredUsers(
   return result.rows.map((row) => ({
     userId: BigInt(row.user_id),
     userName: row.user_name as string,
+    face: (row.face as string) ?? "",
     fans: row.fans as number,
     videosSeen: row.videos_seen as number,
     videosFiltered: row.videos_filtered as number,
     filterPassRate: row.filter_pass_rate as number,
-    discoveredFrom: row.discovered_from as "following" | "recommendation",
     discoveredAt: new Date(row.discovered_at),
     isFollowing: row.is_following as boolean,
     followedBy: (row.followed_by as string[] | null)?.map(BigInt) ?? [],
