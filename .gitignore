@@ -14,4 +14,5 @@ tmp/*
 exports/*
 
 .cookies.txt
+.cookies.*.txt
 state*.json
