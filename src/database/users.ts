@@ -24,14 +24,21 @@ export async function addDiscoveredUser(
   pool: Pool,
   user: DiscoveredUserData,
 ): Promise<void> {
+  const isFollowing = user.isFollowing ?? user.source === "following";
   await pool.query(
-    `INSERT INTO discovered_users 
-     (user_id, user_name, fans, discovered_from, videos_seen, videos_filtered, filter_pass_rate)
-     VALUES ($1, $2, $3, $4, 0, 0, 0.0)
+    `INSERT INTO discovered_users
+     (user_id, user_name, fans, discovered_from, is_following, videos_seen, videos_filtered, filter_pass_rate)
+     VALUES ($1, $2, $3, $4, $5, 0, 0, 0.0)
      ON CONFLICT (user_id) DO UPDATE SET
        user_name = EXCLUDED.user_name,
        fans = EXCLUDED.fans`,
-    [user.userId.toString(), user.userName, user.fans, user.source],
+    [
+      user.userId.toString(),
+      user.userName,
+      user.fans,
+      user.source,
+      isFollowing,
+    ],
   );
 }
 
@@ -92,6 +99,43 @@ export async function updateUserStats(
 }
 
 /**
+ * Sync following status for a specific crawler UID.
+ *
+ * - Adds crawlerUid to the `followed_by` array for users in followingIds.
+ * - Removes crawlerUid from the `followed_by` array for users NOT in followingIds.
+ * - Keeps `is_following` in sync: TRUE if followed_by is non-empty.
+ */
+export async function syncFollowingStatus(
+  pool: Pool,
+  crawlerUid: string,
+  followingIds: Set<string>,
+): Promise<void> {
+  const crawlerUidBigint = BigInt(crawlerUid);
+  const ids = Array.from(followingIds);
+
+  // Add crawlerUid to followed_by for users now being followed by this crawler
+  if (ids.length > 0) {
+    await pool.query(
+      `UPDATE discovered_users
+       SET followed_by = array_append(array_remove(followed_by, $1), $1),
+           is_following = TRUE
+       WHERE user_id = ANY($2::BIGINT[])`,
+      [crawlerUidBigint, ids],
+    );
+  }
+
+  // Remove crawlerUid from followed_by for users no longer followed by this crawler
+  await pool.query(
+    `UPDATE discovered_users
+     SET followed_by = array_remove(followed_by, $1),
+         is_following = (cardinality(array_remove(followed_by, $1)) > 0)
+     WHERE $1 = ANY(followed_by)
+       AND NOT (user_id = ANY($2::BIGINT[]))`,
+    [crawlerUidBigint, ids.length > 0 ? ids : ["0"]],
+  );
+}
+
+/**
  * Get top discovered users
  */
 export async function getTopDiscoveredUsers(
@@ -100,8 +144,8 @@ export async function getTopDiscoveredUsers(
   limit: number,
 ): Promise<UserData[]> {
   const result = await pool.query(
-    `SELECT * FROM discovered_users 
-     ORDER BY ${orderBy} DESC 
+    `SELECT * FROM discovered_users
+     ORDER BY ${orderBy} DESC
      LIMIT $1`,
     [limit],
   );
@@ -116,6 +160,7 @@ export async function getTopDiscoveredUsers(
     discoveredFrom: row.discovered_from as "following" | "recommendation",
     discoveredAt: new Date(row.discovered_at),
     isFollowing: row.is_following as boolean,
+    followedBy: (row.followed_by as string[] | null)?.map(BigInt) ?? [],
     lastUpdated: new Date(row.last_updated),
   }));
 }

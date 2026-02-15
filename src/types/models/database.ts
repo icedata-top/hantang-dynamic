@@ -6,6 +6,7 @@ export interface DiscoveredUserData {
   userName: string;
   fans: number;
   source: "following" | "recommendation";
+  isFollowing?: boolean;
 }
 
 /**
@@ -43,6 +44,8 @@ export interface UserData {
   discoveredFrom: "following" | "recommendation";
   discoveredAt: Date;
   isFollowing: boolean;
+  /** Which crawler UIDs are currently following this user */
+  followedBy: bigint[];
   lastUpdated: Date;
 }
 

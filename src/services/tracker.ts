@@ -1,6 +1,8 @@
+import { fetchFollowingList } from "../api/relation";
 import { generateBiliTicket } from "../api/signatures/biliTicket";
 import { config } from "../config";
 import { StateManager } from "../core/state";
+import { Database } from "../database";
 import type { BiliDynamicCard, VideoData } from "../types";
 import { sleep } from "../utils/datetime";
 import { exportData } from "../utils/exporter/exporter";
@@ -14,6 +16,7 @@ export class DynamicTracker {
   private isRunning = false;
   private dynamicsService = new DynamicsService();
   private detailsService = new DetailsService();
+  private db = Database.getInstance();
 
   async start() {
     if (this.isRunning) return;
@@ -21,6 +24,7 @@ export class DynamicTracker {
 
     await this.initialize();
     this.startRetrospectiveSchedule();
+    this.startFollowingSyncSchedule();
 
     while (this.isRunning) {
       try {
@@ -126,6 +130,7 @@ export class DynamicTracker {
             await this.detailsService.processVideo(
               dynamic,
               enableRecommendation && depth < maxDepth,
+              depth > 0 ? "recommendation" : "following",
             );
 
           if (video) {
@@ -206,5 +211,47 @@ export class DynamicTracker {
     logger.info(
       `Retrospective scan scheduled every ${interval / 86400000} days`,
     );
+  }
+
+  /**
+   * Sync followed_by / is_following by fetching this crawler's following list from Bilibili.
+   * Records which UP主 are followed by this crawler's account (config.bilibili.uid).
+   */
+  async syncFollowingStatus(): Promise<void> {
+    const uid = config.bilibili.uid;
+    if (!uid) {
+      logger.warn("Cannot sync following status: bilibili.uid not configured");
+      return;
+    }
+
+    logger.info("Syncing following status from Bilibili...");
+    try {
+      const followings = await fetchFollowingList(uid, true);
+      const followingIds = new Set(followings.map((f) => f.mid.toString()));
+      await this.db.syncFollowingStatus(uid, followingIds);
+      logger.info(
+        `Following status synced: ${followingIds.size} users marked as followed by ${uid}`,
+      );
+    } catch (error) {
+      logger.error("Failed to sync following status:", error);
+    }
+  }
+
+  startFollowingSyncSchedule() {
+    // Sync immediately on start, then every 7 * 24 hours
+    this.syncFollowingStatus().catch((err) =>
+      logger.error("Initial following sync error:", err),
+    );
+
+    setInterval(
+      () => {
+        this.syncFollowingStatus().catch((err) =>
+          logger.error("Following sync error:", err),
+        );
+      },
+      7 * 24 * 3600 * 1000,
+    );
+
+    logger.info("Following status sync scheduled every 24 hours");
   }
 }

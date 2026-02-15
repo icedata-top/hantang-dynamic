@@ -531,6 +531,60 @@ const processIndividually = async (
 };
 
 /**
+ * Fetch the full following list for a user via the /x/relation/followings API.
+ * For your own account, all pages are returned. For other accounts, only the
+ * first 100 entries are accessible (Bilibili API limitation).
+ * @param vmid Target user's mid
+ * @param isSelf Whether this is our own account (enables full pagination)
+ * @returns Array of followed user entries with mid and uname
+ */
+export const fetchFollowingList = async (
+  vmid: string,
+  isSelf = false,
+): Promise<Array<{ mid: bigint; uname: string }>> => {
+  const results: Array<{ mid: bigint; uname: string }> = [];
+  const ps = 50;
+  let pn = 1;
+  const maxPages = isSelf ? 100 : 2; // self: up to 5000 follows (100 pages), others: first 100
+
+  try {
+    while (pn <= maxPages) {
+      const response = await relationClient.get<{
+        code: number;
+        message: string;
+        data: {
+          list: Array<{ mid: number; uname: string }> | null;
+          total: number;
+        };
+      }>("/followings", {
+        params: { vmid, ps, pn },
+      });
+
+      if (response.data.code !== 0) {
+        logger.warn(
+          `fetchFollowingList: API error ${response.data.code} for vmid ${vmid}`,
+        );
+        break;
+      }
+
+      const list = response.data.data?.list;
+      if (!list || list.length === 0) break;
+
+      for (const entry of list) {
+        results.push({ mid: BigInt(entry.mid), uname: entry.uname });
+      }
+
+      if (list.length < ps) break; // last page
+      pn++;
+    }
+  } catch (error) {
+    logger.error(`fetchFollowingList failed for vmid ${vmid}:`, error);
+  }
+
+  return results;
+};
+
+/**
  * Fetch a list of users that the specified user follows
  * @param userid User's mid to get the following list for
  * @returns Object containing array of user IDs that are followed by the specified user

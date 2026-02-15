@@ -102,6 +102,7 @@ export async function initializeSchema(pool: Pool): Promise<void> {
       discovered_from VARCHAR,
       discovered_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
       is_following BOOLEAN DEFAULT FALSE,
+      followed_by BIGINT[] DEFAULT '{}',
       last_updated TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     )
   `);
@@ -120,6 +121,12 @@ export async function initializeSchema(pool: Pool): Promise<void> {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_user_fans
     ON discovered_users(fans DESC)
+  `);
+
+  // Add followed_by column if it doesn't exist yet (migration-safe)
+  await pool.query(`
+    ALTER TABLE discovered_users
+    ADD COLUMN IF NOT EXISTS followed_by BIGINT[] DEFAULT '{}'
   `);
 
   logger.info("Database schema initialized");

@@ -25,6 +25,7 @@ export class DetailsService {
   async processVideo(
     dynamic: BiliDynamicCard,
     processRelated = true,
+    source: "following" | "recommendation" = "following",
   ): Promise<{
     video: VideoData | null;
     relatedVideos: BiliDynamicCard[];
@@ -40,7 +41,7 @@ export class DetailsService {
         }
       }
 
-      return await this.processVideoById(bvid, { processRelated });
+      return await this.processVideoById(bvid, { processRelated, source });
     } catch (error) {
       logger.error(
         `Error processing dynamic ${dynamic.desc.dynamic_id}:`,
@@ -59,12 +60,20 @@ export class DetailsService {
    */
   async processVideoById(
     id: string | number,
-    options: { processRelated?: boolean; skipCacheCheck?: boolean } = {},
+    options: {
+      processRelated?: boolean;
+      skipCacheCheck?: boolean;
+      source?: "following" | "recommendation";
+    } = {},
   ): Promise<{
     video: VideoData | null;
     relatedVideos: BiliDynamicCard[];
   }> {
-    const { processRelated = true, skipCacheCheck = false } = options;
+    const {
+      processRelated = true,
+      skipCacheCheck = false,
+      source = "following",
+    } = options;
 
     try {
       let bvid: string | undefined;
@@ -101,6 +110,7 @@ export class DetailsService {
       try {
         ({ videoData, relatedVideos } = await this.fetchVideoDetailsWithRelated(
           bvid || aid || 0,
+          source,
         ));
       } finally {
         release();
@@ -213,7 +223,10 @@ export class DetailsService {
     return "";
   }
 
-  private async fetchVideoDetailsWithRelated(id: string | number): Promise<{
+  private async fetchVideoDetailsWithRelated(
+    id: string | number,
+    source: "following" | "recommendation" = "following",
+  ): Promise<{
     videoData: VideoData;
     relatedVideos: RecommendedVideo[];
   }> {
@@ -279,7 +292,7 @@ export class DetailsService {
     };
 
     // Extract and store user info
-    await this.extractAndStoreUser(fullDetail.data.Card.card);
+    await this.extractAndStoreUser(fullDetail.data.Card.card, source);
 
     // Batch write recommendation relationships
     if (relatedVideos.length > 0) {
@@ -294,12 +307,15 @@ export class DetailsService {
     return { videoData, relatedVideos };
   }
 
-  private async extractAndStoreUser(owner: {
-    mid: bigint | string;
-    name: string;
-    face: string;
-    fans: number;
-  }) {
+  private async extractAndStoreUser(
+    owner: {
+      mid: bigint | string;
+      name: string;
+      face: string;
+      fans: number;
+    },
+    source: "following" | "recommendation" = "following",
+  ) {
     const mid = BigInt(owner.mid);
     try {
       const isKnown = await this.db.hasUser(mid);
@@ -308,7 +324,8 @@ export class DetailsService {
           userId: mid,
           userName: owner.name,
           fans: owner.fans,
-          source: "following", // Default source
+          source,
+          isFollowing: source === "following",
         });
       }
     } catch (e) {

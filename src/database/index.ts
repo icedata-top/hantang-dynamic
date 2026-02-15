@@ -23,6 +23,7 @@ import {
   addDiscoveredUser,
   getTopDiscoveredUsers,
   hasUser,
+  syncFollowingStatus,
   updateUserStats,
 } from "./users.js";
 import {
@@ -212,6 +213,16 @@ export class Database {
     limit: number,
   ): Promise<UserData[]> {
     return getTopDiscoveredUsers(this.ensurePool(), orderBy, limit);
+  }
+
+  /**
+   * Sync followed_by and is_following for a specific crawler UID.
+   */
+  public async syncFollowingStatus(
+    crawlerUid: string,
+    followingIds: Set<string>,
+  ): Promise<void> {
+    return syncFollowingStatus(this.ensurePool(), crawlerUid, followingIds);
   }
 
   // ===== Recommendation Operations =====
