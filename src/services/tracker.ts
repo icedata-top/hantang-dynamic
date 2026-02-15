@@ -1,7 +1,7 @@
 import { fetchFollowingList } from "../api/relation";
 import { generateBiliTicket } from "../api/signatures/biliTicket";
 import { config } from "../config";
-import { StateManager } from "../core/state";
+import type { AccountContext } from "../core/account";
 import { Database } from "../database";
 import type { BiliDynamicCard, VideoData } from "../types";
 import { sleep } from "../utils/datetime";
@@ -12,11 +12,16 @@ import { DetailsService } from "./details.service";
 import { DynamicsService } from "./dynamics.service";
 
 export class DynamicTracker {
-  private state = new StateManager();
+  private account: AccountContext;
   private isRunning = false;
-  private dynamicsService = new DynamicsService();
+  private dynamicsService: DynamicsService;
   private detailsService = new DetailsService();
   private db = Database.getInstance();
+
+  constructor(account: AccountContext) {
+    this.account = account;
+    this.dynamicsService = new DynamicsService(account);
+  }
 
   async start() {
     if (this.isRunning) return;
@@ -32,11 +37,11 @@ export class DynamicTracker {
 
         await sleep(config.application.fetchInterval);
       } catch (error) {
-        logger.error("Tracker error:", error);
+        logger.error(`[uid=${this.account.uid}] Tracker error:`, error);
         if (error instanceof Error) {
           logger.error(error.stack);
         }
-        this.state.updateUA();
+        this.account.stateManager.updateUA();
         await sleep(3600);
       }
     }
@@ -47,36 +52,38 @@ export class DynamicTracker {
   }
 
   private async initialize() {
-    // Initialize Database
-    // Assuming DB init is handled in index.ts or singleton ensures it's ready,
-    // but good to ensure connection here if needed.
-    // The Database.getInstance() is synchronous but init is async.
-    // We should probably ensure it's initialized.
-    // For now, let's assume index.ts calls db.init().
-
     // Initialize BiliTicket
-    if (!this.state.isTicketValid()) {
-      logger.debug("Generating initial BiliTicket...");
+    if (!this.account.stateManager.isTicketValid()) {
+      logger.debug(
+        `[uid=${this.account.uid}] Generating initial BiliTicket...`,
+      );
       const ticketData = await generateBiliTicket();
       if (ticketData) {
-        this.state.updateTicket(ticketData.ticket, ticketData.expiresAt);
-        logger.info("BiliTicket initialized successfully");
+        this.account.stateManager.updateTicket(
+          ticketData.ticket,
+          ticketData.expiresAt,
+        );
+        logger.info(
+          `[uid=${this.account.uid}] BiliTicket initialized successfully`,
+        );
       } else {
-        logger.debug("Failed to initialize BiliTicket, continuing without it");
+        logger.debug(
+          `[uid=${this.account.uid}] Failed to initialize BiliTicket, continuing without it`,
+        );
       }
     } else {
-      logger.debug("Using existing valid BiliTicket");
+      logger.debug(`[uid=${this.account.uid}] Using existing valid BiliTicket`);
     }
   }
 
   private async checkDynamics() {
-    const lastDynamicId = this.state.lastDynamicId;
+    const lastDynamicId = this.account.stateManager.lastDynamicId;
     let maxDynamicId = lastDynamicId;
     const minTimestamp =
       Date.now() / 1000 - config.application.maxHistoryDays * 86400;
 
     logger.info(
-      `Checking dynamics since ID: ${lastDynamicId}, Timestamp: ${minTimestamp}`,
+      `[uid=${this.account.uid}] Checking dynamics since ID: ${lastDynamicId}, Timestamp: ${minTimestamp}`,
     );
 
     const stream = this.dynamicsService.fetchDynamicsStream({
@@ -86,7 +93,9 @@ export class DynamicTracker {
     });
 
     for await (const dynamics of stream) {
-      logger.info(`Got new dynamic page with ${dynamics.length} dynamics`);
+      logger.info(
+        `[uid=${this.account.uid}] Got new dynamic page with ${dynamics.length} dynamics`,
+      );
       // Process page immediately
       const processedVideos = await this.processPage(dynamics);
 
@@ -105,9 +114,9 @@ export class DynamicTracker {
       }
     }
 
-    // Update state after full cycle (or incrementally if preferred, but state usually tracks "all read up to here")
+    // Update state after full cycle
     if (maxDynamicId > lastDynamicId) {
-      this.state.updateLastDynamicId(maxDynamicId);
+      this.account.stateManager.updateLastDynamicId(maxDynamicId);
     }
   }
 
@@ -179,7 +188,7 @@ export class DynamicTracker {
     const minTimestamp = Date.now() / 1000 - retrospectiveDays * 86400;
 
     logger.info(
-      `Starting retrospective scan for past ${retrospectiveDays} days`,
+      `[uid=${this.account.uid}] Starting retrospective scan for past ${retrospectiveDays} days`,
     );
 
     const stream = this.dynamicsService.fetchDynamicsStream({
@@ -189,12 +198,13 @@ export class DynamicTracker {
     });
 
     for await (const dynamics of stream) {
-      // log we got a new page
-      logger.info(`Got new page with ${dynamics.length} dynamics`);
+      logger.info(
+        `[uid=${this.account.uid}] Got new page with ${dynamics.length} dynamics`,
+      );
       await this.processPage(dynamics);
     }
 
-    logger.info("Retrospective scan completed");
+    logger.info(`[uid=${this.account.uid}] Retrospective scan completed`);
   }
 
   startRetrospectiveSchedule() {
@@ -208,38 +218,39 @@ export class DynamicTracker {
     }, interval);
 
     logger.info(
-      `Retrospective scan scheduled every ${interval / 86400000} days`,
+      `[uid=${this.account.uid}] Retrospective scan scheduled every ${interval / 86400000} days`,
     );
   }
 
   /**
-   * Sync followed_by / is_following by fetching this crawler's following list from Bilibili.
-   * Records which UP主 are followed by this crawler's account (config.bilibili.uid).
+   * Sync followed_by / is_following by fetching this account's following list from Bilibili.
    */
   async syncFollowingStatus(): Promise<void> {
-    const uid = config.bilibili.uid;
+    const uid = this.account.uid;
     if (!uid) {
-      logger.warn("Cannot sync following status: bilibili.uid not configured");
+      logger.warn(
+        "Cannot sync following status: uid not available for this account",
+      );
       return;
     }
 
-    logger.info("Syncing following status from Bilibili...");
+    logger.info(`[uid=${uid}] Syncing following status from Bilibili...`);
     try {
       const followings = await fetchFollowingList(uid, true);
       const followingIds = new Set(followings.map((f) => f.mid.toString()));
       await this.db.syncFollowingStatus(uid, followingIds);
-      this.state.updateFollowingSync();
+      this.account.stateManager.updateFollowingSync();
       logger.info(
-        `Following status synced: ${followingIds.size} users marked as followed by ${uid}`,
+        `[uid=${uid}] Following status synced: ${followingIds.size} users marked as followed`,
       );
     } catch (error) {
-      logger.error("Failed to sync following status:", error);
+      logger.error(`[uid=${uid}] Failed to sync following status:`, error);
     }
   }
 
   startFollowingSyncSchedule() {
     const intervalMs = 24 * 3600 * 1000;
-    const lastSync = this.state.lastFollowingSync ?? 0;
+    const lastSync = this.account.stateManager.lastFollowingSync ?? 0;
     const elapsed = Date.now() - lastSync;
 
     if (elapsed >= intervalMs) {
@@ -253,12 +264,12 @@ export class DynamicTracker {
       );
       logger.info(
         lastSync === 0
-          ? "Following status sync scheduled in 30s (first run)"
-          : `Following status sync scheduled in 30s (overdue by ${Math.round((elapsed - intervalMs) / 3600_000)}h)`,
+          ? `[uid=${this.account.uid}] Following status sync scheduled in 30s (first run)`
+          : `[uid=${this.account.uid}] Following status sync scheduled in 30s (overdue by ${Math.round((elapsed - intervalMs) / 3600_000)}h)`,
       );
     } else {
       logger.info(
-        `Following status sync skipped at startup (last ran ${Math.round(elapsed / 3600_000)}h ago, next in ${Math.round((intervalMs - elapsed) / 3600_000)}h)`,
+        `[uid=${this.account.uid}] Following status sync skipped at startup (last ran ${Math.round(elapsed / 3600_000)}h ago, next in ${Math.round((intervalMs - elapsed) / 3600_000)}h)`,
       );
     }
 

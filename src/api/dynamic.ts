@@ -1,3 +1,4 @@
+import type { AxiosInstance } from "axios";
 import { config } from "../config";
 import type {
   BiliDynamicDetailResponse,
@@ -10,9 +11,10 @@ import { dynamicClient, dynamicDetailClient } from "./client";
 const fetchDynamicsAPI = async (
   endpoint: string,
   params: Record<string, string | number | bigint>,
+  client: AxiosInstance = dynamicClient,
 ): Promise<BiliDynamicNewResponse | BiliDynamicHistoryResponse> => {
   try {
-    const response = await dynamicClient.get<
+    const response = await client.get<
       BiliDynamicNewResponse | BiliDynamicHistoryResponse
     >(endpoint, {
       params,
@@ -48,21 +50,23 @@ const fetchDynamicAPI = async (
   }
 };
 
-export const getNewDynamic = (type: number) =>
-  fetchDynamicsAPI("/dynamic_new", {
-    uid: config.bilibili.uid,
-    type,
-  });
+export const getNewDynamic = (
+  type: number,
+  uid: string = config.bilibili.uid ?? "",
+  client?: AxiosInstance,
+) => fetchDynamicsAPI("/dynamic_new", { uid, type }, client);
 
 export const getHistoryDynamic = (
   type: number,
   offset: number | string | bigint,
+  uid: string = config.bilibili.uid ?? "",
+  client?: AxiosInstance,
 ) =>
-  fetchDynamicsAPI("/dynamic_history", {
-    uid: config.bilibili.uid,
-    type,
-    offset_dynamic_id: offset,
-  });
+  fetchDynamicsAPI(
+    "/dynamic_history",
+    { uid, type, offset_dynamic_id: offset },
+    client,
+  );
 
 export const getDynamic = (dynamicId: number | string) =>
   fetchDynamicAPI("/get_dynamic_detail", {

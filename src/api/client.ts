@@ -52,12 +52,6 @@ function getGlobalCookieJar(): CookieJar | null {
   return globalCookieJar;
 }
 
-function persistCookieJar(): void {
-  if (globalCookieJar && cookieFilePath) {
-    writeCookieJarToNetscape(globalCookieJar, cookieFilePath);
-  }
-}
-
 /**
  * Simulate a browser visit to a specific page with appropriate referrer
  * @param url The URL to visit
@@ -83,10 +77,48 @@ export const simulateBrowserVisit = async (
   }
 };
 
-function createClient(baseURL: string, skipCookie = false): AxiosInstance {
-  const stateManager = new StateManager();
-  const ua = stateManager.lastUA;
-  const jar = getGlobalCookieJar();
+interface CreateClientOptions {
+  skipCookie?: boolean;
+  /** Explicit cookie jar (overrides global jar; for per-account clients) */
+  cookieJar?: CookieJar;
+  /** Path to persist the explicit jar to (required when cookieJar is provided) */
+  cookieFilePath?: string;
+  /** State manager to use for ticket renewal (defaults to shared global StateManager) */
+  stateManager?: StateManager;
+}
+
+function createClient(
+  baseURL: string,
+  optionsOrSkip?: boolean | CreateClientOptions,
+): AxiosInstance {
+  const options: CreateClientOptions =
+    typeof optionsOrSkip === "boolean"
+      ? { skipCookie: optionsOrSkip }
+      : (optionsOrSkip ?? {});
+
+  const skipCookie = options.skipCookie ?? false;
+  const resolvedStateManager = options.stateManager ?? new StateManager();
+  const ua = resolvedStateManager.lastUA;
+
+  // Determine which jar to use: explicit > global > none
+  const jar =
+    options.cookieJar !== undefined
+      ? options.cookieJar
+      : skipCookie
+        ? null
+        : getGlobalCookieJar();
+
+  // Determine which file to persist the jar to
+  const resolvedFilePath =
+    options.cookieFilePath !== undefined
+      ? options.cookieFilePath
+      : cookieFilePath;
+
+  const persistJar = () => {
+    if (jar && resolvedFilePath) {
+      writeCookieJarToNetscape(jar, resolvedFilePath);
+    }
+  };
 
   // If cookie jar is available, use axios-cookiejar-support
   const axiosInstance = jar ? wrapper(axios.create()) : axios.create();
@@ -101,28 +133,34 @@ function createClient(baseURL: string, skipCookie = false): AxiosInstance {
     client.defaults.withCredentials = true;
   } else if (!skipCookie) {
     // Fall back to manual cookie string from config
-    client.defaults.headers.common.Cookie = getCookieString(stateManager);
+    client.defaults.headers.common.Cookie = getCookieString(
+      resolvedStateManager,
+      null,
+    );
   }
 
-  client.interceptors.request.use(async (config) => {
+  client.interceptors.request.use(async (reqConfig) => {
     // Set start time for performance tracking
-    const existingMetadata = (config as RequestConfig).metadata || {};
-    (config as RequestConfig).metadata = {
+    const existingMetadata = (reqConfig as RequestConfig).metadata || {};
+    (reqConfig as RequestConfig).metadata = {
       ...existingMetadata,
       startTime: Date.now(),
     };
 
-    if (!skipCookie && !stateManager.isTicketValid()) {
+    if (!skipCookie && !resolvedStateManager.isTicketValid()) {
       logger.info("BiliTicket expired or not set, requesting a new one");
       const ticketData = await generateBiliTicket();
       if (ticketData) {
-        stateManager.updateTicket(ticketData.ticket, ticketData.expiresAt);
+        resolvedStateManager.updateTicket(
+          ticketData.ticket,
+          ticketData.expiresAt,
+        );
         if (!skipCookie) {
-          config.headers.Cookie = getCookieString(stateManager);
+          reqConfig.headers.Cookie = getCookieString(resolvedStateManager, jar);
         }
       }
     }
-    return config;
+    return reqConfig;
   });
 
   client.interceptors.response.use(
@@ -199,8 +237,8 @@ function createClient(baseURL: string, skipCookie = false): AxiosInstance {
 
       // Persist cookies if Set-Cookie header is present and using cookie jar
       const setCookieHeader = response.headers["set-cookie"];
-      if (setCookieHeader && getGlobalCookieJar()) {
-        persistCookieJar();
+      if (setCookieHeader && jar) {
+        persistJar();
       }
 
       return response;
@@ -224,12 +262,15 @@ function createClient(baseURL: string, skipCookie = false): AxiosInstance {
   return client;
 }
 
-function getCookieString(stateManager: StateManager): string {
-  const jar = getGlobalCookieJar();
+function getCookieString(
+  stateManager: StateManager,
+  jar?: CookieJar | null,
+): string {
+  const resolvedJar = jar !== undefined ? jar : getGlobalCookieJar();
 
   // If using cookie jar, use the full cookie string from the jar
-  if (jar) {
-    let cookie = getAllCookiesAsString(jar);
+  if (resolvedJar) {
+    let cookie = getAllCookiesAsString(resolvedJar);
     if (stateManager.biliTicket) {
       cookie += `; bili_ticket=${stateManager.biliTicket}`;
     }
@@ -248,6 +289,23 @@ function getCookieString(stateManager: StateManager): string {
   }
 
   return cookie;
+}
+
+/**
+ * Create a dynamic API client for a specific account (cookie jar + state).
+ * Used by AccountContext to give each cookie file its own authenticated client.
+ */
+export function createAccountDynamicClient(
+  baseURL: string,
+  cookieJar: CookieJar,
+  accountCookieFilePath: string,
+  stateManager: StateManager,
+): AxiosInstance {
+  return createClient(baseURL, {
+    cookieJar,
+    cookieFilePath: accountCookieFilePath,
+    stateManager,
+  });
 }
 
 export const dynamicClient = createClient(

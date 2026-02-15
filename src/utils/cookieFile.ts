@@ -182,6 +182,32 @@ export function writeCookieJarToNetscape(
 }
 
 /**
+ * Extract the DedeUserID cookie value directly from a Netscape cookie file.
+ * Returns null if the cookie is not found or the file cannot be read.
+ */
+export function getDedeUserIDFromCookieFile(filePath: string): string | null {
+  try {
+    const content = fs.readFileSync(filePath, "utf-8");
+    for (const rawLine of content.split(/\r?\n/)) {
+      let line = rawLine.trim();
+      if (!line) continue;
+      if (line.startsWith("#HttpOnly_")) {
+        line = line.substring(10);
+      } else if (line.startsWith("#")) {
+        continue;
+      }
+      const parts = line.includes("\t") ? line.split("\t") : line.split(/\s+/);
+      if (parts.length >= 7 && parts[5] === "DedeUserID") {
+        return parts[6] || null;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Get all cookies from the jar as a semicolon-separated string for use in Cookie header.
  */
 export function getAllCookiesAsString(

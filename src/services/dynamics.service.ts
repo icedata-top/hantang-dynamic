@@ -1,6 +1,6 @@
 import { getHistoryDynamic, getNewDynamic } from "../api/dynamic";
 import { config } from "../config";
-import { StateManager } from "../core/state";
+import type { AccountContext } from "../core/account";
 import type {
   BiliDynamicCard,
   BiliDynamicHistoryResponse,
@@ -32,6 +32,12 @@ interface FetchDynamicsStreamOptions {
  * - 支持多种动态类型（视频、转发）
  */
 export class DynamicsService {
+  private account: AccountContext;
+
+  constructor(account: AccountContext) {
+    this.account = account;
+  }
+
   /**
    * 流式获取动态数据
    *
@@ -42,10 +48,12 @@ export class DynamicsService {
     options: FetchDynamicsStreamOptions,
   ): AsyncGenerator<BiliDynamicCard[], void, unknown> {
     const { minDynamicId, minTimestamp, types } = options;
-    const stateManager = new StateManager();
+    const stateManager = this.account.stateManager;
+    const uid = this.account.uid;
+    const client = this.account.dynamicClient;
 
     for (const type of types) {
-      logger.info(`Fetching dynamics of type: ${type}`);
+      logger.info(`[uid=${uid}] Fetching dynamics of type: ${type}`);
       const typeCode = DYNAMIC_TYPE_MAP[type];
 
       let offset = BigInt(0);
@@ -57,8 +65,8 @@ export class DynamicsService {
           // 获取一页数据
           const response: BiliDynamicNewResponse | BiliDynamicHistoryResponse =
             firstRun
-              ? await getNewDynamic(typeCode)
-              : await getHistoryDynamic(typeCode, offset);
+              ? await getNewDynamic(typeCode, uid, client)
+              : await getHistoryDynamic(typeCode, offset, uid, client);
 
           // 检查响应状态
           if (response.code !== 0 || !response.data.cards?.length) {
@@ -117,7 +125,7 @@ export class DynamicsService {
         }
       }
 
-      logger.info(`Completed fetching dynamics of type: ${type}`);
+      logger.info(`[uid=${uid}] Completed fetching dynamics of type: ${type}`);
     }
   }
 }

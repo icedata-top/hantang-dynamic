@@ -3,14 +3,28 @@
 # Data flow: Input → Processing → Output
 
 [bilibili]
-# Authentication: Either provide sessdata OR cookie_file (at least one required)
-uid = "12345678"               # Your Bilibili user ID
-sessdata = "your_sessdata"     # Your Bilibili session data (optional if cookie_file is set)
-cookie_file = ""               # Path to Netscape format cookie file (e.g., "./.cookies.txt")
-
-# Optional: Additional authentication tokens for user relation operations
+# Authentication: provide cookie_file / cookie_files OR sessdata (at least one required)
+#
+# Option 1 (recommended): Netscape format cookie file exported from browser
+#   - uid is extracted automatically from the DedeUserID cookie in the file
+#   - uid setting below is ignored when cookie_file / cookie_files is used
+#
+# Single account:
+cookie_file = ""               # Path to Netscape cookie file (e.g., "./.cookies.txt")
+#
+# Multiple accounts (each file = one account, tracked in parallel):
+# cookie_files = [
+#   "./.cookies_account1.txt",
+#   "./.cookies_account2.txt",
+# ]
+#
+# Option 2 (legacy): provide sessdata directly — uid is required in this case
+uid = ""                       # Your Bilibili user ID (required when using sessdata)
+sessdata = ""                  # Your Bilibili session data (SESSDATA cookie value)
 csrf_token = ""                # BILI_JCT - CSRF token for user relation operations
 access_key = ""                # BILI_ACCESS_KEY - Access key for app authentication
+
+# Optional: Proxy Urls
 api_proxy_url = ""             # API proxy URL (e.g., "https://biliproxy.example.com")
 dynamic_proxy_url = ""         # Dynamic API proxy URL
 

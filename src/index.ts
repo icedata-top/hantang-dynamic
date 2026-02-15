@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { loadAccounts } from "./core/account";
 import { Database } from "./database";
 import { DynamicTracker } from "./services/tracker";
 import { logger } from "./utils/logger";
@@ -10,21 +11,20 @@ async function runTracker() {
   // Initialize Database
   await Database.getInstance().init();
 
-  const tracker = new DynamicTracker();
-
-  // Initial run
-  await tracker.start();
-
-  // Setup periodic execution
-  const interval = setInterval(
-    () => tracker.start().catch((err) => logger.error(err)),
-    config.application.fetchInterval,
+  // Load all configured accounts (one per cookie file, or one legacy sessdata account)
+  const accounts = loadAccounts();
+  logger.info(
+    `Loaded ${accounts.length} account(s): ${accounts.map((a) => a.uid).join(", ")}`,
   );
+
+  const trackers = accounts.map((account) => new DynamicTracker(account));
 
   // Graceful shutdown
   const shutdown = async () => {
     logger.info("Stopping Tracker...");
-    clearInterval(interval);
+    for (const tracker of trackers) {
+      tracker.stop();
+    }
     try {
       await Database.getInstance().close();
       logger.info("Database connection closed");
@@ -37,6 +37,9 @@ async function runTracker() {
 
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+
+  // Run all account trackers in parallel (each runs its own infinite loop)
+  await Promise.all(trackers.map((t) => t.start()));
 }
 
 async function main() {

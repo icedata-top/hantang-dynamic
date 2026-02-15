@@ -9,6 +9,7 @@ import {
   UserRelationAction,
 } from "../api/relation";
 import { config } from "../config";
+import { loadAccounts } from "../core/account";
 import { retryDelay, sleep } from "./datetime";
 import { logger } from "./logger";
 
@@ -117,7 +118,7 @@ export async function processUserRelations(
   ) {
     try {
       const currentFollows = await retryDelay(
-        () => fetchUserRelation(config.bilibili.uid),
+        () => fetchUserRelation(loadAccounts()[0].uid),
         config.application.apiRetryTimes,
         config.application.apiWaitTime,
       );

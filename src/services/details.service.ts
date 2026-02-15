@@ -432,10 +432,7 @@ export class DetailsService {
 
       await this.db.saveDynamic(data);
     } catch (error) {
-      logger.error(
-        `Failed to save dynamic ${dynamic.desc.dynamic_id}:`,
-        error,
-      );
+      logger.error(`Failed to save dynamic ${dynamic.desc.dynamic_id}:`, error);
     }
   }
 
