@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import type {
   DiscoveredUserData,
   UserData,
+  UserProfileSnapshot,
   UserStatsUpdate,
 } from "../types/models/database.js";
 
@@ -179,5 +180,38 @@ export async function getTopDiscoveredUsers(
     isFollowing: row.is_following as boolean,
     followedBy: (row.followed_by as string[] | null)?.map(BigInt) ?? [],
     lastUpdated: new Date(row.last_updated),
+  }));
+}
+
+/**
+ * Get profile history for a user, newest first.
+ * @param limit Max number of snapshots to return (default 100)
+ */
+export async function getUserProfileHistory(
+  pool: Pool,
+  userId: bigint,
+  limit = 100,
+): Promise<UserProfileSnapshot[]> {
+  const result = await pool.query(
+    `SELECT id, user_id, recorded_at, user_name, face, fans,
+            sign, level, official_role, official_title
+     FROM user_profile_history
+     WHERE user_id = $1
+     ORDER BY recorded_at DESC
+     LIMIT $2`,
+    [userId.toString(), limit],
+  );
+
+  return result.rows.map((row) => ({
+    id: BigInt(row.id),
+    userId: BigInt(row.user_id),
+    recordedAt: new Date(row.recorded_at),
+    userName: row.user_name as string | null,
+    face: row.face as string | null,
+    fans: row.fans as number | null,
+    sign: row.sign as string | null,
+    level: row.level as number | null,
+    officialRole: row.official_role as number | null,
+    officialTitle: row.official_title as string | null,
   }));
 }

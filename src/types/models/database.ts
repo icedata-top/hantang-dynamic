@@ -57,6 +57,22 @@ export interface UserData {
 }
 
 /**
+ * A single snapshot entry from user_profile_history
+ */
+export interface UserProfileSnapshot {
+  id: bigint;
+  userId: bigint;
+  recordedAt: Date;
+  userName: string | null;
+  face: string | null;
+  fans: number | null;
+  sign: string | null;
+  level: number | null;
+  officialRole: number | null;
+  officialTitle: string | null;
+}
+
+/**
  * Database statistics
  */
 export interface DatabaseStats {

@@ -5,6 +5,7 @@ import type {
   DiscoveredUserData,
   RecommendationData,
   UserData,
+  UserProfileSnapshot,
   UserStatsUpdate,
 } from "../types/models/database.js";
 import type { VideoData } from "../types/models/video.js";
@@ -22,6 +23,7 @@ import { getStats } from "./stats.js";
 import {
   addDiscoveredUser,
   getTopDiscoveredUsers,
+  getUserProfileHistory,
   hasUser,
   syncFollowingStatus,
   updateUserStats,
@@ -213,6 +215,16 @@ export class Database {
     limit: number,
   ): Promise<UserData[]> {
     return getTopDiscoveredUsers(this.ensurePool(), orderBy, limit);
+  }
+
+  /**
+   * Get profile change history for a user
+   */
+  public async getUserProfileHistory(
+    userId: bigint,
+    limit?: number,
+  ): Promise<UserProfileSnapshot[]> {
+    return getUserProfileHistory(this.ensurePool(), userId, limit);
   }
 
   /**
