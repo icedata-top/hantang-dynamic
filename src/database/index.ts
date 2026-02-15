@@ -3,6 +3,7 @@ import { config } from "../config/index.js";
 import type {
   DatabaseStats,
   DiscoveredUserData,
+  DynamicData,
   RecommendationData,
   UserData,
   UserProfileSnapshot,
@@ -13,7 +14,7 @@ import type { VideoData } from "../types/models/video.js";
 import { logger } from "../utils/logger.js";
 
 // Import operation modules
-import { cacheForward, getCachedForwardBvid } from "./forwards.js";
+import { getCachedForwardBvid, saveDynamic } from "./dynamics.js";
 import {
   getTopRecommendedVideos,
   type RecommendationInput,
@@ -177,20 +178,23 @@ export class Database {
     return getVideoHistory(this.ensurePool(), bvid, limit);
   }
 
+  // ===== Dynamic Operations =====
+
+  /**
+   * Save a dynamic post and its content to the database.
+   * For type=1 forwards, the resolved bvid also acts as a forward→bvid cache entry.
+   */
+  public async saveDynamic(data: DynamicData): Promise<void> {
+    return saveDynamic(this.ensurePool(), data);
+  }
+
   // ===== Forward Dynamics Operations =====
 
   /**
-   * Get cached forward dynamic BVID
+   * Get the resolved original video BVID for a forward dynamic.
    */
   public async getCachedForwardBvid(dynamicId: string): Promise<string | null> {
     return getCachedForwardBvid(this.ensurePool(), dynamicId);
-  }
-
-  /**
-   * Cache forward dynamic relationship
-   */
-  public async cacheForward(dynamicId: string, bvid: string): Promise<void> {
-    return cacheForward(this.ensurePool(), dynamicId, bvid);
   }
 
   // ===== User Operations =====

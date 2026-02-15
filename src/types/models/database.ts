@@ -92,11 +92,37 @@ export interface UserProfileSnapshot {
 }
 
 /**
+ * Dynamic post data for storage in the dynamics table
+ */
+export interface DynamicData {
+  dynamicId: bigint;
+  userId: bigint;
+  type: number;
+  timestamp: number;
+  /** Referenced video BVID (type=8), or resolved original BVID (type=1 after resolution) */
+  bvid?: string;
+  /** Original dynamic ID being forwarded (type=1) */
+  origDynamicId?: bigint;
+  /** Type of the original dynamic (type=1) */
+  origType?: number;
+  /** Caption text (type=8) or post body (type=4) */
+  textContent?: string;
+  /** Text written when forwarding (type=1) */
+  forwardText?: string;
+  /** Image list (type=2) */
+  images?: Array<{ img_src: string; img_width?: number; img_height?: number }>;
+  /** Full parsed card object */
+  card?: Record<string, unknown>;
+  /** Parsed extend_json object */
+  extendJson?: Record<string, unknown>;
+}
+
+/**
  * Database statistics
  */
 export interface DatabaseStats {
   processedVideosCount: number;
-  forwardDynamicsCount: number;
+  dynamicsCount: number;
   recommendationsCount: number;
   discoveredUsersCount: number;
   filteredVideosCount: number;

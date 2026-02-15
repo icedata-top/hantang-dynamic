@@ -3,6 +3,7 @@ import { fetchVideoFullDetail } from "../api/video";
 import { config } from "../config";
 import { Database } from "../database";
 import type { BiliDynamicCard, RecommendedVideo, VideoData } from "../types";
+import type { DynamicData } from "../types/models/database";
 import { filterVideo } from "../utils/filter";
 import { logger } from "../utils/logger";
 import { RateLimiter } from "../utils/rateLimiter";
@@ -32,12 +33,16 @@ export class DetailsService {
     let bvid = dynamic.desc.bvid;
     try {
       if (dynamic.desc.type === 1) {
-        // Forward type: save the forwarder, then process the original video
+        // Forward type: save the forwarder, then process the original video.
+        // Dynamic content is saved inside resolveForward once the bvid is known.
         await this.storeForwarder(dynamic);
         bvid = await this.resolveForward(dynamic);
         if (!bvid) {
           return { video: null, relatedVideos: [] };
         }
+      } else if (dynamic.desc.dynamic_id !== BigInt(0)) {
+        // Direct post (type=8, or any other real dynamic): save dynamic content
+        await this.saveDynamicContent(dynamic);
       }
 
       return await this.processVideoById(bvid, { processRelated });
@@ -213,7 +218,9 @@ export class DetailsService {
 
       const bvid = response.data.card.desc.bvid;
       if (bvid) {
-        await this.db.cacheForward(dynamicId.toString(), bvid);
+        // Save the full dynamic content with the resolved bvid.
+        // This also serves as the forward→bvid cache entry in the dynamics table.
+        await this.saveDynamicContent(dynamic, bvid);
         return bvid;
       }
     } catch (error) {
@@ -327,6 +334,108 @@ export class DetailsService {
       });
     } catch (e) {
       logger.error(`Failed to store user ${owner.mid}`, e);
+    }
+  }
+
+  /**
+   * Parse a BiliDynamicCard and save its content to the dynamics table.
+   * For type=1 (forward), pass `resolvedBvid` once it has been fetched from the API
+   * so that the entry also acts as a forward→bvid cache.
+   */
+  private async saveDynamicContent(
+    dynamic: BiliDynamicCard,
+    resolvedBvid?: string,
+  ): Promise<void> {
+    try {
+      let card: Record<string, unknown> | undefined;
+      let extendJson: Record<string, unknown> | undefined;
+
+      try {
+        card = JSON.parse(dynamic.card) as Record<string, unknown>;
+      } catch {
+        // card is not valid JSON; store nothing
+      }
+
+      try {
+        if (dynamic.extend_json) {
+          extendJson = JSON.parse(dynamic.extend_json) as Record<
+            string,
+            unknown
+          >;
+        }
+      } catch {
+        // extend_json is not valid JSON; store nothing
+      }
+
+      let textContent: string | undefined;
+      let forwardText: string | undefined;
+      let images:
+        | Array<{ img_src: string; img_width?: number; img_height?: number }>
+        | undefined;
+
+      if (card) {
+        const item = card.item as Record<string, unknown> | undefined;
+        switch (dynamic.desc.type) {
+          case 8: // Video post — caption text lives in card.dynamic
+            textContent = (card.dynamic as string | undefined) || undefined;
+            break;
+          case 1: // Forward — text written by the forwarder
+            forwardText = (item?.content as string | undefined) || undefined;
+            break;
+          case 2: // Image post
+            textContent =
+              (item?.description as string | undefined) || undefined;
+            images =
+              (item?.pictures as
+                | Array<{
+                    img_src: string;
+                    img_width?: number;
+                    img_height?: number;
+                  }>
+                | undefined) || undefined;
+            break;
+          case 4: // Text-only post
+            textContent = (item?.content as string | undefined) || undefined;
+            break;
+        }
+      }
+
+      const bvid =
+        resolvedBvid ||
+        (dynamic.desc.bvid ? dynamic.desc.bvid : undefined) ||
+        (dynamic.desc.origin?.bvid ? dynamic.desc.origin.bvid : undefined);
+
+      const origDyId =
+        dynamic.desc.orig_dy_id && dynamic.desc.orig_dy_id !== BigInt(0)
+          ? dynamic.desc.orig_dy_id
+          : undefined;
+
+      const origType =
+        dynamic.desc.orig_type && dynamic.desc.orig_type !== BigInt(0)
+          ? Number(dynamic.desc.orig_type)
+          : undefined;
+
+      const data: DynamicData = {
+        dynamicId: dynamic.desc.dynamic_id,
+        userId: dynamic.desc.uid,
+        type: dynamic.desc.type,
+        timestamp: dynamic.desc.timestamp,
+        bvid,
+        origDynamicId: origDyId,
+        origType,
+        textContent,
+        forwardText,
+        images,
+        card,
+        extendJson,
+      };
+
+      await this.db.saveDynamic(data);
+    } catch (error) {
+      logger.error(
+        `Failed to save dynamic ${dynamic.desc.dynamic_id}:`,
+        error,
+      );
     }
   }
 
