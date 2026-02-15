@@ -40,9 +40,6 @@ export class DetailsService {
         if (!bvid) {
           return { video: null, relatedVideos: [] };
         }
-      } else if (dynamic.desc.dynamic_id !== BigInt(0)) {
-        // Direct post (type=8, or any other real dynamic): save dynamic content
-        await this.saveDynamicContent(dynamic);
       }
 
       return await this.processVideoById(bvid, { processRelated });
@@ -220,7 +217,7 @@ export class DetailsService {
       if (bvid) {
         // Save the full dynamic content with the resolved bvid.
         // This also serves as the forward→bvid cache entry in the dynamics table.
-        await this.saveDynamicContent(dynamic, bvid);
+        await this.saveDynamic(dynamic, bvid);
         return bvid;
       }
     } catch (error) {
@@ -342,7 +339,7 @@ export class DetailsService {
    * For type=1 (forward), pass `resolvedBvid` once it has been fetched from the API
    * so that the entry also acts as a forward→bvid cache.
    */
-  private async saveDynamicContent(
+  async saveDynamic(
     dynamic: BiliDynamicCard,
     resolvedBvid?: string,
   ): Promise<void> {

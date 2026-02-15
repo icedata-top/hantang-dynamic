@@ -9,17 +9,19 @@ import type {
 import { sleep } from "../utils/datetime";
 import { logger } from "../utils/logger";
 
-type DynamicType = "video" | "forward";
-
-const DYNAMIC_TYPE_MAP: Record<DynamicType, number> = {
-  forward: 1,
-  video: 8,
-};
+export const KNOWN_DYNAMIC_TYPES = {
+  FORWARD: 1,
+  IMAGE: 2,
+  TEXT: 4,
+  VIDEO: 8,
+  SHORT_VIDEO: 16,
+  ARTICLE: 64,
+} as const;
 
 interface FetchDynamicsStreamOptions {
-  minDynamicId: bigint;
+  minDynamicIdByType: Partial<Record<number, bigint>>;
   minTimestamp: number;
-  types: DynamicType[];
+  types: number[];
 }
 
 /**
@@ -29,7 +31,7 @@ interface FetchDynamicsStreamOptions {
  * - 从Bilibili API获取动态数据
  * - 以流式方式返回，每获取一页立即yield
  * - 支持按时间戳和动态ID过滤
- * - 支持多种动态类型（视频、转发）
+ * - 支持多种动态类型（视频、转发等）
  */
 export class DynamicsService {
   private account: AccountContext;
@@ -42,19 +44,22 @@ export class DynamicsService {
    * 流式获取动态数据
    *
    * @param options - 获取选项
-   * @yields 每一页的动态数据
+   * @yields 每一页的动态数据，附带类型码
    */
   async *fetchDynamicsStream(
     options: FetchDynamicsStreamOptions,
-  ): AsyncGenerator<BiliDynamicCard[], void, unknown> {
-    const { minDynamicId, minTimestamp, types } = options;
-    const stateManager = this.account.stateManager;
+  ): AsyncGenerator<
+    { typeCode: number; cards: BiliDynamicCard[] },
+    void,
+    unknown
+  > {
+    const { minDynamicIdByType, minTimestamp, types } = options;
     const uid = this.account.uid;
     const client = this.account.dynamicClient;
 
-    for (const type of types) {
-      logger.info(`[uid=${uid}] Fetching dynamics of type: ${type}`);
-      const typeCode = DYNAMIC_TYPE_MAP[type];
+    for (const typeCode of types) {
+      logger.info(`[uid=${uid}] Fetching dynamics of type: ${typeCode}`);
+      const minDynamicId = minDynamicIdByType[typeCode] ?? BigInt(0);
 
       let offset = BigInt(0);
       let hasMore = true;
@@ -70,7 +75,7 @@ export class DynamicsService {
 
           // 检查响应状态
           if (response.code !== 0 || !response.data.cards?.length) {
-            logger.error(`API Error for ${type}:`, response);
+            logger.error(`API Error for type ${typeCode}:`, response);
             break;
           }
 
@@ -83,10 +88,12 @@ export class DynamicsService {
 
           // 如果有有效数据，yield这一页
           if (validCards.length > 0) {
-            // 按时间戳排序后yield
-            yield validCards.sort(
-              (a, b) => a.desc.timestamp - b.desc.timestamp,
-            );
+            yield {
+              typeCode,
+              cards: validCards.sort(
+                (a, b) => a.desc.timestamp - b.desc.timestamp,
+              ),
+            };
           }
 
           // 判断是否继续
@@ -102,11 +109,6 @@ export class DynamicsService {
           if (firstRun) {
             const newResponse = response as BiliDynamicNewResponse;
             offset = newResponse.data.history_offset;
-
-            stateManager.updateLastDynamicId(
-              newResponse.data.cards[0].desc.dynamic_id,
-            );
-
             firstRun = false;
           } else {
             const historyResponse = response as BiliDynamicHistoryResponse;
@@ -119,13 +121,15 @@ export class DynamicsService {
             await sleep(config.application.apiWaitTime);
           }
         } catch (error) {
-          logger.error(`Error fetching ${type} dynamics:`, error);
+          logger.error(`Error fetching type ${typeCode} dynamics:`, error);
           // 遇到错误时停止当前类型的抓取
           break;
         }
       }
 
-      logger.info(`[uid=${uid}] Completed fetching dynamics of type: ${type}`);
+      logger.info(
+        `[uid=${uid}] Completed fetching dynamics of type: ${typeCode}`,
+      );
     }
   }
 }

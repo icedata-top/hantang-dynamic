@@ -9,7 +9,13 @@ import { exportData } from "../utils/exporter/exporter";
 import { logger } from "../utils/logger";
 import { notifyNewVideos } from "../utils/notifier/notifier";
 import { DetailsService } from "./details.service";
-import { DynamicsService } from "./dynamics.service";
+import { DynamicsService, KNOWN_DYNAMIC_TYPES } from "./dynamics.service";
+
+const ALL_DYNAMIC_TYPES = Object.values(KNOWN_DYNAMIC_TYPES) as number[];
+const PROCESS_VIDEO_TYPES = new Set<number>([
+  KNOWN_DYNAMIC_TYPES.VIDEO,
+  KNOWN_DYNAMIC_TYPES.FORWARD,
+]);
 
 export class DynamicTracker {
   private account: AccountContext;
@@ -77,46 +83,68 @@ export class DynamicTracker {
   }
 
   private async checkDynamics() {
-    const lastDynamicId = this.account.stateManager.lastDynamicId;
-    let maxDynamicId = lastDynamicId;
+    const stateManager = this.account.stateManager;
     const minTimestamp =
       Date.now() / 1000 - config.application.maxHistoryDays * 86400;
 
+    const minDynamicIdByType: Partial<Record<number, bigint>> = {};
+    for (const t of ALL_DYNAMIC_TYPES) {
+      minDynamicIdByType[t] = stateManager.getLastDynamicIdForType(t);
+    }
+
     logger.info(
-      `[uid=${this.account.uid}] Checking dynamics since ID: ${lastDynamicId}, Timestamp: ${minTimestamp}`,
+      `[uid=${this.account.uid}] Checking dynamics, watermarks: ${JSON.stringify(
+        Object.fromEntries(
+          Object.entries(minDynamicIdByType).map(([k, v]) => [
+            k,
+            v?.toString(),
+          ]),
+        ),
+      )}`,
     );
 
+    const maxIdByType = new Map<number, bigint>();
+
     const stream = this.dynamicsService.fetchDynamicsStream({
-      minDynamicId: lastDynamicId,
+      minDynamicIdByType,
       minTimestamp,
-      types: ["video", "forward"],
+      types: ALL_DYNAMIC_TYPES,
     });
 
-    for await (const dynamics of stream) {
+    for await (const { typeCode, cards } of stream) {
       logger.info(
-        `[uid=${this.account.uid}] Got new dynamic page with ${dynamics.length} dynamics`,
+        `[uid=${this.account.uid}] Got new dynamic page: type=${typeCode}, ${cards.length} cards`,
       );
-      // Process page immediately
-      const processedVideos = await this.processPage(dynamics);
 
-      // Export and Notify
-      if (processedVideos.length > 0) {
-        await exportData(processedVideos);
-        await notifyNewVideos(processedVideos);
+      // Save all dynamics to DB immediately (decouple storage from processing)
+      await Promise.all(
+        cards.map((card) => this.detailsService.saveDynamic(card)),
+      );
+
+      // Update per-type max watermark
+      for (const card of cards) {
+        const id = card.desc.dynamic_id;
+        const prev = maxIdByType.get(typeCode) ?? BigInt(0);
+        if (id > prev) maxIdByType.set(typeCode, id);
       }
 
-      // Update maxDynamicId
-      const pageMaxId = Math.max(
-        ...dynamics.map((d) => Number(d.desc.dynamic_id)),
-      );
-      if (pageMaxId > maxDynamicId) {
-        maxDynamicId = BigInt(pageMaxId);
+      // Only process video-relevant types (8=video, 1=forward)
+      if (PROCESS_VIDEO_TYPES.has(typeCode)) {
+        const processedVideos = await this.processPage(cards);
+
+        if (processedVideos.length > 0) {
+          await exportData(processedVideos);
+          await notifyNewVideos(processedVideos);
+        }
       }
     }
 
-    // Update state after full cycle
-    if (maxDynamicId > lastDynamicId) {
-      this.account.stateManager.updateLastDynamicId(maxDynamicId);
+    // Persist per-type watermarks after full stream
+    for (const [type, maxId] of maxIdByType) {
+      const prev = stateManager.getLastDynamicIdForType(type);
+      if (maxId > prev) {
+        stateManager.updateLastDynamicIdForType(type, maxId);
+      }
     }
   }
 
@@ -191,17 +219,30 @@ export class DynamicTracker {
       `[uid=${this.account.uid}] Starting retrospective scan for past ${retrospectiveDays} days`,
     );
 
+    // Full rescan: all type watermarks start at 0
+    const minDynamicIdByType: Partial<Record<number, bigint>> = {};
+    for (const t of ALL_DYNAMIC_TYPES) {
+      minDynamicIdByType[t] = BigInt(0);
+    }
+
     const stream = this.dynamicsService.fetchDynamicsStream({
-      minDynamicId: BigInt(0), // Scan all
+      minDynamicIdByType,
       minTimestamp,
-      types: ["video", "forward"],
+      types: ALL_DYNAMIC_TYPES,
     });
 
-    for await (const dynamics of stream) {
+    for await (const { typeCode, cards } of stream) {
       logger.info(
-        `[uid=${this.account.uid}] Got new page with ${dynamics.length} dynamics`,
+        `[uid=${this.account.uid}] Retrospective page: type=${typeCode}, ${cards.length} cards`,
       );
-      await this.processPage(dynamics);
+
+      await Promise.all(
+        cards.map((card) => this.detailsService.saveDynamic(card)),
+      );
+
+      if (PROCESS_VIDEO_TYPES.has(typeCode)) {
+        await this.processPage(cards);
+      }
     }
 
     logger.info(`[uid=${this.account.uid}] Retrospective scan completed`);
