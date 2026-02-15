@@ -14,7 +14,7 @@ export const KNOWN_DYNAMIC_TYPES = {
   IMAGE: 2,
   TEXT: 4,
   VIDEO: 8,
-  SHORT_VIDEO: 16,
+  // SHORT_VIDEO: 16,
   ARTICLE: 64,
 } as const;
 
