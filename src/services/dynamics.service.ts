@@ -76,6 +76,9 @@ export class DynamicsService {
           // 检查响应状态
           if (response.code !== 0 || !response.data.cards?.length) {
             logger.error(`API Error for type ${typeCode}:`, response);
+            if (config.application.apiWaitTime > 0) {
+              await sleep(config.application.apiWaitTime);
+            }
             break;
           }
 
@@ -86,6 +89,11 @@ export class DynamicsService {
               BigInt(card.desc.dynamic_id_str) > minDynamicId;
             return isTimestampValid && isDynamicIdValid;
           });
+
+          // API限流等待（每次请求后都等待，不论是否继续翻页）
+          if (config.application.apiWaitTime > 0) {
+            await sleep(config.application.apiWaitTime);
+          }
 
           // 如果有有效数据，yield这一页
           if (validCards.length > 0) {
@@ -115,11 +123,6 @@ export class DynamicsService {
             const historyResponse = response as BiliDynamicHistoryResponse;
             hasMore = historyResponse.data.has_more === 1;
             offset = historyResponse.data.next_offset;
-          }
-
-          // API限流等待
-          if (config.application.apiWaitTime > 0) {
-            await sleep(config.application.apiWaitTime);
           }
         } catch (error) {
           logger.error(`Error fetching type ${typeCode} dynamics:`, error);
