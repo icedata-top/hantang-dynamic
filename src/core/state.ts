@@ -12,6 +12,7 @@ interface State {
   imgKey?: string;
   subKey?: string;
   wbiKeysExpiresAt?: number;
+  lastFollowingSync?: number; // ms timestamp
 }
 
 const _defaultState: State = {
@@ -61,6 +62,7 @@ export class StateManager {
         imgKey: loadedState.imgKey,
         subKey: loadedState.subKey,
         wbiKeysExpiresAt: loadedState.wbiKeysExpiresAt,
+        lastFollowingSync: loadedState.lastFollowingSync,
       };
     } catch (error) {
       logger.error("Error loading state:", error);
@@ -167,5 +169,14 @@ export class StateManager {
         expiresAt * 1000,
       ).toLocaleString()}`,
     );
+  }
+
+  get lastFollowingSync(): number | undefined {
+    return this.state.lastFollowingSync;
+  }
+
+  updateFollowingSync() {
+    this.state.lastFollowingSync = Date.now();
+    this.saveState();
   }
 }

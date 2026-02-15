@@ -228,6 +228,7 @@ export class DynamicTracker {
       const followings = await fetchFollowingList(uid, true);
       const followingIds = new Set(followings.map((f) => f.mid.toString()));
       await this.db.syncFollowingStatus(uid, followingIds);
+      this.state.updateFollowingSync();
       logger.info(
         `Following status synced: ${followingIds.size} users marked as followed by ${uid}`,
       );
@@ -237,20 +238,36 @@ export class DynamicTracker {
   }
 
   startFollowingSyncSchedule() {
-    // Sync immediately on start, then every 7 * 24 hours
-    this.syncFollowingStatus().catch((err) =>
-      logger.error("Initial following sync error:", err),
-    );
+    const intervalMs = 24 * 3600 * 1000;
+    const lastSync = this.state.lastFollowingSync ?? 0;
+    const elapsed = Date.now() - lastSync;
+
+    if (elapsed >= intervalMs) {
+      // Never synced, or overdue — delay 30s to avoid hitting API right at startup
+      setTimeout(
+        () =>
+          this.syncFollowingStatus().catch((err) =>
+            logger.error("Following sync error:", err),
+          ),
+        30_000,
+      );
+      logger.info(
+        lastSync === 0
+          ? "Following status sync scheduled in 30s (first run)"
+          : `Following status sync scheduled in 30s (overdue by ${Math.round((elapsed - intervalMs) / 3600_000)}h)`,
+      );
+    } else {
+      logger.info(
+        `Following status sync skipped at startup (last ran ${Math.round(elapsed / 3600_000)}h ago, next in ${Math.round((intervalMs - elapsed) / 3600_000)}h)`,
+      );
+    }
 
     setInterval(
-      () => {
+      () =>
         this.syncFollowingStatus().catch((err) =>
           logger.error("Following sync error:", err),
-        );
-      },
-      7 * 24 * 3600 * 1000,
+        ),
+      intervalMs,
     );
-
-    logger.info("Following status sync scheduled every 24 hours");
   }
 }
