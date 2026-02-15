@@ -6,6 +6,10 @@ export interface DiscoveredUserData {
   userName: string;
   face?: string;
   fans?: number;
+  sign?: string;
+  level?: number;
+  officialRole?: number;
+  officialTitle?: string;
 }
 
 /**
@@ -38,6 +42,10 @@ export interface UserData {
   userName: string;
   face: string;
   fans: number;
+  sign: string;
+  level: number;
+  officialRole: number;
+  officialTitle: string;
   videosSeen: number;
   videosFiltered: number;
   filterPassRate: number;

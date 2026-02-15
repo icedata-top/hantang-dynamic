@@ -18,7 +18,7 @@ export async function hasUser(pool: Pool, userId: bigint): Promise<boolean> {
 }
 
 /**
- * Add a discovered user. On conflict, updates name and face.
+ * Add a discovered user. On conflict, updates name, face, and profile fields.
  * is_following / followed_by are managed exclusively by syncFollowingStatus.
  */
 export async function addDiscoveredUser(
@@ -27,13 +27,31 @@ export async function addDiscoveredUser(
 ): Promise<void> {
   await pool.query(
     `INSERT INTO discovered_users
-     (user_id, user_name, face, fans, videos_seen, videos_filtered, filter_pass_rate)
-     VALUES ($1, $2, $3, $4, 0, 0, 0.0)
+     (user_id, user_name, face, fans, sign, level, official_role, official_title,
+      videos_seen, videos_filtered, filter_pass_rate)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 0, 0.0)
      ON CONFLICT (user_id) DO UPDATE SET
        user_name = EXCLUDED.user_name,
        face = COALESCE(EXCLUDED.face, discovered_users.face),
-       fans = GREATEST(EXCLUDED.fans, discovered_users.fans)`,
-    [user.userId.toString(), user.userName, user.face ?? null, user.fans ?? 0],
+       fans = GREATEST(EXCLUDED.fans, discovered_users.fans),
+       sign = COALESCE(EXCLUDED.sign, discovered_users.sign),
+       level = GREATEST(COALESCE(EXCLUDED.level, 0), COALESCE(discovered_users.level, 0)),
+       official_role = CASE
+         WHEN EXCLUDED.official_role IS NOT NULL AND EXCLUDED.official_role >= 0
+         THEN EXCLUDED.official_role
+         ELSE discovered_users.official_role
+       END,
+       official_title = COALESCE(NULLIF(EXCLUDED.official_title, ''), discovered_users.official_title)`,
+    [
+      user.userId.toString(),
+      user.userName,
+      user.face ?? null,
+      user.fans ?? 0,
+      user.sign ?? null,
+      user.level ?? 0,
+      user.officialRole ?? -1,
+      user.officialTitle ?? null,
+    ],
   );
 }
 
@@ -150,6 +168,10 @@ export async function getTopDiscoveredUsers(
     userName: row.user_name as string,
     face: (row.face as string) ?? "",
     fans: row.fans as number,
+    sign: (row.sign as string) ?? "",
+    level: (row.level as number) ?? 0,
+    officialRole: (row.official_role as number) ?? -1,
+    officialTitle: (row.official_title as string) ?? "",
     videosSeen: row.videos_seen as number,
     videosFiltered: row.videos_filtered as number,
     filterPassRate: row.filter_pass_rate as number,

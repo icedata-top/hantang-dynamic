@@ -97,6 +97,10 @@ export async function initializeSchema(pool: Pool): Promise<void> {
       user_name VARCHAR,
       face VARCHAR,
       fans INTEGER DEFAULT 0,
+      sign VARCHAR,
+      level SMALLINT DEFAULT 0,
+      official_role SMALLINT DEFAULT -1,
+      official_title VARCHAR,
       videos_seen INTEGER DEFAULT 0,
       videos_filtered INTEGER DEFAULT 0,
       filter_pass_rate REAL DEFAULT 0.0,
@@ -130,6 +134,22 @@ export async function initializeSchema(pool: Pool): Promise<void> {
   await pool.query(`
     ALTER TABLE discovered_users
     DROP COLUMN IF EXISTS discovered_from
+  `);
+  await pool.query(`
+    ALTER TABLE discovered_users
+    ADD COLUMN IF NOT EXISTS sign VARCHAR
+  `);
+  await pool.query(`
+    ALTER TABLE discovered_users
+    ADD COLUMN IF NOT EXISTS level SMALLINT DEFAULT 0
+  `);
+  await pool.query(`
+    ALTER TABLE discovered_users
+    ADD COLUMN IF NOT EXISTS official_role SMALLINT DEFAULT -1
+  `);
+  await pool.query(`
+    ALTER TABLE discovered_users
+    ADD COLUMN IF NOT EXISTS official_title VARCHAR
   `);
 
   logger.info("Database schema initialized");

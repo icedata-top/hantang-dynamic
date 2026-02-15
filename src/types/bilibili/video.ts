@@ -263,6 +263,16 @@ export interface BiliVideoFullDetailResponse {
         level_info: {
           current_level: number;
         };
+        Official?: {
+          role: number;
+          title: string;
+          desc: string;
+          type: number;
+        };
+        official_verify?: {
+          type: number;
+          desc: string;
+        };
       };
       following: boolean;
       archive_count: number;

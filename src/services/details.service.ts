@@ -275,7 +275,17 @@ export class DetailsService {
     };
 
     // Store the video owner (may or may not be someone we follow directly)
-    await this.storeUser(fullDetail.data.Card.card);
+    const cardInfo = fullDetail.data.Card.card;
+    await this.storeUser({
+      mid: cardInfo.mid,
+      name: cardInfo.name,
+      face: cardInfo.face,
+      fans: cardInfo.fans,
+      sign: cardInfo.sign || undefined,
+      level: cardInfo.level_info?.current_level,
+      officialRole: cardInfo.Official?.type,
+      officialTitle: cardInfo.Official?.title || undefined,
+    });
 
     if (relatedVideos.length > 0) {
       const recommendations = relatedVideos.map((v, index) => ({
@@ -298,6 +308,10 @@ export class DetailsService {
     name: string;
     face: string;
     fans: number;
+    sign?: string;
+    level?: number;
+    officialRole?: number;
+    officialTitle?: string;
   }) {
     const mid = BigInt(owner.mid);
     try {
@@ -306,6 +320,10 @@ export class DetailsService {
         userName: owner.name,
         face: owner.face,
         fans: owner.fans,
+        sign: owner.sign,
+        level: owner.level,
+        officialRole: owner.officialRole,
+        officialTitle: owner.officialTitle,
       });
     } catch (e) {
       logger.error(`Failed to store user ${owner.mid}`, e);
