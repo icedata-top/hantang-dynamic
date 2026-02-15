@@ -19,7 +19,7 @@ import {
   type RecommendationInput,
   trackRecommendationsBatch,
 } from "./recommendations.js";
-import { initializeSchema } from "./schema.js";
+import { initializeSchema } from "./schema/index.js";
 import { getStats } from "./stats.js";
 import {
   addDiscoveredUser,
