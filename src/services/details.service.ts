@@ -289,8 +289,8 @@ export class DetailsService {
 
     if (relatedVideos.length > 0) {
       const recommendations = relatedVideos.map((v, index) => ({
-        videoBvid: v.bvid,
-        recommendedByBvid: view.bvid,
+        videoAid: v.aid,
+        recommendedByAid: view.aid,
         order: index,
       }));
       await this.db.trackRecommendationsBatch(recommendations);

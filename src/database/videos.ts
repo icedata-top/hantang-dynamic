@@ -1,7 +1,6 @@
 import type { Pool } from "pg";
 import type { VideoSnapshot } from "../types/models/database.js";
 import type { VideoData } from "../types/models/video.js";
-import { bv2av } from "../utils/bvid.js";
 
 /**
  * Check if a video has been processed
@@ -174,17 +173,16 @@ export async function markVideoDeleted(
   notes?: { api_code?: number; api_message?: string },
 ): Promise<void> {
   const notesJson = notes ? JSON.stringify(notes) : null;
-  const correctAid = bv2av(bvid);
 
   await pool.query(
     `INSERT INTO processed_videos (aid, bvid, is_filtered, is_deleted, notes)
-     VALUES ($1, $2, false, true, $3)
+     VALUES (bv2av($1), $1, false, true, $2)
      ON CONFLICT (bvid) DO UPDATE SET
-       aid = EXCLUDED.aid,
+       aid = bv2av(EXCLUDED.bvid),
        is_deleted = true,
        notes = EXCLUDED.notes,
        updated_at = NOW()`,
-    [correctAid.toString(), bvid, notesJson],
+    [bvid, notesJson],
   );
 }
 

@@ -1,7 +1,6 @@
 import { config } from "../config/index.js";
 import { Database } from "../database/index.js";
 import { DetailsService } from "../services/details.service.js";
-import { bv2av } from "../utils/bvid.js";
 import { logger } from "../utils/logger.js";
 
 const POOL_SIZE = config.application.concurrencyLimit || 20;
@@ -126,30 +125,25 @@ export async function runRepairVideos(
  */
 async function repairAids(db: Database): Promise<void> {
   const pool = db.getPool();
-  const { rows } = await pool.query(`SELECT bvid, aid FROM processed_videos`);
 
-  const bvids: string[] = [];
-  const correctAids: string[] = [];
+  const { rows: mismatches } = await pool.query(`
+    SELECT bvid, aid AS current_aid, bv2av(bvid) AS correct_aid
+    FROM processed_videos
+    WHERE bv2av(bvid) != aid
+  `);
 
-  for (const row of rows) {
-    const bvid = row.bvid as string;
-    const currentAid = BigInt(row.aid);
-    const correctAid = bv2av(bvid);
-    if (currentAid !== BigInt(correctAid)) {
-      bvids.push(bvid);
-      correctAids.push(correctAid.toString());
-      logger.info(
-        `Aid mismatch: bvid=${bvid} current=${currentAid} correct=${correctAid}`,
-      );
-    }
-  }
-
-  if (bvids.length === 0) {
+  if (mismatches.length === 0) {
     logger.info("No aid mismatches found");
     return;
   }
 
-  logger.info(`Fixing ${bvids.length} aid mismatches...`);
+  for (const row of mismatches) {
+    logger.info(
+      `Aid mismatch: bvid=${row.bvid} current=${row.current_aid} correct=${row.correct_aid}`,
+    );
+  }
+
+  logger.info(`Fixing ${mismatches.length} aid mismatches...`);
 
   const client = await pool.connect();
   try {
@@ -158,21 +152,18 @@ async function repairAids(db: Database): Promise<void> {
     // Shift wrong aids into a safe negative range (2^62 below zero).
     // All correct aids are in [0, 2^51), so subtracted values can never
     // collide with any existing correct aid.
-    await client.query(
-      `UPDATE processed_videos
-       SET aid = aid - 4611686018427387904
-       WHERE bvid = ANY($1::text[])`,
-      [bvids],
-    );
+    await client.query(`
+      UPDATE processed_videos
+      SET aid = aid - 4611686018427387904
+      WHERE bv2av(bvid) != aid
+    `);
 
-    // Assign correct aids
-    await client.query(
-      `UPDATE processed_videos
-       SET aid = corrections.correct_aid::bigint
-       FROM unnest($1::text[], $2::bigint[]) AS corrections(bvid, correct_aid)
-       WHERE processed_videos.bvid = corrections.bvid`,
-      [bvids, correctAids],
-    );
+    // Assign correct aids via the DB function
+    await client.query(`
+      UPDATE processed_videos
+      SET aid = bv2av(bvid)
+      WHERE aid < 0
+    `);
 
     await client.query("COMMIT");
   } catch (e) {
@@ -182,5 +173,5 @@ async function repairAids(db: Database): Promise<void> {
     client.release();
   }
 
-  logger.info(`Fixed ${bvids.length} aid mismatches`);
+  logger.info(`Fixed ${mismatches.length} aid mismatches`);
 }

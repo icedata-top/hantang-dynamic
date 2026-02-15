@@ -26,8 +26,8 @@ export interface UserStatsUpdate {
  * Recommendation data
  */
 export interface RecommendationData {
-  videoBvid: string;
-  recommendedByBvid: string;
+  videoAid: bigint;
+  recommendedByAid: bigint;
   recommendCount: number;
   recommendOrder: number;
   firstSeen: Date;

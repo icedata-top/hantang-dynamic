@@ -2,8 +2,8 @@ import type { Pool } from "pg";
 import type { RecommendationData } from "../types/models/database.js";
 
 export interface RecommendationInput {
-  videoBvid: string;
-  recommendedByBvid: string;
+  videoAid: bigint | number;
+  recommendedByAid: bigint | number;
   order: number;
 }
 
@@ -17,7 +17,6 @@ export async function trackRecommendationsBatch(
 ): Promise<void> {
   if (recommendations.length === 0) return;
 
-  // Build values list for batch insert
   const placeholders: string[] = [];
   const params: (string | number)[] = [];
   let paramIndex = 1;
@@ -26,18 +25,18 @@ export async function trackRecommendationsBatch(
     placeholders.push(
       `($${paramIndex}, $${paramIndex + 1}, 1, $${paramIndex + 2})`,
     );
-    params.push(rec.videoBvid);
-    params.push(rec.recommendedByBvid);
+    params.push(BigInt(rec.videoAid).toString());
+    params.push(BigInt(rec.recommendedByAid).toString());
     params.push(rec.order);
     paramIndex += 3;
   }
 
   const sql = `
-    INSERT INTO recommendations 
-      (video_bvid, recommended_by_bvid, recommend_count, recommend_order)
+    INSERT INTO recommendations
+      (video_aid, recommended_by_aid, recommend_count, recommend_order)
     VALUES ${placeholders.join(", ")}
-    ON CONFLICT (video_bvid, recommended_by_bvid) 
-    DO UPDATE SET 
+    ON CONFLICT (video_aid, recommended_by_aid)
+    DO UPDATE SET
       recommend_count = recommendations.recommend_count + 1,
       recommend_order = EXCLUDED.recommend_order,
       last_seen = NOW()
@@ -54,15 +53,15 @@ export async function getTopRecommendedVideos(
   limit: number,
 ): Promise<RecommendationData[]> {
   const result = await pool.query(
-    `SELECT * FROM recommendations 
-     ORDER BY recommend_count DESC 
+    `SELECT * FROM recommendations
+     ORDER BY recommend_count DESC
      LIMIT $1`,
     [limit],
   );
 
   return result.rows.map((row) => ({
-    videoBvid: row.video_bvid as string,
-    recommendedByBvid: row.recommended_by_bvid as string,
+    videoAid: BigInt(row.video_aid),
+    recommendedByAid: BigInt(row.recommended_by_aid),
     recommendCount: row.recommend_count as number,
     recommendOrder: row.recommend_order as number,
     firstSeen: new Date(row.first_seen),
