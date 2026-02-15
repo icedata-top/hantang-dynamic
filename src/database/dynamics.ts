@@ -14,16 +14,14 @@ export async function saveDynamic(
   await pool.query(
     `INSERT INTO dynamics
        (dynamic_id, user_id, type, timestamp, bvid, orig_dynamic_id, orig_type,
-        text_content, title, forward_text, images, card, extend_json)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        text_content, title, forward_text, images)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      ON CONFLICT (dynamic_id) DO UPDATE SET
        bvid         = COALESCE(EXCLUDED.bvid,          dynamics.bvid),
        text_content = COALESCE(EXCLUDED.text_content,  dynamics.text_content),
        title        = COALESCE(EXCLUDED.title,         dynamics.title),
        forward_text = COALESCE(EXCLUDED.forward_text,  dynamics.forward_text),
-       images       = COALESCE(EXCLUDED.images,        dynamics.images),
-       card         = COALESCE(EXCLUDED.card,          dynamics.card),
-       extend_json  = COALESCE(EXCLUDED.extend_json,   dynamics.extend_json)`,
+       images       = COALESCE(EXCLUDED.images,        dynamics.images)`,
     [
       data.dynamicId.toString(),
       data.userId.toString(),
@@ -36,8 +34,6 @@ export async function saveDynamic(
       data.title ?? null,
       data.forwardText ?? null,
       data.images ? JSON.stringify(data.images) : null,
-      data.card ? JSON.stringify(data.card) : null,
-      data.extendJson ? JSON.stringify(data.extendJson) : null,
     ],
   );
 }

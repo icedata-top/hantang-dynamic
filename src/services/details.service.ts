@@ -345,23 +345,11 @@ export class DetailsService {
   ): Promise<void> {
     try {
       let card: Record<string, unknown> | undefined;
-      let extendJson: Record<string, unknown> | undefined;
 
       try {
         card = JSON.parse(dynamic.card) as Record<string, unknown>;
       } catch {
-        // card is not valid JSON; store nothing
-      }
-
-      try {
-        if (dynamic.extend_json) {
-          extendJson = JSON.parse(dynamic.extend_json) as Record<
-            string,
-            unknown
-          >;
-        }
-      } catch {
-        // extend_json is not valid JSON; store nothing
+        // card is not valid JSON; skip extraction
       }
 
       let textContent: string | undefined;
@@ -376,35 +364,9 @@ export class DetailsService {
         switch (dynamic.desc.type) {
           case 8: // Video post — caption text lives in card.dynamic
             textContent = (card.dynamic as string | undefined) || undefined;
-            // Video data is fully captured in processed_videos; skip storing the card.
-            card = undefined;
             break;
           case 1: // Forward — text written by the forwarder
             forwardText = (item?.content as string | undefined) || undefined;
-            // Strip origin (original video's card string) — data lives in processed_videos.
-            // Patch imprecise number IDs in item with precise _str values.
-            if (item) {
-              const patchedItem = { ...item };
-              if (dynamic.desc.dynamic_id_str)
-                patchedItem.rp_id = dynamic.desc.dynamic_id_str;
-              if (
-                dynamic.desc.orig_dy_id_str &&
-                dynamic.desc.orig_dy_id_str !== "0"
-              )
-                patchedItem.orig_dy_id = dynamic.desc.orig_dy_id_str;
-              if (
-                dynamic.desc.pre_dy_id_str &&
-                dynamic.desc.pre_dy_id_str !== "0"
-              )
-                patchedItem.pre_dy_id = dynamic.desc.pre_dy_id_str;
-              const stripped = { ...card, item: patchedItem };
-              if ("origin" in stripped) delete stripped.origin;
-              card = stripped;
-            } else if ("origin" in card) {
-              const stripped = { ...card };
-              delete stripped.origin;
-              card = stripped;
-            }
             break;
           case 2: // Image post
             textContent =
@@ -417,8 +379,6 @@ export class DetailsService {
                     img_height?: number;
                   }>
                 | undefined) || undefined;
-            // Text and images are in dedicated columns; card is redundant.
-            card = undefined;
             break;
           case 4: // Text-only post
             textContent = (item?.content as string | undefined) || undefined;
@@ -461,8 +421,6 @@ export class DetailsService {
         title,
         forwardText,
         images,
-        card,
-        extendJson,
       };
 
       await this.db.saveDynamic(data);

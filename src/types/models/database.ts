@@ -113,10 +113,6 @@ export interface DynamicData {
   forwardText?: string;
   /** Image list (type=2) */
   images?: Array<{ img_src: string; img_width?: number; img_height?: number }>;
-  /** Full parsed card object */
-  card?: Record<string, unknown>;
-  /** Parsed extend_json object */
-  extendJson?: Record<string, unknown>;
 }
 
 /**

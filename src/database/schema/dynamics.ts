@@ -13,8 +13,7 @@ export async function initDynamicsSchema(pool: Pool): Promise<void> {
       text_content TEXT,
       forward_text TEXT,
       images JSONB,
-      card JSONB,
-      extend_json JSONB,
+      title TEXT,
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     )
   `);
@@ -25,6 +24,10 @@ export async function initDynamicsSchema(pool: Pool): Promise<void> {
 
   // Add title column for article dynamics (type=64)
   await pool.query(`ALTER TABLE dynamics ADD COLUMN IF NOT EXISTS title TEXT`);
+
+  // Drop card and extend_json columns (no longer stored)
+  await pool.query(`ALTER TABLE dynamics DROP COLUMN IF EXISTS card`);
+  await pool.query(`ALTER TABLE dynamics DROP COLUMN IF EXISTS extend_json`);
 
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_dynamics_user_id
