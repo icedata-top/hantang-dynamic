@@ -7,6 +7,7 @@ import type {
   UserData,
   UserProfileSnapshot,
   UserStatsUpdate,
+  VideoSnapshot,
 } from "../types/models/database.js";
 import type { VideoData } from "../types/models/video.js";
 import { logger } from "../utils/logger.js";
@@ -32,6 +33,7 @@ import {
   getAllProcessedIds,
   getBvidList,
   getProcessedVideos,
+  getVideoHistory,
   hasProcessedVideo,
   hasProcessedVideoById,
   markVideoDeleted,
@@ -163,6 +165,16 @@ export class Database {
    */
   public async getBvidList(where?: string): Promise<string[]> {
     return getBvidList(this.ensurePool(), where);
+  }
+
+  /**
+   * Get change history for a video
+   */
+  public async getVideoHistory(
+    bvid: string,
+    limit?: number,
+  ): Promise<VideoSnapshot[]> {
+    return getVideoHistory(this.ensurePool(), bvid, limit);
   }
 
   // ===== Forward Dynamics Operations =====

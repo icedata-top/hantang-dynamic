@@ -1,4 +1,5 @@
 import type { Pool } from "pg";
+import type { VideoSnapshot } from "../types/models/database.js";
 import type { VideoData } from "../types/models/video.js";
 import { bv2av } from "../utils/bvid.js";
 
@@ -202,4 +203,40 @@ export async function getBvidList(
 
   const result = await pool.query(sql);
   return result.rows.map((row) => row.bvid as string);
+}
+
+/**
+ * Get change history for a video, newest first.
+ * @param limit Max number of snapshots to return (default 50)
+ */
+export async function getVideoHistory(
+  pool: Pool,
+  bvid: string,
+  limit = 50,
+): Promise<VideoSnapshot[]> {
+  const result = await pool.query(
+    `SELECT id, aid, bvid, recorded_at, title, description, tag, tag_new,
+            pic, is_deleted, is_filtered, extras, notes
+     FROM video_history
+     WHERE bvid = $1
+     ORDER BY recorded_at DESC
+     LIMIT $2`,
+    [bvid, limit],
+  );
+
+  return result.rows.map((row) => ({
+    id: BigInt(row.id),
+    aid: BigInt(row.aid),
+    bvid: row.bvid as string,
+    recordedAt: new Date(row.recorded_at),
+    title: row.title as string | null,
+    description: row.description as string | null,
+    tag: row.tag as string | null,
+    tagNew: row.tag_new as string[] | null,
+    pic: row.pic as string | null,
+    isDeleted: row.is_deleted as boolean | null,
+    isFiltered: row.is_filtered as boolean | null,
+    extras: row.extras as Record<string, unknown> | null,
+    notes: row.notes as Record<string, unknown> | null,
+  }));
 }

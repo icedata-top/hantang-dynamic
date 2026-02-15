@@ -57,6 +57,25 @@ export interface UserData {
 }
 
 /**
+ * A single snapshot entry from video_history
+ */
+export interface VideoSnapshot {
+  id: bigint;
+  aid: bigint;
+  bvid: string;
+  recordedAt: Date;
+  title: string | null;
+  description: string | null;
+  tag: string | null;
+  tagNew: string[] | null;
+  pic: string | null;
+  isDeleted: boolean | null;
+  isFiltered: boolean | null;
+  extras: Record<string, unknown> | null;
+  notes: Record<string, unknown> | null;
+}
+
+/**
  * A single snapshot entry from user_profile_history
  */
 export interface UserProfileSnapshot {
