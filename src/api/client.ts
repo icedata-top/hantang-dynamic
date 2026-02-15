@@ -244,7 +244,7 @@ function createClient(
       return response;
     },
     async (error) => {
-      if (!error.response) {
+      if (!error.response || error.response.status === 524) {
         return retryDelay(
           () => client(error.config),
           config.application.apiRetryTimes,

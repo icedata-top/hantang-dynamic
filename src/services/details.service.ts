@@ -208,7 +208,7 @@ export class DetailsService {
 
       const response = await getDynamic(originalDynamicId);
 
-      if (response.code !== 0 || !response.data.card) {
+      if (response.code !== 0 || !response.data.card?.desc) {
         logger.warn(`Failed to fetch original dynamic ${originalDynamicId}`);
         return "";
       }
