@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { logger } from "../../utils/logger.js";
+import { logger } from "../../../utils/logger.js";
 
 // every hour at :15
 export async function initCronVideoMinute(pool: Pool): Promise<void> {

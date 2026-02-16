@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { logger } from "../../utils/logger.js";
+import { logger } from "../../../utils/logger.js";
 
 // every hour at :00, UPSERT only when something changed
 export async function initCronVideoStatic(pool: Pool): Promise<void> {

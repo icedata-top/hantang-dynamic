@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { logger } from "../../utils/logger.js";
+import { logger } from "../../../utils/logger.js";
 
 // every day at UTC 21:30 (Beijing 05:30)
 export async function initCronVideoDaily(pool: Pool): Promise<void> {
