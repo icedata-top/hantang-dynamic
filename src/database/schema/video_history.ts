@@ -36,15 +36,11 @@ export async function initVideoHistorySchema(pool: Pool): Promise<void> {
       IF TG_OP = 'INSERT'
          OR OLD.title       IS DISTINCT FROM NEW.title
          OR OLD.description IS DISTINCT FROM NEW.description
-         OR (SELECT string_agg(t, ',' ORDER BY t) FROM unnest(string_to_array(OLD.tag, ',')) AS t)
-              IS DISTINCT FROM
-            (SELECT string_agg(t, ',' ORDER BY t) FROM unnest(string_to_array(NEW.tag, ',')) AS t)
          OR (SELECT array_agg(t ORDER BY t) FROM unnest(OLD.tag_new) AS t)
               IS DISTINCT FROM
             (SELECT array_agg(t ORDER BY t) FROM unnest(NEW.tag_new) AS t)
          OR OLD.pic         IS DISTINCT FROM NEW.pic
          OR OLD.is_deleted  IS DISTINCT FROM NEW.is_deleted
-         OR OLD.is_filtered IS DISTINCT FROM NEW.is_filtered
          OR OLD.extras      IS DISTINCT FROM NEW.extras
          OR OLD.notes       IS DISTINCT FROM NEW.notes
       THEN
