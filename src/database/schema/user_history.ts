@@ -4,17 +4,21 @@ import { logger } from "../../utils/logger.js";
 export async function initUserHistorySchema(pool: Pool): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_profile_history (
-      id BIGSERIAL PRIMARY KEY,
-      user_id BIGINT NOT NULL,
-      recorded_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      user_name VARCHAR,
-      face VARCHAR,
-      fans INTEGER,
-      sign VARCHAR,
-      level SMALLINT,
-      official_role SMALLINT,
+      user_id        BIGINT       NOT NULL,
+      recorded_at    TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      user_name      VARCHAR,
+      face           VARCHAR,
+      fans           INTEGER,
+      sign           VARCHAR,
+      level          SMALLINT,
+      official_role  SMALLINT,
       official_title VARCHAR
     )
+  `);
+
+  // 迁移：移除旧的自增 id（阻碍 hypertable PK 约束的根源）
+  await pool.query(`
+    ALTER TABLE user_profile_history DROP COLUMN IF EXISTS id
   `);
 
   await pool.query(`
@@ -58,9 +62,24 @@ export async function initUserHistorySchema(pool: Pool): Promise<void> {
   try {
     await pool.query(`
       SELECT create_hypertable(
-        'user_profile_history', 'recorded_at',
+        'user_profile_history',
+        by_range('recorded_at', INTERVAL '90 days'),
         if_not_exists => TRUE,
         migrate_data   => TRUE
+      )
+    `);
+    await pool.query(`
+      ALTER TABLE user_profile_history SET (
+        timescaledb.compress          = true,
+        timescaledb.compress_segmentby = '',
+        timescaledb.compress_orderby   = 'user_id, recorded_at ASC'
+      )
+    `);
+    await pool.query(`
+      SELECT add_compression_policy(
+        'user_profile_history',
+        compress_after => INTERVAL '7 days',
+        if_not_exists  => TRUE
       )
     `);
     logger.info("user_profile_history: TimescaleDB hypertable enabled");
