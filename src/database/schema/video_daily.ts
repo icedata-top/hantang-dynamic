@@ -23,26 +23,24 @@ export async function initVideoDailySchema(pool: Pool): Promise<void> {
     logger.debug("mysql_video_daily: skipped (mysql_fdw not configured)");
   }
 
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS video_daily (
-      record_date  date     NOT NULL,
-      aid          bigint   NOT NULL,
-      coin         integer,
-      favorite     integer,
-      danmaku      integer,
-      "view"       integer,
-      reply        integer,
-      share        integer,
-      "like"       integer
-    )
-  `);
-
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_video_daily_aid_date
-    ON video_daily(aid, record_date ASC)
-  `);
-
   try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS video_daily (
+        record_date  date     NOT NULL,
+        aid          bigint   NOT NULL,
+        coin         integer,
+        favorite     integer,
+        danmaku      integer,
+        "view"       integer,
+        reply        integer,
+        share        integer,
+        "like"       integer
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_video_daily_aid_date
+      ON video_daily(aid, record_date ASC)
+    `);
     await pool.query(`
       SELECT create_hypertable(
         'video_daily',
@@ -65,8 +63,9 @@ export async function initVideoDailySchema(pool: Pool): Promise<void> {
         if_not_exists  => TRUE
       )
     `);
-    logger.info("video_daily: TimescaleDB hypertable enabled");
-  } catch {
-    logger.debug("video_daily: TimescaleDB not available, using plain table");
+    logger.info("video_daily: schema ready");
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    logger.debug(`video_daily: schema setup skipped (${msg})`);
   }
 }

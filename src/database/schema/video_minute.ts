@@ -24,26 +24,24 @@ export async function initVideoMinuteSchema(pool: Pool): Promise<void> {
     logger.debug("mysql_video_minute: skipped (mysql_fdw not configured)");
   }
 
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS video_minute (
-      "time"    timestamptz  NOT NULL,
-      aid       bigint       NOT NULL,
-      coin      integer,
-      favorite  integer,
-      danmaku   integer,
-      "view"    integer,
-      reply     integer,
-      share     integer,
-      "like"    integer
-    )
-  `);
-
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_video_minute_aid_time
-    ON video_minute(aid, "time" ASC)
-  `);
-
   try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS video_minute (
+        "time"    timestamptz  NOT NULL,
+        aid       bigint       NOT NULL,
+        coin      integer,
+        favorite  integer,
+        danmaku   integer,
+        "view"    integer,
+        reply     integer,
+        share     integer,
+        "like"    integer
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_video_minute_aid_time
+      ON video_minute(aid, "time" ASC)
+    `);
     await pool.query(`
       SELECT create_hypertable(
         'video_minute',
@@ -66,8 +64,9 @@ export async function initVideoMinuteSchema(pool: Pool): Promise<void> {
         if_not_exists  => TRUE
       )
     `);
-    logger.info("video_minute: TimescaleDB hypertable enabled");
-  } catch {
-    logger.debug("video_minute: TimescaleDB not available, using plain table");
+    logger.info("video_minute: schema ready");
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    logger.debug(`video_minute: schema setup skipped (${msg})`);
   }
 }
