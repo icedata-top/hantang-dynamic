@@ -5,6 +5,7 @@ import { initFunctionsSchema } from "./functions.js";
 import { initRecommendationsSchema } from "./recommendations.js";
 import { initUserHistorySchema } from "./user_history.js";
 import { initUsersSchema } from "./users.js";
+import { initCronUserStats } from "./cron/user_stats.js";
 import { initCronVideoDaily } from "./cron/video_daily.js";
 import { initCronVideoMinute } from "./cron/video_minute.js";
 import { initCronVideoStatic } from "./cron/video_static.js";
@@ -30,6 +31,7 @@ export async function initializeSchema(pool: Pool): Promise<void> {
   await initCronVideoDaily(pool);
   await initCronVideoMinute(pool);
   await initCronVideoStatic(pool);
+  await initCronUserStats(pool);
 
   logger.info("Database schema initialized");
 }
