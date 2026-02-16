@@ -13,6 +13,14 @@ export async function initCronUserStats(pool: Pool): Promise<void> {
         'update_user_stats',
         '0 22 * * *',
         $$
+        WITH stats AS (
+          SELECT
+            user_id,
+            COUNT(*)   FILTER (WHERE NOT COALESCE(is_deleted, false))                    AS seen,
+            COUNT(*)   FILTER (WHERE is_filtered AND NOT COALESCE(is_deleted, false))    AS filtered
+          FROM processed_videos
+          GROUP BY user_id
+        )
         UPDATE discovered_users u
         SET
           videos_seen      = stats.seen,
@@ -20,24 +28,8 @@ export async function initCronUserStats(pool: Pool): Promise<void> {
           filter_pass_rate = CASE WHEN stats.seen > 0
                              THEN stats.filtered::real / stats.seen
                              ELSE 0.0 END,
-          filtered_view    = stats.filtered_view,
           last_updated     = now()
-        FROM (
-          SELECT
-            pv.user_id,
-            COUNT(*)             FILTER (WHERE NOT COALESCE(pv.is_deleted, false))                              AS seen,
-            COUNT(*)             FILTER (WHERE pv.is_filtered AND NOT COALESCE(pv.is_deleted, false))          AS filtered,
-            COALESCE(SUM(latest."view") FILTER (WHERE pv.is_filtered AND NOT COALESCE(pv.is_deleted, false)), 0) AS filtered_view
-          FROM processed_videos pv
-          LEFT JOIN LATERAL (
-            SELECT "view"
-            FROM video_daily
-            WHERE aid = pv.aid
-            ORDER BY record_date DESC
-            LIMIT 1
-          ) latest ON true
-          GROUP BY pv.user_id
-        ) stats
+        FROM stats
         WHERE u.user_id = stats.user_id
         $$
       )

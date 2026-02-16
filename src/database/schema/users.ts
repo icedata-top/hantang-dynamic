@@ -14,7 +14,6 @@ export async function initUsersSchema(pool: Pool): Promise<void> {
       videos_seen      INTEGER      DEFAULT 0,
       videos_filtered  INTEGER      DEFAULT 0,
       filter_pass_rate REAL         DEFAULT 0.0,
-      filtered_view    BIGINT       DEFAULT 0,
       discovered_at    TIMESTAMPTZ  DEFAULT CURRENT_TIMESTAMP,
       is_following     BOOLEAN      DEFAULT FALSE,
       followed_by      BIGINT[]     DEFAULT '{}',
@@ -29,6 +28,10 @@ export async function initUsersSchema(pool: Pool): Promise<void> {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_user_fans
     ON discovered_users(fans DESC)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_user_following
+    ON discovered_users(is_following)
   `);
 
   // Migrations for existing databases
@@ -71,9 +74,5 @@ export async function initUsersSchema(pool: Pool): Promise<void> {
   await pool.query(`
     ALTER TABLE discovered_users
     ADD COLUMN IF NOT EXISTS filter_pass_rate REAL DEFAULT 0.0
-  `);
-  await pool.query(`
-    ALTER TABLE discovered_users
-    ADD COLUMN IF NOT EXISTS filtered_view BIGINT DEFAULT 0
   `);
 }
