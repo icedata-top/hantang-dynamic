@@ -81,12 +81,18 @@ export class Database {
         connectionTimeoutMillis: 10000,
       });
 
+      // Set search_path on every new connection
+      const schema = config.database.schema;
+      this.pool.on("connect", (client) => {
+        client.query(`SET search_path TO "${schema}"`);
+      });
+
       // Test connection
       const client = await this.pool.connect();
       client.release();
 
       // Initialize schema
-      await initializeSchema(this.pool);
+      await initializeSchema(this.pool, schema);
 
       logger.info("PostgreSQL initialized successfully");
     } catch (error) {

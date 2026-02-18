@@ -3,6 +3,7 @@ import { z } from "zod";
 // Database configuration for PostgreSQL
 export const databaseSchema = z.object({
   url: z.string(),
+  schema: z.string().default("public"),
 });
 
 export type DatabaseConfig = z.infer<typeof databaseSchema>;
@@ -23,5 +24,6 @@ export function createDatabaseConfig(
       "DATABASE_URL",
       "postgresql://localhost:5432/hantang",
     ),
+    schema: getConfigValue(["database", "schema"], "DATABASE_SCHEMA", "public"),
   };
 }

@@ -2,12 +2,16 @@ import type { Pool } from "pg";
 import { logger } from "../../../utils/logger.js";
 
 // daily at UTC 22:00 (30 min after video_daily sync)
-export async function initCronUserStats(pool: Pool): Promise<void> {
+export async function initCronUserStats(pool: Pool, schema: string): Promise<void> {
   try {
     await pool.query(
       `SELECT cron.unschedule(jobid) FROM cron.job WHERE jobname = $1`,
       ["update_user_stats"],
     );
+  } catch {
+    // ignore: job didn't exist yet or pg_cron not available
+  }
+  try {
     await pool.query(`
       SELECT cron.schedule(
         'update_user_stats',
@@ -18,10 +22,10 @@ export async function initCronUserStats(pool: Pool): Promise<void> {
             user_id,
             COUNT(*)   FILTER (WHERE NOT COALESCE(is_deleted, false))                    AS seen,
             COUNT(*)   FILTER (WHERE is_filtered AND NOT COALESCE(is_deleted, false))    AS filtered
-          FROM processed_videos
+          FROM "${schema}".processed_videos
           GROUP BY user_id
         )
-        UPDATE discovered_users u
+        UPDATE "${schema}".discovered_users u
         SET
           videos_seen      = stats.seen,
           videos_filtered  = stats.filtered,
@@ -35,7 +39,7 @@ export async function initCronUserStats(pool: Pool): Promise<void> {
       )
     `);
     logger.info("pg_cron: update_user_stats scheduled");
-  } catch {
-    logger.debug("pg_cron: update_user_stats skipped (pg_cron not configured)");
+  } catch (err) {
+    logger.debug("pg_cron: update_user_stats skipped", { err });
   }
 }

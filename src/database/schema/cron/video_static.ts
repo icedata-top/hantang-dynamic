@@ -2,24 +2,28 @@ import type { Pool } from "pg";
 import { logger } from "../../../utils/logger.js";
 
 // every hour at :00, UPSERT only when something changed
-export async function initCronVideoStatic(pool: Pool): Promise<void> {
+export async function initCronVideoStatic(pool: Pool, schema: string): Promise<void> {
   try {
     await pool.query(
       `SELECT cron.unschedule(jobid) FROM cron.job WHERE jobname = $1`,
       ["sync_video_static_from_mysql"],
     );
+  } catch {
+    // ignore: job didn't exist yet or pg_cron not available
+  }
+  try {
     await pool.query(`
       SELECT cron.schedule(
         'sync_video_static_from_mysql',
         '0 * * * *',
         $$
-        INSERT INTO video_static
+        INSERT INTO "${schema}".video_static
           (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id, priority, updated_at)
         SELECT
           aid, bvid, to_timestamp(pubdate), title, description, tag, pic, type_id, user_id, priority, now()
-        FROM mysql_video_static m
+        FROM "${schema}".mysql_video_static m
         WHERE NOT EXISTS (
-          SELECT 1 FROM video_static v
+          SELECT 1 FROM "${schema}".video_static v
           WHERE v.aid      = m.aid
             AND v.bvid     = m.bvid
             AND v.title    = m.title
@@ -40,7 +44,7 @@ export async function initCronVideoStatic(pool: Pool): Promise<void> {
       )
     `);
     logger.info("pg_cron: sync_video_static_from_mysql scheduled");
-  } catch {
-    logger.debug("pg_cron: sync_video_static_from_mysql skipped (pg_cron not configured)");
+  } catch (err) {
+    logger.debug("pg_cron: sync_video_static_from_mysql skipped", { err });
   }
 }

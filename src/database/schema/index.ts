@@ -17,7 +17,7 @@ import { initVideoMinuteSchema } from "./video_minute.js";
 import { initVideoStaticSchema } from "./video_static.js";
 import { initVideosSchema } from "./videos.js";
 
-export async function initializeSchema(pool: Pool): Promise<void> {
+export async function initializeSchema(pool: Pool, schema: string): Promise<void> {
   logger.info("Initializing database schema");
 
   await initFunctionsSchema(pool);
@@ -31,11 +31,11 @@ export async function initializeSchema(pool: Pool): Promise<void> {
   await initVideoDailyLatestSchema(pool);
   await initVideoMinuteSchema(pool);
   await initVideoStaticSchema(pool);
-  await initCronVideoDaily(pool);
-  await initCronVideoDailyLatest(pool);
-  await initCronVideoMinute(pool);
-  await initCronVideoStatic(pool);
-  await initCronUserStats(pool);
+  await initCronVideoDaily(pool, schema);
+  await initCronVideoDailyLatest(pool, schema);
+  await initCronVideoMinute(pool, schema);
+  await initCronVideoStatic(pool, schema);
+  await initCronUserStats(pool, schema);
 
   logger.info("Database schema initialized");
 }
