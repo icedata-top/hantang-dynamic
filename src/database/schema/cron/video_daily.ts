@@ -17,6 +17,7 @@ export async function initCronVideoDaily(pool: Pool, schema: string): Promise<vo
         'sync_video_daily_from_mysql',
         '30 21 * * *',
         $$
+        SET search_path TO "${schema}";
         INSERT INTO "${schema}".video_daily
           (record_date, aid, coin, favorite, danmaku, "view", reply, share, "like")
         SELECT

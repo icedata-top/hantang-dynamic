@@ -17,6 +17,7 @@ export async function initCronVideoMinute(pool: Pool, schema: string): Promise<v
         'sync_video_minute_from_mysql',
         '15 * * * *',
         $$
+        SET search_path TO "${schema}";
         INSERT INTO "${schema}".video_minute
           ("time", aid, coin, favorite, danmaku, "view", reply, share, "like")
         SELECT

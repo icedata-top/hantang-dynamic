@@ -17,6 +17,7 @@ export async function initCronVideoDailyLatest(pool: Pool, schema: string): Prom
         'update_video_daily_latest',
         '40 21 * * *',
         $$
+        SET search_path TO "${schema}";
         INSERT INTO "${schema}".video_daily_latest
           (aid, record_date, coin, favorite, danmaku, "view", reply, share, "like", updated_at)
         SELECT DISTINCT ON (aid)

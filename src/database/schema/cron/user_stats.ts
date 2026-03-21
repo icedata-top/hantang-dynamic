@@ -17,6 +17,7 @@ export async function initCronUserStats(pool: Pool, schema: string): Promise<voi
         'update_user_stats',
         '0 22 * * *',
         $$
+        SET search_path TO "${schema}";
         WITH stats AS (
           SELECT
             user_id,

@@ -17,6 +17,7 @@ export async function initCronVideoStatic(pool: Pool, schema: string): Promise<v
         'sync_video_static_from_mysql',
         '0 * * * *',
         $$
+        SET search_path TO "${schema}";
         INSERT INTO "${schema}".video_static
           (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id, priority, updated_at)
         SELECT
