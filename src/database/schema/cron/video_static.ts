@@ -21,12 +21,12 @@ export async function initCronVideoStatic(pool: Pool, schema: string): Promise<v
         INSERT INTO "${schema}".video_static
           (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id, priority, updated_at)
         SELECT
-          aid, bvid, to_timestamp(pubdate), title, description, tag, pic, type_id, user_id, priority, now()
+          aid, av2bv(aid), to_timestamp(pubdate), title, description, tag, pic, type_id, user_id, priority, now()
         FROM "${schema}".mysql_video_static m
         WHERE NOT EXISTS (
           SELECT 1 FROM "${schema}".video_static v
           WHERE v.aid      = m.aid
-            AND v.bvid     = m.bvid
+            AND v.bvid     = av2bv(m.aid)
             AND v.title    = m.title
             AND v.priority IS NOT DISTINCT FROM m.priority
         )
