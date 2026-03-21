@@ -71,7 +71,7 @@ async function sendHttpRequest(
     url: processed.url,
     timeout,
     headers: {
-      ...config.notifications.http.headers,
+      ...(config.notifications.http.headers as Record<string, string>),
       ...processed.headers,
     },
     params: processed.params,

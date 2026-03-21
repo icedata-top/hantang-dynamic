@@ -7,13 +7,13 @@ const httpMethodSchema = z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const httpRequestSchema = z.object({
   url: z.string(),
   method: httpMethodSchema,
-  headers: z.record(z.string()).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
   timeout: z.number().optional().default(5000),
   retries: z.number().optional().default(3),
   // Body template for POST/PUT requests (supports placeholders)
   body: z.string().optional(),
   // Query parameters template (supports placeholders)
-  params: z.record(z.string()).optional(),
+  params: z.record(z.string(), z.string()).optional(),
 });
 
 // HTTP notification configuration (supports multiple endpoints)
@@ -23,7 +23,7 @@ export const httpSchema = z.object({
   // Global defaults
   timeout: z.number().optional().default(5000),
   retries: z.number().optional().default(3),
-  headers: z.record(z.string()).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
   // Delay between notifications in milliseconds
   delay: z.number().optional().default(100),
 });
