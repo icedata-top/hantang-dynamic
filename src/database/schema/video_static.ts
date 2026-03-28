@@ -40,11 +40,21 @@ export async function initVideoStaticSchema(pool: Pool): Promise<void> {
         updated_at  timestamptz  DEFAULT now()
       )
     `);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_video_static_bvid ON video_static(bvid)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_video_static_user ON video_static(user_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_video_static_type ON video_static(type_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_video_static_pub  ON video_static(pubdate)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_video_static_prio ON video_static(priority)`);
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_video_static_bvid ON video_static(bvid)`,
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_video_static_user ON video_static(user_id)`,
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_video_static_type ON video_static(type_id)`,
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_video_static_pub  ON video_static(pubdate)`,
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_video_static_prio ON video_static(priority)`,
+    );
     logger.info("video_static: schema ready");
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

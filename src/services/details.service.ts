@@ -81,7 +81,7 @@ export class DetailsService {
       } else if (id.startsWith("BV")) {
         bvid = id;
       } else if (id.toLowerCase().startsWith("av")) {
-        aid = parseInt(id.substring(2));
+        aid = parseInt(id.substring(2), 10);
       } else if (!Number.isNaN(Number(id))) {
         aid = Number(id);
       } else {

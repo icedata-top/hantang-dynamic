@@ -2,7 +2,10 @@ import type { Pool } from "pg";
 import { logger } from "../../../utils/logger.js";
 
 // daily at UTC 22:00 (30 min after video_daily sync)
-export async function initCronUserStats(pool: Pool, schema: string): Promise<void> {
+export async function initCronUserStats(
+  pool: Pool,
+  schema: string,
+): Promise<void> {
   try {
     await pool.query(
       `SELECT cron.unschedule(jobid) FROM cron.job WHERE jobname = $1`,

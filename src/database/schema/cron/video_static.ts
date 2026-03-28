@@ -2,7 +2,10 @@ import type { Pool } from "pg";
 import { logger } from "../../../utils/logger.js";
 
 // every hour at :00, UPSERT only when something changed
-export async function initCronVideoStatic(pool: Pool, schema: string): Promise<void> {
+export async function initCronVideoStatic(
+  pool: Pool,
+  schema: string,
+): Promise<void> {
   try {
     await pool.query(
       `SELECT cron.unschedule(jobid) FROM cron.job WHERE jobname = $1`,
