@@ -16,3 +16,7 @@ exports/*
 .cookies.txt
 .cookies.*.txt
 state*.json
+
+.claude/
+CLAUDE.md
+nul
