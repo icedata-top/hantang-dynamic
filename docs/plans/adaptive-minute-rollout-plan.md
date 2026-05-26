@@ -53,12 +53,13 @@ V1 缺口：
 
 | 参数 | 第一版取值 | 用途 |
 |---|---:|---|
-| 入池阈值 | `daily_delta > 100` | 从 `video_daily` 或等价日增来源选出观察池 |
+| 入池阈值 | `daily_delta > 100 OR weekly_avg_daily_delta >= 100` | 从 `video_daily` 或等价日增来源选出观察池 |
 | `target_delta_per_sample` | `100` | 每次采集期望新增播放量目标 |
 | 调参范围 | `50` 到 `200` | 后续按负载和质量调整 target |
 | `min_positive_priority` | `1` | 正数 `priority` 最小值，表示最短 minute 周期 |
 | `max_positive_priority` | `720` | 正数 `priority` 最大值，表示最长 minute 周期 |
 | `bootstrap_priority` | `10` | 新发布且缺少 daily delta 视频的初始 minute 周期 |
+| `bootstrap_ttl_hours` | `72` | bootstrap 最长保留小时数，超时后按已有 daily 信息或 daily-only 规则重算 |
 | `weekly_zero_delta_days` | `7` | 计算零增长降频的完整自然日窗口 |
 | `weekly_daily_priority` | `-2` | 只在业务时区周日进入 daily 候选的保留 priority 值 |
 | `minute_burst_delta_threshold` | `500` | 相邻两次 minute 样本触发提频的新增播放量 |
@@ -74,6 +75,8 @@ V1 缺口：
 | `batch_size` | `50` | 单次 batch stats 请求的 AID 数量 |
 
 `consumer_tick = 1min` 表示每分钟跑一轮调度检查和任务派发，不表示每分钟只能执行一批 HTTP 请求。每轮 claim 到的任务可以继续按 `batch_size` 拆批，实际 HTTP 并发由现有 worker 和 `RateLimiter` 收敛；调度层不需要另建并发预算。吞吐调整先通过现有 `RateLimiter` 和 `claim_batch_size` 完成，不新增 `batch_concurrency`、`max_batches_per_tick`、`max_http_requests_per_tick`。
+
+`daily_delta_source` 固定使用 `daily_delta`、`weekly_avg`、`bootstrap`、`processed_backfill`。缺少数据不是独立来源；缺少最新相邻日增且无法计算 weekly avg 时，不改写现有 source，新行按视频年龄走 bootstrap 或 processed backfill。
 
 ## 4. 初始分散规则
 
@@ -110,7 +113,7 @@ if next_due_at < now:
 交付内容：
 
 1. 建立统一 state 表，记录 `aid`、`priority`、`next_minute_due_at`、日增来源、daily 已覆盖日期和 minute 成功状态。
-2. 建立 queue 表，记录 `aid`、`task_type`、`dedupe_key`、`due_at`、`status`、`locked_until`、`attempt_count`、`gate_value`、`gate_reason`。
+2. 建立 queue 表，记录 `aid`、`task_type`、`dedupe_key`、`due_at`、`status`、`locked_until`、`attempt_count`、`gate_value`、`gate_reason`；`task_type` 只允许 `minute`、`gate`，`status` 只允许 `pending`、`leased`、`completed`、`abandoned`。
 3. `priority > 0` 生成普通 minute 任务并每日参与 daily，`priority = 0` 每日 daily，`priority = -2` 周日 daily，`priority = -1` 停 daily。
 4. 不建立 `collection_task_attempt`。
 5. 不保存完整请求、完整响应、HTTP 状态或错误详情，出错查日志。
@@ -124,7 +127,7 @@ if next_due_at < now:
 3. 计算最近 7 天日均播放量 `weekly_avg_daily_delta`。
 4. 写入或更新统一 state。
 5. `daily_delta > 100` 或 `weekly_avg_daily_delta >= 100` 的视频计算正数 `priority`。
-6. 最近 7 个完整自然日总新增播放量为 0 的视频写入 `priority = -2`。
+6. 最近 7 个完整自然日都有可比样本且总新增播放量为 0 的视频写入 `priority = -2`；缺日或首尾样本不足时不能降到 `-2`。
 7. 日增和周内日均都不到 100、但最近 7 天仍有新增播放的视频写入 `priority = 0`。
 8. 按各自 `priority` 分散初始化 `next_minute_due_at`。
 9. 重复运行不会生成重复 active 普通任务。
@@ -133,11 +136,11 @@ if next_due_at < now:
 
 交付内容：
 
-1. 新 AID 首次进入正式视频事实表时，立即 upsert `video_collection_state`。
+1. 新 AID 首次进入 `processed_videos` 的正式视频行时，立即 upsert `video_collection_state`。
 2. 没有 daily delta 的新视频设置 `daily_delta_source = 'bootstrap'`。
 3. 初始 `priority` 使用 `bootstrap_priority`，例如 `10`。
 4. 立即计算 `next_minute_due_at`，不等第二天 daily 完成。
-5. 拥有完整 daily delta 或 bootstrap TTL 到期后，按正式规则重算 `priority`。
+5. 拥有完整 daily delta 或达到 `bootstrap_ttl_hours` 后，按正式规则重算 `priority`。
 6. `priority = -1` 的视频不因新入库事件自动恢复采集。
 
 ### 5.5 工作包 E：Minute Handler
@@ -174,9 +177,9 @@ if next_due_at < now:
 7. 播放量小于 `10000` 时，自动 gate 目标为下一个整千播放量。
 8. 播放量大于等于 `10000` 时，自动 gate 目标为下一个整万播放量。
 9. PostgreSQL 根据最新 daily/latest/minute 样本、上一条样本到当前样本的播放区间、距离下一个关口的播放量差值、最近增速和 `next_minute_due_at + gate_lead_time` 判断是否插入 gate。
-10. 已跨过的区间内如果存在未完成关口，插入最高且未完成的到期 gate，不能漏掉 `10000` 这类边界关口。
+10. 已跨过的区间内如果存在未完成关口，V1 每次评估最多插入一个自动 gate；从 `10000` 以下跨到 `10000` 及以上时优先插入 `10000`，否则插入最高且未完成的到期 gate。
 11. 距离关口小于 `least(gate_value * gate_min_lead_ratio, gate_max_lead_views)` 且最近增速为正时，允许提前插入 gate，避免关口附近采样过晚。
-12. 自动插入前排除历史已完成的同一 `(aid, gate_value)`。
+12. 自动插入前排除历史已完成的同一 `(aid, gate_value)`；V1 不清理 completed gate 行，直接作为 gate history。
 13. gate 自动筛选只生成 queue 任务，不改变 state `priority`。
 
 ### 5.7 工作包 G：PostgreSQL 自动化
@@ -202,10 +205,10 @@ if next_due_at < now:
 
 1. `video_minute` 使用 `AFTER INSERT` statement-level trigger 批量推进 state。
 2. `video_daily` 使用 `AFTER INSERT` statement-level trigger，或在现有 pg_cron 同步 SQL 后调用同一个 refresh 函数。
-3. queue 完成只使用显式 `ack_video_collection_tasks(task_ids, lease_token)`，避免只按 AID 误完成非本轮任务。
+3. queue 完成只使用显式 `ack_video_collection_tasks(task_ids, lease_token)`，避免只按 AID 误完成非本轮任务；部分成功 batch 只 ack 成功 AID 对应的 task id 子集。
 4. daily 不记录 attempt。失败率来自应用日志或 queue `attempt_count` 汇总。
 5. `processed_videos` 使用独立 `AFTER INSERT OR UPDATE` trigger，只维护调度状态，不搬视频详情字段，并忽略 `NEW.aid < 0` 的 repair 中间态。
-6. queue 完成只走 `ack_video_collection_tasks(task_ids, lease_token)`，按 task id、lease token 和任务状态校验。
+6. queue 完成只走 `ack_video_collection_tasks(task_ids, lease_token)`，按 task id、lease token 和任务状态校验；失败任务等待 lease 过期重试或显式回到 `pending`，超过 `max_attempts` 后进入 `abandoned`。
 
 ### 5.8 工作包 H：日志脱敏
 
@@ -283,6 +286,8 @@ if next_due_at < now:
 | 响应缺失率 | `< 1%` |
 | 批量写入部分失败率 | `< 1%` |
 
+指标口径与 `docs/adaptive-minute-collection-plan.md` 的运行验收一致。验收报告需要列出分母来源，不能只给百分比。
+
 V1.5 验收补充：
 
 1. `priority = -2` 的视频在业务时区非周日不进入 daily 候选。
@@ -313,7 +318,7 @@ V1.5 验收补充：
 
 ## 8. 第一版不做
 
-1. 不让 SaaS 爬取这批 `daily_delta > 100` 视频。
+1. 不让 SaaS 爬取这批 `daily_delta > 100 OR weekly_avg_daily_delta >= 100` 视频；V1 文档只记录交接目标，具体 SaaS 侧切换作为外部运维检查项处理。
 2. 不新增 `collection_task_attempt`。
 3. 不保存全量执行明细。
 4. 不新增独立 minute worker 进程。

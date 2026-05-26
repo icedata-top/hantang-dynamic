@@ -69,16 +69,16 @@ manual disabled or retired => priority = -1
 
 1. 使用最新两个完整相邻自然日的播放量差值。
 2. `video_daily_latest` 只作为池规模和最新播放量快照校验。
-3. 计算最近 7 天日均播放量 `weekly_avg_daily_delta` 和最近 7 个完整自然日总新增播放量 `weekly_view_delta`。
+3. 计算最近 7 天日均播放量 `weekly_avg_daily_delta` 和最近 7 个完整自然日总新增播放量 `weekly_view_delta`。`weekly_view_delta = 0` 只在 7 个完整自然日都有可比样本时成立；缺日或首尾样本不足时不能降到 `-2`。
 4. 当前自然日未完成时，不用当天局部数据入池。
 
 新视频 bootstrap：
 
-1. 新 AID 首次进入正式视频事实表时，立即 upsert `video_collection_state`。
+1. 新 AID 首次进入 `processed_videos` 的正式视频行时，立即 upsert `video_collection_state`。
 2. 没有 daily delta 的新视频设置 `daily_delta_source = 'bootstrap'`。
 3. 初始 `priority` 使用 `bootstrap_priority`，例如 `10`。
 4. 立即计算 `next_minute_due_at`，不等第二天 daily 完成。
-5. 拥有完整 daily delta 或 bootstrap TTL 到期后，按正式规则重算 `priority`。
+5. 拥有完整 daily delta 或达到 `bootstrap_ttl_hours` 后，按正式规则重算 `priority`。
 
 ### 3.2 priority 策略
 
@@ -91,6 +91,7 @@ target_delta_upper = 200
 min_positive_priority = 1
 max_positive_priority = 720
 bootstrap_priority = 10
+bootstrap_ttl_hours = 72
 weekly_zero_delta_days = 7
 weekly_daily_priority = -2
 minute_burst_delta_threshold = 500
@@ -101,6 +102,8 @@ gate_min_lead_ratio = 0.10
 gate_max_lead_views = 500
 collection_business_timezone = Asia/Shanghai
 ```
+
+`daily_delta_source` 固定使用 `daily_delta`、`weekly_avg`、`bootstrap`、`processed_backfill`。缺少数据不是独立来源；缺少最新相邻日增且无法计算 weekly avg 时，不改写现有 source，新行按视频年龄走 bootstrap 或 processed backfill。
 
 公式：
 
@@ -185,7 +188,7 @@ dedupe_key = gate:{aid}:{gate_value}
 1. PostgreSQL 使用最新 daily/latest/minute 样本取当前 `view`。
 2. 计算下一个关口和 `distance_to_gate`。
 3. 先检查 `current_view` 是否正好命中未完成关口。命中时立即插入到期 `gate` 任务。
-4. 如果有上一条样本，先用 `[previous_view, current_view]` 区间查找最高且未完成的关口。区间内存在未完成关口时，立即插入到期 `gate` 任务。
+4. 如果有上一条样本，先用 `[previous_view, current_view]` 区间查找未完成关口。V1 每次评估最多插入一个自动 gate；从 `10000` 以下跨到 `10000` 及以上时优先插入 `10000`，否则插入区间内最高且未完成的关口。
 5. 自动插入前必须排除历史已完成的同一 `(aid, gate_value)`。
 6. 已经跨过关口时立即插入到期 `gate` 任务。
 7. 尚未跨过时，用最近 minute 增速或 daily delta 估算。`priority > 0` 时判断是否会在 `next_minute_due_at + gate_lead_time` 之前跨过；`priority = 0/-2` 且没有 `next_minute_due_at` 时，只走正好命中、已跨区间和近关口兜底。
@@ -222,7 +225,9 @@ create table video_collection_state (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint chk_video_collection_priority_valid
-    check (priority in (-2, -1, 0) or priority between 1 and 720)
+    check (priority in (-2, -1, 0) or priority between 1 and 720),
+  constraint chk_video_collection_daily_delta_source
+    check (daily_delta_source in ('daily_delta', 'weekly_avg', 'bootstrap', 'processed_backfill'))
 );
 ```
 
@@ -243,7 +248,11 @@ create table video_collection_queue (
   gate_value bigint,
   gate_reason text,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint chk_video_collection_queue_task_type
+    check (task_type in ('minute', 'gate')),
+  constraint chk_video_collection_queue_status
+    check (status in ('pending', 'leased', 'completed', 'abandoned'))
 );
 ```
 
@@ -317,7 +326,7 @@ minute 高频前必须完成：
 
 1. `video_minute` 使用 `AFTER INSERT` statement-level trigger，借助 transition table 批量处理本次插入的 AID，避免 per-row trigger 逐条更新 state。
 2. `video_daily` 使用 `AFTER INSERT` statement-level trigger，或在 pg_cron 同步 SQL 后调用同一个 refresh 函数。现有 `sync_video_daily_from_mysql` 和 `update_video_daily_latest` 已经是数据库内定时路径，适合接上 state 刷新。
-3. 普通任务完成只走显式 `ack_video_collection_tasks(task_ids, lease_token)` 函数。`video_minute` trigger 负责根据事实行推进 state；queue 完成由 ack 函数按 task id、lease token 和任务状态收敛，避免误完成同 AID 的非本轮任务。
+3. 普通任务完成只走显式 `ack_video_collection_tasks(task_ids, lease_token)` 函数。`video_minute` trigger 负责根据事实行推进 state；queue 完成由 ack 函数按 task id、lease token 和任务状态收敛，避免误完成同 AID 的非本轮任务。部分成功 batch 只 ack 成功 AID 对应的 task id 子集。
 4. daily 不区分 attempt 和 success。`video_daily` 有新事实行即代表该 `record_date` 已成功覆盖。失败率用应用日志或 queue `attempt_count` 汇总，不写入 state。
 5. `processed_videos` 使用独立 `AFTER INSERT OR UPDATE` trigger 调用 `fn_upsert_collection_state_from_processed_video()`。该 trigger 只维护调度状态，不搬视频详情字段，并忽略 `NEW.aid < 0` 的 repair 中间态。
 
@@ -424,6 +433,8 @@ fn_ack_video_collection_tasks(p_task_ids bigint[], p_lease_token uuid)
 | batch duration p99 | `<= 30s` |
 | 响应缺失率 | `< 1%` |
 | 批量写入部分失败率 | `< 1%` |
+
+指标口径与 `docs/adaptive-minute-collection-plan.md` 的运行验收一致。所有分母必须来自 queue 状态、worker 日志或批量写入结果，不从 state 表推断失败原因。
 
 ## 10. 涉及文件
 

@@ -49,7 +49,7 @@ daily_delta < 100 and weekly_avg_daily_delta < 100 and weekly_view_delta > 0 => 
 manual disabled or retired => priority = -1
 ```
 
-`daily_delta` 使用最新两个完整自然日的相邻播放量差值。`weekly_avg_daily_delta` 使用最近 7 天日均播放量。`weekly_view_delta` 使用最近 7 个完整自然日的总新增播放量。当前自然日未完成时，不用当天局部数据入池。
+`daily_delta` 使用最新两个完整自然日的相邻播放量差值。`weekly_avg_daily_delta` 使用最近 7 天日均播放量。`weekly_view_delta` 使用最近 7 个完整自然日的总新增播放量。当前自然日未完成时，不用当天局部数据入池。`weekly_view_delta = 0` 只在最近 7 个完整自然日都有可比样本时成立；缺日或首尾样本不足时不能降到 `-2`，先按 `0` 或已有状态处理。
 
 新视频不等待第二天 daily delta。任何新 AID 首次入库时，必须立即 upsert 到统一 state，并进入 bootstrap minute 追踪。
 
@@ -58,7 +58,7 @@ bootstrap 规则：
 1. 新 AID 写入 state 时，如果还没有 daily delta，先设置 `daily_delta_source = 'bootstrap'`。
 2. 初始 `priority` 使用保守固定值，例如 `bootstrap_priority = 10`，表示每 10 分钟采一次 minute。
 3. 初始 `next_minute_due_at` 立即按 bootstrap priority 分散，不能等第二天 daily 完成。
-4. bootstrap 状态最长保留到该视频拥有第一个完整 daily delta 或达到配置的 bootstrap TTL。
+4. bootstrap 状态最长保留到该视频拥有第一个完整 daily delta 或达到 `bootstrap_ttl_hours`。
 5. 一旦有完整 daily delta 或 7 天均值，PostgreSQL 自动化逻辑按正式规则重算 `priority`。
 6. 如果 bootstrap 期发现视频很快失效或被人工停采，可以把 `priority` 设为 `-1`。
 
@@ -71,6 +71,7 @@ target_delta_upper = 200
 min_positive_priority = 1
 max_positive_priority = 720
 bootstrap_priority = 10
+bootstrap_ttl_hours = 72
 weekly_zero_delta_days = 7
 weekly_daily_priority = -2
 minute_burst_delta_threshold = 500
@@ -83,6 +84,15 @@ collection_business_timezone = Asia/Shanghai
 ```
 
 `50` 到 `200` 是后续调参范围，不是入池阈值。
+
+`daily_delta_source` 固定为以下枚举：
+
+1. `daily_delta`：使用最新两个完整自然日的相邻日增。
+2. `weekly_avg`：缺少最新相邻日增时，临时使用近 7 天平均日增。
+3. `bootstrap`：新视频缺少 daily delta，正在 bootstrap minute 追踪。
+4. `processed_backfill`：从 `processed_videos` 回填的老视频，尚无 daily 历史，先等待 daily 建立基线。
+
+缺少数据不是独立 source。缺少最新相邻日增且无法计算 weekly avg 时，不改写 `daily_delta_source`，新行按视频年龄走 `bootstrap` 或 `processed_backfill`。
 
 `priority` 是 V1 的核心采集等级字段。字段名保持为 `priority`，但含义不是排序优先级：
 
@@ -165,6 +175,8 @@ create table video_collection_state (
   last_view bigint,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  constraint chk_video_collection_daily_delta_source
+    check (daily_delta_source in ('daily_delta', 'weekly_avg', 'bootstrap', 'processed_backfill')),
   constraint chk_video_collection_priority_valid
     check (priority in (-2, -1, 0) or priority between 1 and 720)
 );
@@ -194,13 +206,13 @@ state 规则：
 2. 对每个 `aid` 计算最新完整相邻日 `daily_delta`。
 3. 同时计算最近 7 天日均播放量 `weekly_avg_daily_delta`。
 4. 满足 `daily_delta > 100` 或 `weekly_avg_daily_delta >= 100` 的视频计算正数 `priority`。
-5. 初始导入时，最近 7 个完整自然日总新增播放量为 0 的视频写入 `priority = -2`。
+5. 初始导入时，最近 7 个完整自然日都有可比样本且总新增播放量为 0 的视频写入 `priority = -2`；缺日或端点不足时不能降到 `-2`。
 6. 日增和周内日均都不到 100 但最近 7 天仍有新增播放的视频写入 `priority = 0`。
 7. 人工停采、后续淘汰、删除或不可用的视频写入 `priority = -1`。
 
 新视频入库规则：
 
-1. 新视频进入 `processed_videos`、daily 写入链路或其他正式视频事实表时，同步 upsert `video_collection_state`。
+1. V1 自动 bootstrap 触发点是 `processed_videos` 的新正式视频行。daily 写入链路通过 daily refresh 维护 state，不作为另一个新视频 bootstrap trigger，避免重复入口。
 2. 若该 AID 是新发布视频、缺少 daily delta，且不在 state 中，写入 `daily_delta_source = 'bootstrap'`、`priority = bootstrap_priority`、`bootstrap_until` 和 `next_minute_due_at`。
 3. 若该 AID 已在 state 中且 `priority = -1`，不自动恢复采集，除非业务显式解除停采。
 4. 若该 AID 已在 state 中且 `priority != -1`，只合并缺失字段，不覆盖已有 daily/minute 状态。
@@ -237,7 +249,11 @@ create table video_collection_queue (
   gate_value bigint,
   gate_reason text,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint chk_video_collection_queue_task_type
+    check (task_type in ('minute', 'gate')),
+  constraint chk_video_collection_queue_status
+    check (status in ('pending', 'leased', 'completed', 'abandoned'))
 );
 
 create unique index uq_video_collection_queue_active_dedupe
@@ -248,7 +264,7 @@ create index idx_video_collection_queue_claim
 on video_collection_queue(status, task_type, due_at, locked_until, id);
 ```
 
-自动 gate 需要保留已完成去重口径。第一版可以复用 `video_collection_queue` 的历史完成行作为 gate history，不新增表；清理 completed gate 时保留足够长的 TTL，或在后续需要长期成就记录时再增加轻量 gate history 表。
+自动 gate 需要保留已完成去重口径。V1 不清理 completed gate 行，直接复用 `video_collection_queue` 的历史完成行作为 gate history，不新增表。若后续必须清理 completed gate，先增加轻量 gate history 表，再删除 queue 历史行。
 
 claim SQL 负责判断 `locked_until is null or locked_until <= now()`，不要把 `now()` 放进 partial index predicate。
 
@@ -259,7 +275,9 @@ claim 语义：
 3. 领取时设置 `locked_until = now() + 30 seconds`，并增加 `attempt_count`。
 4. 领取时生成新的 `lease_token` 并返回给 worker。
 5. 成功后通过 `ack_video_collection_tasks(task_ids, lease_token)` 按 task id、lease token 和 `status = 'leased'` 校验完成 queue 行，避免旧 worker 的迟到 ack 完成新 lease。
-6. 失败后只写日志，queue 行按重试策略回到 pending 或标记放弃。
+6. 合并 AID batch 后，worker 必须保留 `aid -> task_id` 映射。部分成功时，只把成功 AID 对应的 task id 子集传给 `ack_video_collection_tasks`。
+7. 失败后只写日志。任务可以等 `locked_until` 过期后重新被 claim；若实现显式 fail 函数，则只允许把 `leased` 行改回 `pending` 并把 `locked_until`、`lease_token` 清空。
+8. `attempt_count >= max_attempts` 后标记为 `abandoned`，不再进入 claim。
 
 不记录逐项请求正文、完整响应、完整错误对象、代理细节或 per-aid 详细审计。出错时依赖日志排查，表内只保留任务状态和计数。
 
@@ -282,7 +300,7 @@ dedupe_key = gate:{aid}:{gate_value}
 
 1. 当前播放量小于 `10000` 时，目标关口为下一个整千播放量，例如 `1000`、`2000`、`9000`、`10000`。
 2. 当前播放量大于等于 `10000` 时，目标关口为下一个整万播放量，例如 `20000`、`30000`、`100000`。
-3. 如果当前样本已经跨过多个关口，优先插入区间内最高且未完成的关口；`10000` 这类分档边界关口不能被跳过。
+3. V1 每次自动评估最多插入一个关口任务。若采样区间从小于 `10000` 跨到大于等于 `10000`，优先插入 `10000`；其他跨多个关口的场景插入区间内最高且未完成的关口。
 4. `gate_value` 记录具体目标值，`dedupe_key = gate:{aid}:{gate_value}`。
 
 自动筛选规则：
@@ -291,7 +309,7 @@ dedupe_key = gate:{aid}:{gate_value}
 2. 先检查 `current_view` 是否正好命中未完成关口。命中时立即插入到期 `gate` 任务。
 3. 计算 `next_gate_value`。若不存在下一个目标值，不插入 gate。
 4. 计算 `distance_to_gate = next_gate_value - current_view`。
-5. 如果有上一条样本，先用 `[previous_view, current_view]` 区间查找最高且未完成的关口。区间内存在未完成关口时，立即插入到期 `gate` 任务，避免 `8500 -> 12000` 漏掉 `10000`。
+5. 如果有上一条样本，先用 `[previous_view, current_view]` 区间查找未完成关口。V1 每次评估最多插入一个自动 gate；如果区间从 `10000` 以下跨到 `10000` 及以上，优先插入 `10000`，否则插入区间内最高且未完成的关口。
 6. 自动插入前必须排除历史已完成的同一 `(aid, gate_value)`，避免 completed gate 被重新生成。
 7. 若 `distance_to_gate <= 0`，说明当前样本已经跨过下一个未完成关口，立即插入到期 `gate` 任务，用于补采关口附近样本。
 8. 若 `distance_to_gate > 0`，用最近两次 minute 样本或 daily delta 估算播放增速。`priority > 0` 时预测窗口使用 `next_minute_due_at + gate_lead_time`；`priority = 0/-2` 且没有 `next_minute_due_at` 时，只走正好命中、已跨区间和近关口兜底，不做普通 minute due 预测。
@@ -450,3 +468,15 @@ V1.5 不做：
 | batch duration p95 | `<= 20s` |
 | 响应缺失率 | `< 1%` |
 | 批量写入部分失败率 | `< 1%` |
+
+指标口径：
+
+1. 采样成功率 = 成功写入 `video_minute` 的 task 数 / 本窗口内进入执行态的 task 数。
+2. 成功采样后的写入成功率 = 成功完成数据库写入的 AID 数 / HTTP 响应中成功返回 stats 的 AID 数。
+3. 锁超时重试占比 = 因 `locked_until` 过期后重新领取的 task 数 / 本窗口内领取 task 数。
+4. 放弃任务占比 = 新增 `abandoned` task 数 / 本窗口内领取 task 数。
+5. 到期延迟 = 实际领取时间 - `due_at`，只统计普通 `minute` 和 `gate` 到期任务。
+6. 重复样本占比 = 因同一 AID 时间窗口已有样本而被去重或写入冲突跳过的样本数 / 成功返回 stats 的 AID 数。
+7. batch duration = 从领取 batch 到写入完成并 ack 的耗时。
+8. 响应缺失率 = 请求 batch 中未在 API 响应里找到 stats 的 AID 数 / 请求 AID 数。
+9. 批量写入部分失败率 = batch 写入中出现部分 AID 失败的 batch 数 / 总写入 batch 数。
