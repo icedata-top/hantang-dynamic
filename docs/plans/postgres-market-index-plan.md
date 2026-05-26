@@ -27,7 +27,7 @@ V1 边界必须保持简单：
 
 进入本文范围的前置条件：
 
-1. `hantang-dynamic` 已能采集 `daily_delta > 100` 观察池。
+1. `hantang-dynamic` 已能采集 `daily_delta > 100 OR weekly_avg_daily_delta >= 100` 观察池。
 2. V1 已有统一 state 表和 queue 表，能够表达候选视频、daily 状态、minute 下一次到期时间、锁定状态和采样间隔。
 3. `video_minute` 已有连续追加样本。
 4. V1 已从现有 `video_daily` 全量导入 state。

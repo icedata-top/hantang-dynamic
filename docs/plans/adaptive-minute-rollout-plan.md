@@ -316,7 +316,7 @@ V1.5 验收补充：
 
 ## 8. 第一版不做
 
-1. V1 跑通后，手动关闭 SaaS 对 `daily_delta > 100 OR weekly_avg_daily_delta >= 100` 观察池的 minute 处理；本计划不写具体切换检查项。
+1. V1 跑通后，手动关闭 SaaS 对 `daily_delta > 100 OR weekly_avg_daily_delta >= 100` 观察池的 minute 处理。
 2. 不新增 `collection_task_attempt`。
 3. 不保存全量执行明细。
 4. 不新增独立 minute worker 进程。

@@ -44,7 +44,7 @@ state 初始数据来源为当前 `video_daily` 全量视频。第一版 priorit
 
 ```text
 daily_delta > 100 or weekly_avg_daily_delta >= 100 => priority > 0
-weekly_view_delta = 0 over the last 7 complete days => priority = -2
+current_view = view_7_days_ago => priority = -2
 daily_delta < 100 and weekly_avg_daily_delta < 100 and weekly_view_delta > 0 => priority = 0
 manual disabled or retired => priority = -1
 ```
