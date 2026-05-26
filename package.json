@@ -18,28 +18,28 @@
   },
   "dependencies": {
     "@ahmedrangel/rand-user-agent": "^2.0.23",
-    "axios": "^1.14.0",
-    "axios-cookiejar-support": "^6.0.5",
+    "axios": "^1.16.1",
+    "axios-cookiejar-support": "^7.0.0",
     "cli-progress": "^3.12.0",
     "csv-parse": "^6.2.1",
-    "mysql2": "^3.20.0",
-    "nodemailer": "^8.0.4",
-    "pg": "^8.20.0",
+    "mysql2": "^3.22.3",
+    "nodemailer": "^8.0.8",
+    "pg": "^8.21.0",
     "smol-toml": "^1.6.1",
     "tough-cookie": "^6.0.1",
-    "zod": "^4.3.6"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.8",
-    "@duckdb/node-api": "1.5.0-r.1",
+    "@biomejs/biome": "2.4.15",
+    "@duckdb/node-api": "1.5.3-r.1",
     "@types/cli-progress": "^3.11.6",
-    "@types/node": "^25.5.0",
-    "@types/nodemailer": "^7.0.11",
+    "@types/node": "^25.9.1",
+    "@types/nodemailer": "^8.0.0",
     "@types/pg": "^8.20.0",
     "@types/tough-cookie": "^4.0.5",
     "@vercel/ncc": "^0.38.4",
-    "@yao-pkg/pkg": "^6.14.1",
-    "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "@yao-pkg/pkg": "^6.19.0",
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3"
   }
 }
