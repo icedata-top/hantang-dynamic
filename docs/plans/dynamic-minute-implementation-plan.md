@@ -279,6 +279,7 @@ create table video_collection_queue (
 
 流程：
 
+0. 参考 ../hantang-saas 的 `batchGetVideoInfo(aidList)` 模式，设计适合 minute 批量调用的 stats wrapper，支持批量获取播放、弹幕、评论、收藏、投币、分享、点赞等核心 stats。
 1. 每分钟跑一轮 tick，claim 到期任务并派发 batch。tick 是调度轮次，不限制本分钟只能打一批 HTTP 请求。
 2. claim 最多 50 条 due task。
 3. 将 task 合并为 AID batch。
@@ -289,6 +290,7 @@ create table video_collection_queue (
 8. 批量写入 `video_minute`。
 9. 成功 aid 的 state 更新和对应 queue 行完成由 PostgreSQL 函数或 `video_minute` 写入 trigger 处理，TS 不逐行维护这些字段。
 10. 失败 aid 只写日志，queue 行按重试策略回到 pending 或标记放弃。
+11. 默认采用proxy。失败多次后fallback到直接请求。
 
 不得复用 `DetailsService.processVideoById()` 作为 minute handler。它会写 `processed_videos`、推荐关系和用户存储，不适合 minute stats 采样。
 
