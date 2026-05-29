@@ -2,7 +2,7 @@
 
 ## 1. 范围
 
-本文是 `hantang-dynamic` 建立统一采集 state、接手 minute 采集，并在 V1.5 改造 daily 程序的实施计划。大盘指数、Java 后端、React 前端和弱修正已经移出 V1，见 `docs/plans/postgres-market-index-plan.md`。
+本文是 `hantang-dynamic` 建立统一采集 state、接手 minute 采集、在 V1.5 改造 daily 程序，并在 V1.6 从 `processed_videos` 回填 state 的实施计划。大盘指数、Java 后端、React 前端和弱修正已经移出 V1，见 `docs/plans/postgres-market-index-plan.md`。
 
 事实源为正式仓库 `D:\dev\icedata\hantang-dynamic` latest `a03c19b354d7b5b2dbf0055ad3dcd66fb6159906`。
 
@@ -10,14 +10,15 @@
 
 1. 建立统一采集 state，覆盖 daily 和 minute 两类采集状态。
 2. 从现有 `video_daily` 全量导入已有视频。
-3. 新视频入库时立即 upsert state，并进入 bootstrap minute 追踪。
+3. 新视频入库时，只有规则结果通过才 upsert state，并进入 bootstrap minute 追踪。
 4. `hantang-dynamic` 接手 `daily_delta > 100 OR weekly_avg_daily_delta >= 100` 观察池中 `priority > 0` 视频的 minute 采集。
 5. V1 跑通后，手动关闭 SaaS 对该观察池的 minute 处理。
 6. minute 采样追加写入现有 PostgreSQL `video_minute`。
 7. 少量重复样本可接受，读取侧和指数侧按 `(aid, time)` 处理。
 8. V1 先完成 fixed priority minute 采集闭环。
 9. V1.5 改造 daily 程序，让 daily 也读取统一 state。
-10. 复用现有 `RateLimiter` 和同一套 worker 调度骨架。
+10. V1.6 从 `processed_videos` 回填 state，作为 V2 指数前置数据准备的一部分。
+11. 复用现有 `RateLimiter` 和同一套 worker 调度骨架。
 
 ## 2. 正式仓库现状
 
@@ -74,11 +75,13 @@ manual disabled or retired => priority = -1
 
 新视频 bootstrap：
 
-1. 新 AID 首次进入 `processed_videos` 的正式视频行时，立即 upsert `video_collection_state`。
-2. 没有 daily delta 的新视频设置 `daily_delta_source = 'bootstrap'`。
-3. 初始 `priority` 使用 `bootstrap_priority`，例如 `10`。
-4. 立即计算 `next_minute_due_at`，不等第二天 daily 完成。
-5. 拥有完整 daily delta 或达到 `bootstrap_ttl_hours` 后，按正式规则重算 `priority`。
+1. 新 AID 首次进入 `processed_videos` 的正式视频行时，只有规则结果通过才 upsert `video_collection_state`。
+2. `D:\dev\icedata\icedata_label` 正式完成前，规则结果通过的临时口径为 `tid_v2 in (2022, 2061)`，对应配置 `bootstrap_tid_v2_allowlist = [2022, 2061]`。
+3. 没有 daily delta 的新视频设置 `daily_delta_source = 'bootstrap'`。
+4. 初始 `priority` 使用 `bootstrap_priority`，例如 `10`。
+5. 立即计算 `next_minute_due_at`，不等第二天 daily 完成。
+6. 拥有完整 daily delta 后，按正式规则重算 `priority`。
+7. 达到 `bootstrap_ttl_hours` 仍没有完整 daily baseline 时，降级为 `priority = 0`。
 
 ### 3.2 priority 策略
 
@@ -91,7 +94,8 @@ target_delta_upper = 200
 min_positive_priority = 1
 max_positive_priority = 720
 bootstrap_priority = 10
-bootstrap_ttl_hours = 72
+bootstrap_ttl_hours = 24
+bootstrap_tid_v2_allowlist = [2022, 2061]
 weekly_zero_delta_days = 7
 weekly_daily_priority = -2
 minute_burst_delta_threshold = 500
@@ -103,13 +107,23 @@ gate_max_lead_views = 500
 collection_business_timezone = Asia/Shanghai
 ```
 
+`target_delta_lower` 和 `target_delta_upper` 接入运行逻辑。执行时先计算 `effective_target_delta_per_sample = clamp(target_delta_per_sample, target_delta_lower, target_delta_upper)`，再用有效 target 计算 `priority`；它们不是入池阈值。
+
+`bootstrap_tid_v2_allowlist = [2022, 2061]` 是 `D:\dev\icedata\icedata_label` 正式完成前的临时规则通过口径。后续 `icedata_label` 提供正式规则结果后，以规则结果通过为准；在此之前，不处理未命中 allowlist 的新 AID。
+
 `daily_delta_source` 固定使用 `daily_delta`、`weekly_avg`、`bootstrap`、`processed_backfill`。缺少数据不是独立来源；缺少最新相邻日增且无法计算 weekly avg 时，不改写现有 source，新行按视频年龄走 bootstrap 或 processed backfill。
 
 公式：
 
 ```text
+effective_target_delta_per_sample = clamp(
+  target_delta_per_sample,
+  target_delta_lower,
+  target_delta_upper
+)
+
 priority = clamp(
-  round(target_delta_per_sample * 1440 / daily_delta_per_day),
+  round(effective_target_delta_per_sample * 1440 / daily_delta_per_day),
   min_positive_priority,
   max_positive_priority
 )
@@ -265,7 +279,7 @@ create table video_collection_queue (
 6. 错误详情只写日志，不写 state 或 queue 表。
 7. `priority > 0` 才生成普通 minute 任务，`priority = 0` 每日 daily，`priority = -2` 周日 daily，`priority = -1` 停 daily。
 8. V1 初始导入从现有 `video_daily` 全量补齐 state。
-9. 新视频入库时立即补齐 state，bootstrap 期也生成普通 minute 任务。
+9. 新视频入库时只为规则结果通过的 AID 补齐 state，bootstrap 期也生成普通 minute 任务。`icedata_label` 正式完成前，规则通过临时等同于 `tid_v2 in (2022, 2061)`。
 
 ## 5. Minute Handler
 
@@ -310,7 +324,7 @@ minute 高频前必须完成：
 1. 计算最新完整日的 `daily_delta` 和近 7 天均值。
 2. 根据 `daily_delta` 和 7 天新增播放量计算 `priority`，其中正数表示 minute 周期，`0` 表示每日 daily，`-2` 表示周日 daily，`-1` 表示停 daily。
 3. 从现有 `video_daily` 全量导入或补齐 state。
-4. 新视频入库时 upsert state，并为缺少 daily delta 的新视频设置 bootstrap `priority`。
+4. 新视频入库时只为规则通过、缺少 daily delta 的新视频 upsert state 并设置 bootstrap `priority`。`icedata_label` 正式完成前，规则通过临时等同于 `tid_v2 in (2022, 2061)`。
 5. bootstrap 期结束或获得完整 daily delta 后，按正式规则重算 `priority`。
 6. 按 `priority > 0` 和 `next_minute_due_at` 生成普通 queue 任务。
 7. 用 active dedupe 避免重复 pending 或 leased 任务。
@@ -354,70 +368,102 @@ fn_ack_video_collection_tasks(p_task_ids bigint[])
 
 ## 8. 执行顺序
 
-### Step 1：只读 preflight
+### Phase 0：只读 preflight
 
-1. 确认正式仓库 HEAD 为 `a03c19...`。
+交付物：一份 preflight 记录，列出事实源、表字段、索引和本地配置现状。
+
+1. 确认正式仓库 HEAD 和当前分支。
 2. 确认 `video_daily`、`video_minute`、`video_daily_latest` 字段。
 3. 确认 `video_minute` 的 `(aid, time)` 普通索引。
 4. 确认 V1 不写 `bvid`。
 5. 确认 `fetchVideoFullDetail` endpoint 为 `/view/detail`。
 6. 确认 `RateLimiter` 为同一并发控制入口。
+7. 确认 `processed_videos` 是否已有 `tid_v2`，并确认临时 allowlist 为 `[2022, 2061]`。如果字段名不同，先更新参数命名再实现。
 
-### Step 2：配置与 schema 扩展
+通过条件：不改业务代码即可说明当前事实和计划假设是否一致。
 
-1. 新增最小 minute config。
-2. 新增统一采集 state schema。
-3. 注册 schema 初始化或迁移路径。
-4. 保留现有 `database.url`、`database.schema`、`search_path` 和 `initializeSchema()` 路径。
+### Phase 1：配置、schema 和 SQL 函数
 
-### Step 3：DAO/helper
+交付物：最小配置、state 表、queue 表、crossing history、claim/ack 函数和 schema 注册路径。
+
+1. 在 config schema 中加入 minute 配置：`target_delta_per_sample`、`target_delta_lower`、`target_delta_upper`、`bootstrap_priority`、`bootstrap_ttl_hours`、`bootstrap_tid_v2_allowlist`、queue 参数和 gate 参数。
+2. 校验 `bootstrap_ttl_hours <= 24`，并校验 `target_delta_lower <= target_delta_per_sample <= target_delta_upper` 的运行有效值。
+3. 新增 `video_collection_state`，包含 `daily_delta_source`、`priority`、`bootstrap_until`、`next_minute_due_at`、daily/minute 最近成功状态。
+4. 新增 `video_collection_queue`，包含 `task_type`、`dedupe_key`、`status`、`locked_until`、`attempt_count`、`gate_value`、`gate_reason`。
+5. 新增轻量 crossing history，至少记录 `aid`、`gate_value`、跨过前样本、跨过后样本、`crossed_at` 和来源 task。
+6. 实现 `fn_claim_video_collection_tasks()`、`fn_ack_video_collection_tasks()`、`fn_enqueue_video_collection_tasks()` 和放弃过期任务逻辑。
+7. 注册 schema 初始化，保留现有 `database.url`、`database.schema`、`search_path` 和 `initializeSchema()` 路径。
+
+通过条件：schema 可重复初始化，active dedupe 有效，claim 使用 `FOR UPDATE SKIP LOCKED`，ack 只按 task id 完成本轮成功任务。
+
+### Phase 2：DAO 和纯 SQL helper
+
+交付物：daily 候选 helper、minute writer、state helper、queue helper。
 
 1. 增加 `daily_delta > 100 OR weekly_avg_daily_delta >= 100` 候选 helper。
-2. 增加 `video_minute` writer。
-3. 增加采集状态 helper。
+2. 增加 `effective_target_delta_per_sample` 和 `priority` 计算 helper。
+3. 增加 `video_minute` 批量追加 writer。
+4. 增加 state 初始化和刷新 helper。
+5. 增加 queue claim、ack、fail 或 lease-expire helper。
+6. 增加 gate 计算 helper，覆盖整千、整万、已跨区间和近关口提前插入。
 
-### Step 4：采集闭环
+通过条件：helper 层不调用 Bilibili API，不处理通知，不保存完整请求或完整响应。
+
+### Phase 3：V1 fixed priority minute 闭环
+
+交付物：可运行的 fixed priority minute 采集闭环。
 
 1. 从现有 `video_daily` 全量导入 state。
 2. 读取最新完整日增和近 7 天日均播放量。
-3. 计算 `priority`。
+3. 使用 `effective_target_delta_per_sample` 计算 `priority`。
 4. 分散初始 `next_minute_due_at`。
-5. 新视频入库时立即 upsert state 并设置 bootstrap minute 追踪。
-6. claim due task。
-7. 合并 AID batch，调用 batch stats wrapper。
-8. 批量写 `video_minute`。
-9. 成功 aid 通过 PostgreSQL 函数或 trigger 推进 state，queue 完成只由 worker 调用 `ack_video_collection_tasks(task_ids)`，失败 aid 只写日志并等待重试。
-10. 相邻两次 minute 样本新增播放量超过 `minute_burst_delta_threshold` 时，PostgreSQL 自动调小 `priority` 并重算下一次 due。
+5. `processed_videos` 新正式视频行触发 bootstrap upsert state；只有规则结果通过的视频进入 bootstrap minute。`icedata_label` 正式完成前，规则通过临时等同于 `tid_v2 in (2022, 2061)`。
+6. bootstrap 到期仍无完整 daily baseline 时降级为 `priority = 0`。
+7. 每分钟 tick 一轮，claim due task。
+8. 合并 AID batch，调用 batch stats wrapper。
+9. 批量写 `video_minute`。
+10. 成功 aid 通过 PostgreSQL 函数或 trigger 推进 state，queue 完成只由 worker 调用 `ack_video_collection_tasks(task_ids)`。
+11. 失败 aid 只写日志并等待重试。
+12. 相邻两次 minute 样本新增播放量超过 `minute_burst_delta_threshold` 时，PostgreSQL 自动调小 `priority` 并重算下一次 due。
 
-### Step 5：V1.5 daily 改造
+通过条件：allowlist smoke、10 到 30 分钟运行检查、24h fixed priority 验收通过。
 
-1. daily 程序改为从 `video_collection_state` 读取候选。
-2. `priority > 0` 和 `priority = 0` 的视频继续参与每日 daily。
-3. `priority = -2` 的视频只在按 `collection_business_timezone` 判断的每周日进入 daily 候选。
-4. `priority = -1` 的视频不进入 daily。
-5. `priority = 0` 的视频只要当前端点和 7 天前端点播放量一致，PostgreSQL 就只把 `priority` 调整为 `-2`，不新增 cadence 字段。
-6. `priority = -2` 的视频只要周日 daily 发现最近窗口新增播放量大于 0，就把 `priority` 调回 `0`。
-7. daily 成功以 `video_daily` 事实行写入为准，PostgreSQL 自动刷新 `last_daily_record_date`、`latest_daily_delta`、`weekly_avg_daily_delta` 和 `priority`。
-8. daily 仍写入现有 `video_daily` 和 `video_daily_latest`，不改变事实表语义。
+### Phase 4：V1.5 daily 改造
 
-### Step 5.5：processed_videos 回填 state
+交付物：daily 程序改为从 `video_collection_state` 读取候选。
 
-该步骤属于 V1.6 或 V2 大盘前置，位于 V1.5 minute/daily 改造之后、V2 指数之前。
+1. `priority > 0` 和 `priority = 0` 的视频继续参与每日 daily。
+2. `priority = -2` 的视频只在按 `collection_business_timezone` 判断的每周日进入 daily 候选。
+3. `priority = -1` 的视频不进入 daily。
+4. `priority = 0` 的视频只要当前端点和 7 天前端点播放量一致，PostgreSQL 就只把 `priority` 调整为 `-2`。
+5. `priority = -2` 的视频只要周日 daily 发现最近窗口新增播放量大于 0，就把 `priority` 调回 `0`。
+6. daily 成功以 `video_daily` 事实行写入为准，PostgreSQL 自动刷新 `last_daily_record_date`、`latest_daily_delta`、`weekly_avg_daily_delta` 和 `priority`。
+7. daily 仍写入现有 `video_daily` 和 `video_daily_latest`，不改变事实表语义。
+
+通过条件：`-2` 周日候选、非周日排除、`0` 和 `-2` 双向调整都能用小样本验证。
+
+### Phase 5：V1.6 processed_videos 回填 state
+
+交付物：从 `processed_videos` 补齐 state 的一次性或可重复回填入口。
 
 1. 从 `processed_videos` 扫符合条件的视频。
 2. 优先使用 `pubdate` 判断视频年龄，其次使用 `ctime`，不要用本地 `created_at` 判断视频年龄。
 3. 已有 daily 历史的 AID 按 daily 规则计算 `priority`。
-4. 没有 daily 历史的新视频按 bootstrap 规则入 state。
+4. 没有 daily 历史的新视频且规则结果通过时按 bootstrap 规则入 state。`icedata_label` 正式完成前，规则通过临时等同于 `tid_v2 in (2022, 2061)`。
 5. 没有 daily 历史的老视频写入 `daily_delta_source = 'processed_backfill'`、`priority = 0`，先等半夜 daily 建立基线，不进入 minute。
 6. `is_deleted = true` 或不可用视频写入或保持 `priority = -1`。
 7. 不把 `processed_videos` 的详情缓存、过滤结果、推荐关系、`notes` 或 `extras` 迁入 state。
 
-### Step 6：验收
+通过条件：回填可重复运行，不覆盖已有 `priority = -1`，不把规则未通过的无 daily 新视频拉进 bootstrap minute。
+
+### Phase 6：最终验收和 V2 交接
 
 1. 小 allowlist smoke。
 2. 10 到 30 分钟运行检查。
 3. 24h fixed priority 验收。
-4. 通过后，指数工作按 `docs/plans/postgres-market-index-plan.md` 继续。
+4. V1.5 daily 小样本验收。
+5. V1.6 回填幂等验收。
+6. 通过后，指数工作按 `docs/plans/postgres-market-index-plan.md` 继续。
 
 ## 9. 24h 验收阈值
 
