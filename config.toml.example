@@ -45,6 +45,35 @@ retrospective_days = 30        # Days to look back during retrospective scan (de
 url = "postgresql://localhost:5432/hantang"  # PostgreSQL connection URL
 schema = "public"                            # PostgreSQL schema name (default: public)
 
+[minute]
+# Adaptive minute collection. Disabled by default until schema and smoke checks pass.
+enabled = false
+consumer_tick_ms = 60000
+claim_batch_size = 50
+batch_size = 50
+lock_duration_seconds = 30
+max_attempts = 5
+target_delta_per_sample = 100
+target_delta_lower = 50
+target_delta_upper = 200
+min_positive_priority = 1
+max_positive_priority = 720
+bootstrap_priority = 10
+bootstrap_ttl_hours = 24
+bootstrap_label_content_types = ["vocaloid", "maybe_vocaloid"]
+bootstrap_label_origin = "rule"
+bootstrap_label_writers = ["classification_apply", "classification_trigger"]
+bootstrap_tid_v2_allowlist = [2022, 2061]
+weekly_zero_delta_days = 7
+weekly_daily_priority = -2
+minute_burst_delta_threshold = 500
+minute_burst_priority = 1
+processed_backfill_new_video_age_days = 7
+gate_lead_time_minutes = 30
+gate_min_lead_ratio = 0.10
+gate_max_lead_views = 500
+collection_business_timezone = "Asia/Shanghai"
+
 [processing]
 [processing.features]
 # Feature toggles

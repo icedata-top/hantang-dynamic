@@ -1,5 +1,7 @@
 import type { Pool } from "pg";
 import { logger } from "../../utils/logger.js";
+import { initCollectionQueueSchema } from "./collection_queue.js";
+import { initCollectionStateSchema } from "./collection_state.js";
 import { initCronUserStats } from "./cron/user_stats.js";
 import { initCronVideoDaily } from "./cron/video_daily.js";
 import { initCronVideoDailyLatest } from "./cron/video_daily_latest.js";
@@ -33,6 +35,8 @@ export async function initializeSchema(
   await initVideoDailyLatestSchema(pool);
   await initVideoMinuteSchema(pool);
   await initVideoStaticSchema(pool);
+  await initCollectionStateSchema(pool);
+  await initCollectionQueueSchema(pool);
   await initCronVideoDaily(pool, schema);
   await initCronVideoDailyLatest(pool, schema);
   await initCronVideoStatic(pool, schema);

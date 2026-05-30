@@ -10,10 +10,20 @@ import type {
   UserStatsUpdate,
   VideoSnapshot,
 } from "../types/models/database.js";
+import type {
+  DailyCollectionCandidate,
+  ProcessedVideoCollectionInput,
+  VideoCollectionTask,
+  VideoMinuteSample,
+} from "../types/models/minute.js";
 import type { VideoData } from "../types/models/video.js";
 import { logger } from "../utils/logger.js";
 
 // Import operation modules
+import {
+  refreshVideoCollectionStateFromDaily,
+  upsertCollectionStateFromProcessedVideo,
+} from "./collectionState.js";
 import { getCachedForwardBvid, saveDynamic } from "./dynamics.js";
 import {
   getTopRecommendedVideos,
@@ -23,6 +33,13 @@ import {
 import { initializeSchema } from "./schema/index.js";
 import { getStats } from "./stats.js";
 import {
+  ackVideoCollectionTasks,
+  claimVideoCollectionTasks,
+  enqueueVideoCollectionGateTasks,
+  enqueueVideoCollectionTasks,
+  failVideoCollectionTasks,
+} from "./taskQueue.js";
+import {
   addDiscoveredUser,
   getTopDiscoveredUsers,
   getUserProfileHistory,
@@ -30,6 +47,8 @@ import {
   syncFollowingStatus,
   updateUserStats,
 } from "./users.js";
+import { getDailyCollectionCandidates } from "./videoDaily.js";
+import { insertVideoMinuteSamples } from "./videoMinute.js";
 import {
   getAllProcessedIds,
   getBvidList,
@@ -286,6 +305,87 @@ export class Database {
    */
   public async getStats(): Promise<DatabaseStats> {
     return getStats(this.ensurePool());
+  }
+
+  // ===== Adaptive Minute Operations =====
+
+  public async getDailyCollectionCandidates(options?: {
+    includeWeeklyOnly?: boolean;
+    now?: Date;
+    businessTimezone?: string;
+    limit?: number;
+  }): Promise<DailyCollectionCandidate[]> {
+    return getDailyCollectionCandidates(this.ensurePool(), options);
+  }
+
+  public async refreshVideoCollectionStateFromDaily(
+    aids?: bigint[],
+    now?: Date,
+  ): Promise<number> {
+    return refreshVideoCollectionStateFromDaily(this.ensurePool(), aids, now);
+  }
+
+  public async upsertCollectionStateFromProcessedVideo(
+    input: ProcessedVideoCollectionInput,
+    now?: Date,
+  ): Promise<string> {
+    return upsertCollectionStateFromProcessedVideo(
+      this.ensurePool(),
+      input,
+      now,
+    );
+  }
+
+  public async enqueueVideoCollectionTasks(
+    now?: Date,
+    maxAttempts?: number,
+  ): Promise<number> {
+    return enqueueVideoCollectionTasks(this.ensurePool(), now, maxAttempts);
+  }
+
+  public async enqueueVideoCollectionGateTasks(
+    now?: Date,
+    options?: {
+      gateLeadTimeMinutes?: number;
+      gateMinLeadRatio?: number;
+      gateMaxLeadViews?: number;
+      maxAttempts?: number;
+    },
+  ): Promise<number> {
+    return enqueueVideoCollectionGateTasks(this.ensurePool(), now, options);
+  }
+
+  public async claimVideoCollectionTasks(
+    limit?: number,
+    lockDurationSeconds?: number,
+    now?: Date,
+  ): Promise<VideoCollectionTask[]> {
+    return claimVideoCollectionTasks(
+      this.ensurePool(),
+      limit,
+      lockDurationSeconds,
+      now,
+    );
+  }
+
+  public async ackVideoCollectionTasks(
+    taskIds: bigint[],
+    now?: Date,
+  ): Promise<number> {
+    return ackVideoCollectionTasks(this.ensurePool(), taskIds, now);
+  }
+
+  public async failVideoCollectionTasks(
+    taskIds: bigint[],
+    now?: Date,
+  ): Promise<number> {
+    return failVideoCollectionTasks(this.ensurePool(), taskIds, now);
+  }
+
+  public async insertVideoMinuteSamples(
+    samples: VideoMinuteSample[],
+  ): Promise<number> {
+    return insertVideoMinuteSamples(this.ensurePool(), samples);
   }
 
   // ===== Connection Management =====
