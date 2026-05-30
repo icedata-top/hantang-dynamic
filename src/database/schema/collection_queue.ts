@@ -493,13 +493,15 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
       ),
       deferred_gate AS (
         UPDATE video_collection_queue q
-        SET status = CASE
-              WHEN q.attempt_count >= q.max_attempts THEN 'abandoned'
-              ELSE 'pending'
-            END,
+        SET status = 'pending',
+            due_at = p_now + make_interval(
+              mins => least(greatest(COALESCE(s.priority, 5), 1), 5)
+            ),
+            attempt_count = greatest(q.attempt_count - 1, 0),
             locked_until = NULL,
             updated_at = p_now
         FROM gate_outcome go
+        LEFT JOIN video_collection_state s ON s.aid = go.aid
         WHERE q.id = go.id
           AND q.status = 'leased'
           AND NOT go.crossed
