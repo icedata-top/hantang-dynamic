@@ -117,6 +117,41 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_advance_abandoned_minute_collection_state(
+      p_now timestamptz DEFAULT now()
+    ) RETURNS integer AS $$
+    DECLARE
+      advanced_count integer;
+    BEGIN
+      WITH advanced AS (
+        UPDATE video_collection_state s
+        SET next_minute_due_at = fn_video_collection_next_due_at(
+              s.aid,
+              s.priority,
+              greatest(
+                p_now + interval '1 second',
+                q.due_at + make_interval(mins => s.priority)
+              )
+            ),
+            updated_at = p_now
+        FROM video_collection_queue q
+        WHERE q.aid = s.aid
+          AND q.task_type = 'minute'
+          AND q.status = 'abandoned'
+          AND q.due_at <= p_now
+          AND s.priority > 0
+          AND s.next_minute_due_at IS NOT NULL
+          AND s.next_minute_due_at <= q.due_at
+        RETURNING 1
+      )
+      SELECT count(*) INTO advanced_count FROM advanced;
+
+      RETURN advanced_count;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+
+  await pool.query(`
     CREATE OR REPLACE FUNCTION fn_enqueue_video_collection_tasks(
       p_now timestamptz DEFAULT now(),
       p_max_attempts integer DEFAULT 5
@@ -152,6 +187,8 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
       WHERE status = 'leased'
         AND locked_until <= p_now
         AND attempt_count >= max_attempts;
+
+      PERFORM fn_advance_abandoned_minute_collection_state(p_now);
 
       INSERT INTO video_collection_queue (
         aid,
@@ -355,6 +392,8 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
         AND locked_until <= p_now
         AND attempt_count >= max_attempts;
 
+      PERFORM fn_advance_abandoned_minute_collection_state(p_now);
+
       RETURN QUERY
       WITH candidates AS (
         SELECT q.id
@@ -483,6 +522,9 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
         AND q.status = 'leased';
 
       GET DIAGNOSTICS failed_count = ROW_COUNT;
+
+      PERFORM fn_advance_abandoned_minute_collection_state(p_now);
+
       RETURN failed_count;
     END;
     $$ LANGUAGE plpgsql
