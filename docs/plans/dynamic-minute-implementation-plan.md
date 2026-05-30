@@ -10,7 +10,7 @@
 
 1. 建立统一采集 state，覆盖 daily 和 minute 两类采集状态。
 2. 从现有 `video_daily` 全量导入已有视频。
-3. 新视频入库时，只有规则结果通过才 upsert state，并进入 bootstrap minute 追踪。
+3. 新视频入库时，只有正式规则 label 口径通过，才 upsert state，并进入 bootstrap minute 追踪。
 4. `hantang-dynamic` 接手 `daily_delta > 100 OR weekly_avg_daily_delta >= 100` 观察池中 `priority > 0` 视频的 minute 采集。
 5. V1 跑通后，手动关闭 SaaS 对该观察池的 minute 处理。
 6. minute 采样追加写入现有 PostgreSQL `video_minute`。
@@ -75,8 +75,8 @@ manual disabled or retired => priority = -1
 
 新视频 bootstrap：
 
-1. 新 AID 首次进入 `processed_videos` 的正式视频行时，只有规则结果通过才 upsert `video_collection_state`。
-2. `D:\dev\icedata\icedata_label` 正式完成前，规则结果通过的临时口径为 `tid_v2 in (2022, 2061)`，对应配置 `bootstrap_tid_v2_allowlist = [2022, 2061]`。
+1. 新 AID 在 `processed_videos` 的正式视频行完成规则写入后，只有 `is_deleted = false`、`label_origin = 'rule'`、`labeled_by in ('classification_apply', 'classification_trigger')` 且 `label_content_type in ('vocaloid', 'maybe_vocaloid')`，才 upsert `video_collection_state`。
+2. `D:\dev\icedata\icedata_label` 正式完成前，规则结果通过的临时 fallback 口径为 `tid_v2 in (2022, 2061)`，对应配置 `bootstrap_tid_v2_allowlist = [2022, 2061]`。
 3. 没有 daily delta 的新视频设置 `daily_delta_source = 'bootstrap'`。
 4. 初始 `priority` 使用 `bootstrap_priority`，例如 `10`。
 5. 立即计算 `next_minute_due_at`，不等第二天 daily 完成。
@@ -95,6 +95,9 @@ min_positive_priority = 1
 max_positive_priority = 720
 bootstrap_priority = 10
 bootstrap_ttl_hours = 24
+bootstrap_label_content_types = ['vocaloid', 'maybe_vocaloid']
+bootstrap_label_origin = 'rule'
+bootstrap_label_writers = ['classification_apply', 'classification_trigger']
 bootstrap_tid_v2_allowlist = [2022, 2061]
 weekly_zero_delta_days = 7
 weekly_daily_priority = -2
@@ -109,7 +112,11 @@ collection_business_timezone = Asia/Shanghai
 
 `target_delta_lower` 和 `target_delta_upper` 接入运行逻辑。执行时先计算 `effective_target_delta_per_sample = clamp(target_delta_per_sample, target_delta_lower, target_delta_upper)`，再用有效 target 计算 `priority`；它们不是入池阈值。
 
-`bootstrap_tid_v2_allowlist = [2022, 2061]` 是 `D:\dev\icedata\icedata_label` 正式完成前的临时规则通过口径。后续 `icedata_label` 提供正式规则结果后，以规则结果通过为准；在此之前，不处理未命中 allowlist 的新 AID。
+正式 label 口径来自 `D:\dev\icedata\icedata_label\docs\plans\classification-rules-v1-design.md`：`processed_videos.is_deleted = false`、`label_origin = 'rule'`、`labeled_by in ('classification_apply', 'classification_trigger')`，且 `label_content_type in ('vocaloid', 'maybe_vocaloid')` 时，才视为规则结果通过。`hantang-dynamic` 只提供 `video_collection_state` 和 SQL 维护函数，不重新实现分类规则；`icedata_label` 的规则 trigger 成功后直接调用该函数或执行等价 upsert，不把 `classification_crawler_handoff_events` 作为正式消费合约。
+
+正式 trigger 必须同时覆盖进入和退出：规则结果通过时 upsert 或激活 state；删除、降为 `not_vocaloid/unknown`、或不再满足 `label_origin/labeled_by` 规则口径时，把已有 state 设为 `priority = -1` 并清空普通 minute due。未进入过 state 的非正例不创建追踪行。
+
+`bootstrap_tid_v2_allowlist = [2022, 2061]` 是 `D:\dev\icedata\icedata_label` 正式完成前的临时 fallback 口径。后续 `icedata_label` 提供正式 label 结果后，以完整正式 label 口径为准；在此之前，不处理未命中 allowlist 的新 AID。
 
 `daily_delta_source` 固定使用 `daily_delta`、`weekly_avg`、`bootstrap`、`processed_backfill`。缺少数据不是独立来源；缺少最新相邻日增且无法计算 weekly avg 时，不改写现有 source，新行按视频年龄走 bootstrap 或 processed backfill。
 
@@ -279,7 +286,7 @@ create table video_collection_queue (
 6. 错误详情只写日志，不写 state 或 queue 表。
 7. `priority > 0` 才生成普通 minute 任务，`priority = 0` 每日 daily，`priority = -2` 周日 daily，`priority = -1` 停 daily。
 8. V1 初始导入从现有 `video_daily` 全量补齐 state。
-9. 新视频入库时只为规则结果通过的 AID 补齐 state，bootstrap 期也生成普通 minute 任务。`icedata_label` 正式完成前，规则通过临时等同于 `tid_v2 in (2022, 2061)`。
+9. 新视频入库时只为正式 label 口径通过的 AID 补齐 state，bootstrap 期也生成普通 minute 任务。`icedata_label` 正式完成前，使用 `tid_v2 in (2022, 2061)` 作为临时 fallback。
 
 ## 5. Minute Handler
 
@@ -324,7 +331,7 @@ minute 高频前必须完成：
 1. 计算最新完整日的 `daily_delta` 和近 7 天均值。
 2. 根据 `daily_delta` 和 7 天新增播放量计算 `priority`，其中正数表示 minute 周期，`0` 表示每日 daily，`-2` 表示周日 daily，`-1` 表示停 daily。
 3. 从现有 `video_daily` 全量导入或补齐 state。
-4. 新视频入库时只为规则通过、缺少 daily delta 的新视频 upsert state 并设置 bootstrap `priority`。`icedata_label` 正式完成前，规则通过临时等同于 `tid_v2 in (2022, 2061)`。
+4. 新视频入库时只为正式 label 口径通过且缺少 daily delta 的新视频 upsert state 并设置 bootstrap `priority`。`icedata_label` 正式完成前，使用 `tid_v2 in (2022, 2061)` 作为临时 fallback。
 5. bootstrap 期结束或获得完整 daily delta 后，按正式规则重算 `priority`。
 6. 按 `priority > 0` 和 `next_minute_due_at` 生成普通 queue 任务。
 7. 用 active dedupe 避免重复 pending 或 leased 任务。
@@ -333,7 +340,7 @@ minute 高频前必须完成：
 10. `video_daily` 写入或 daily/latest 刷新完成后，通过 refresh 函数刷新 state 的 `last_daily_record_date`、`latest_daily_delta`、`weekly_avg_daily_delta` 和 `priority`。优先在 pg_cron 同步 SQL 后调用 refresh，并按本次 distinct AID 分批处理。
 11. `video_minute` 写入后按相邻样本计算新增播放量，超过 `minute_burst_delta_threshold` 时只调整 `priority` 和下一次 due。`current_priority > 0` 时用 `least`，`0/-2` 可直接提升为 `minute_burst_priority`，`-1` 不自动恢复。
 12. 从 `processed_videos` 批量回填符合条件的 AID 到 state，并按视频年龄分流 bootstrap 和 daily-only。
-13. `processed_videos` 新增或更新时，通过 trigger upsert state。TS 仍只写 `processed_videos`，不逐行补 state。
+13. `processed_videos` 规则 label 或删除状态变化时，由 `icedata_label` trigger 直接调用 state 维护函数；TS 仍只写事实表，不逐行补 state。
 14. queue 领取、租约过期、active dedupe、成功完成、放弃旧任务都放在 SQL 函数里，TS 只调用 claim 和 ack 接口。
 15. 清理已完成或已放弃的旧 queue 行。
 
@@ -343,7 +350,7 @@ minute 高频前必须完成：
 2. `video_daily` 使用 `AFTER INSERT` statement-level trigger，或在 pg_cron 同步 SQL 后调用同一个 refresh 函数。现有 `sync_video_daily_from_mysql` 和 `update_video_daily_latest` 已经是数据库内定时路径，适合接上 state 刷新。
 3. 普通任务完成只走显式 `ack_video_collection_tasks(task_ids)` 函数。`video_minute` trigger 负责根据事实行推进 state；queue 完成由 ack 函数按 task id 和任务状态收敛，避免误完成同 AID 的非本轮任务。部分成功 batch 只 ack 成功 AID 对应的 task id 子集。
 4. daily 不区分 attempt 和 success。`video_daily` 有新事实行即代表该 `record_date` 已成功覆盖。失败率用应用日志或 queue `attempt_count` 汇总，不写入 state。
-5. `processed_videos` 使用独立 `AFTER INSERT OR UPDATE` trigger 调用 `fn_upsert_collection_state_from_processed_video()`。该 trigger 只维护调度状态，不搬视频详情字段，并忽略 `NEW.aid < 0` 的 repair 中间态。
+5. `hantang-dynamic` 提供 `fn_upsert_collection_state_from_processed_video()` 或同等 SQL 函数，供 `icedata_label` 的 `AFTER INSERT OR UPDATE OF label_content_type, label_origin, labeled_by, is_deleted, tid_v2, pubdate, ctime` trigger 调用。该函数只维护调度状态，不搬视频详情字段，并忽略 `NEW.aid < 0` 的 repair 中间态。正式入口以 `label_content_type + label_origin + labeled_by` 为准，`tid_v2` 只服务临时 fallback。
 
 建议 SQL 函数或 trigger 名称：
 
@@ -378,7 +385,7 @@ fn_ack_video_collection_tasks(p_task_ids bigint[])
 4. 确认 V1 不写 `bvid`。
 5. 确认 `fetchVideoFullDetail` endpoint 为 `/view/detail`。
 6. 确认 `RateLimiter` 为同一并发控制入口。
-7. 确认 `processed_videos` 是否已有 `tid_v2`，并确认临时 allowlist 为 `[2022, 2061]`。如果字段名不同，先更新参数命名再实现。
+7. 确认 `processed_videos` 已有 `label_content_type`、`label_origin` 和 `labeled_by`，确认 label V1 计划的通过值为 `vocaloid` 和 `maybe_vocaloid`，确认只接受 `label_origin = 'rule'` 且 `labeled_by in ('classification_apply', 'classification_trigger')`，并确认临时 `tid_v2` fallback 为 `[2022, 2061]`。
 
 通过条件：不改业务代码即可说明当前事实和计划假设是否一致。
 
@@ -386,7 +393,7 @@ fn_ack_video_collection_tasks(p_task_ids bigint[])
 
 交付物：最小配置、state 表、queue 表、crossing history、claim/ack 函数和 schema 注册路径。
 
-1. 在 config schema 中加入 minute 配置：`target_delta_per_sample`、`target_delta_lower`、`target_delta_upper`、`bootstrap_priority`、`bootstrap_ttl_hours`、`bootstrap_tid_v2_allowlist`、queue 参数和 gate 参数。
+1. 在 config schema 中加入 minute 配置：`target_delta_per_sample`、`target_delta_lower`、`target_delta_upper`、`bootstrap_priority`、`bootstrap_ttl_hours`、`bootstrap_label_content_types`、`bootstrap_label_origin`、`bootstrap_label_writers`、`bootstrap_tid_v2_allowlist`、queue 参数和 gate 参数。
 2. 校验 `bootstrap_ttl_hours <= 24`，并校验 `target_delta_lower <= target_delta_per_sample <= target_delta_upper` 的运行有效值。
 3. 新增 `video_collection_state`，包含 `daily_delta_source`、`priority`、`bootstrap_until`、`next_minute_due_at`、daily/minute 最近成功状态。
 4. 新增 `video_collection_queue`，包含 `task_type`、`dedupe_key`、`status`、`locked_until`、`attempt_count`、`gate_value`、`gate_reason`。
@@ -394,7 +401,9 @@ fn_ack_video_collection_tasks(p_task_ids bigint[])
 6. 实现 `fn_claim_video_collection_tasks()`、`fn_ack_video_collection_tasks()`、`fn_enqueue_video_collection_tasks()` 和放弃过期任务逻辑。
 7. 注册 schema 初始化，保留现有 `database.url`、`database.schema`、`search_path` 和 `initializeSchema()` 路径。
 
-通过条件：schema 可重复初始化，active dedupe 有效，claim 使用 `FOR UPDATE SKIP LOCKED`，ack 只按 task id 完成本轮成功任务。
+通过条件：schema 可重复初始化，active dedupe 有效，claim 使用 `FOR UPDATE SKIP LOCKED`，ack 只按 task id 完成本轮成功任务，并且 state upsert/停采函数的输入字段和返回语义足够让 `icedata_label` trigger 直接调用。
+
+Phase 1 结束后、进入 V1.6 `processed_videos` 回填前，直接起 agent 到 `D:\dev\icedata\icedata_label` 修改规则 trigger 接入方式：不再把 `classification_crawler_handoff_events` 作为正式合约，改为在规则写入成功后直接维护 `video_collection_state`，并覆盖删除和 demotion 停采路径。
 
 ### Phase 2：DAO 和纯 SQL helper
 
@@ -417,7 +426,7 @@ fn_ack_video_collection_tasks(p_task_ids bigint[])
 2. 读取最新完整日增和近 7 天日均播放量。
 3. 使用 `effective_target_delta_per_sample` 计算 `priority`。
 4. 分散初始 `next_minute_due_at`。
-5. `processed_videos` 新正式视频行触发 bootstrap upsert state；只有规则结果通过的视频进入 bootstrap minute。`icedata_label` 正式完成前，规则通过临时等同于 `tid_v2 in (2022, 2061)`。
+5. `icedata_label` 规则 trigger 直接调用 state 维护函数；只有正式 label 口径通过的 `vocaloid` 和 `maybe_vocaloid` 进入 bootstrap minute。`icedata_label` 正式完成前，使用 `tid_v2 in (2022, 2061)` 作为临时 fallback。
 6. bootstrap 到期仍无完整 daily baseline 时降级为 `priority = 0`。
 7. 每分钟 tick 一轮，claim due task。
 8. 合并 AID batch，调用 batch stats wrapper。
@@ -446,10 +455,12 @@ fn_ack_video_collection_tasks(p_task_ids bigint[])
 
 交付物：从 `processed_videos` 补齐 state 的一次性或可重复回填入口。
 
+前置条件：Phase 1 的 state upsert/停采函数已完成，且已通过 agent 在 `D:\dev\icedata\icedata_label` 接上规则 trigger 的直接写 state 路径；否则 V1.6 只能使用临时 `tid_v2` fallback 小范围验证，不能当作正式回填入口。
+
 1. 从 `processed_videos` 扫符合条件的视频。
 2. 优先使用 `pubdate` 判断视频年龄，其次使用 `ctime`，不要用本地 `created_at` 判断视频年龄。
 3. 已有 daily 历史的 AID 按 daily 规则计算 `priority`。
-4. 没有 daily 历史的新视频且规则结果通过时按 bootstrap 规则入 state。`icedata_label` 正式完成前，规则通过临时等同于 `tid_v2 in (2022, 2061)`。
+4. 没有 daily 历史的新视频且正式 label 口径通过时按 bootstrap 规则入 state。`icedata_label` 正式完成前，使用 `tid_v2 in (2022, 2061)` 作为临时 fallback。
 5. 没有 daily 历史的老视频写入 `daily_delta_source = 'processed_backfill'`、`priority = 0`，先等半夜 daily 建立基线，不进入 minute。
 6. `is_deleted = true` 或不可用视频写入或保持 `priority = -1`。
 7. 不把 `processed_videos` 的详情缓存、过滤结果、推荐关系、`notes` 或 `extras` 迁入 state。
