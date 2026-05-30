@@ -85,9 +85,9 @@ V1 缺口：
 
 `target_delta_lower` 和 `target_delta_upper` 接入运行逻辑。执行时先计算 `effective_target_delta_per_sample = clamp(target_delta_per_sample, target_delta_lower, target_delta_upper)`，再用有效 target 计算 `priority`；它们不是入池阈值。
 
-正式 label 口径来自 `D:\dev\icedata\icedata_label\docs\plans\classification-rules-v1-design.md`：`processed_videos.is_deleted = false`、`label_origin = 'rule'`、`labeled_by in ('classification_apply', 'classification_trigger')`，且 `label_content_type in ('vocaloid', 'maybe_vocaloid')` 时，才视为规则结果通过。`hantang-dynamic` 只提供 `video_collection_state` 和 SQL 维护函数，不重新实现分类规则；`icedata_label` 规则 trigger 成功后直接调用该函数或执行等价 upsert，不把 `classification_crawler_handoff_events` 作为正式消费合约。
+正式 label 口径来自 `D:\dev\icedata\icedata_label\docs\plans\classification-rules-v1-design.md`：`processed_videos.is_deleted = false`、`processed_videos.is_filtered is not false`、`label_origin = 'rule'`、`labeled_by in ('classification_apply', 'classification_trigger')`，且 `label_content_type in ('vocaloid', 'maybe_vocaloid')` 时，才视为规则结果通过。`hantang-dynamic` 只提供 `video_collection_state` 和 SQL 维护函数，不重新实现分类规则；`icedata_label` 规则 trigger 成功后直接调用该函数或执行等价 upsert，不把 `classification_crawler_handoff_events` 作为正式消费合约。
 
-正式 trigger 必须同时覆盖进入和退出：规则结果通过时 upsert 或激活 state；删除、降为 `not_vocaloid/unknown`、或不再满足 `label_origin/labeled_by` 规则口径时，把已有 state 设为 `priority = -1` 并清空普通 minute due。
+正式 trigger 必须同时覆盖进入和退出：规则结果通过时 upsert 或激活 state；删除、`is_filtered = false`、降为 `not_vocaloid/unknown`、或不再满足 `label_origin/labeled_by` 规则口径时，把已有 state 设为 `priority = -1` 并清空普通 minute due。
 
 `bootstrap_tid_v2_allowlist = [2022, 2061]` 是 `D:\dev\icedata\icedata_label` 正式完成前的临时 fallback 口径。后续 `icedata_label` 提供正式 label 结果后，以完整正式 label 口径为准；在此之前，不处理未命中 allowlist 的新 AID。
 
@@ -157,7 +157,7 @@ if next_due_at < now:
 
 交付内容：
 
-1. 新 AID 在 `processed_videos` 的正式视频行完成规则写入后，只有 `is_deleted = false`、`label_origin = 'rule'`、`labeled_by in ('classification_apply', 'classification_trigger')` 且 `label_content_type in ('vocaloid', 'maybe_vocaloid')`，才 upsert `video_collection_state`。
+1. 新 AID 在 `processed_videos` 的正式视频行完成规则写入后，只有 `is_deleted = false`、`is_filtered is not false`、`label_origin = 'rule'`、`labeled_by in ('classification_apply', 'classification_trigger')` 且 `label_content_type in ('vocaloid', 'maybe_vocaloid')`，才 upsert `video_collection_state`。
 2. `D:\dev\icedata\icedata_label` 正式完成前，规则结果通过的临时 fallback 口径为 `tid_v2 in (2022, 2061)`，对应配置 `bootstrap_tid_v2_allowlist = [2022, 2061]`。
 3. 没有 daily delta 的新视频设置 `daily_delta_source = 'bootstrap'`。
 4. 初始 `priority` 使用 `bootstrap_priority`，例如 `10`。
@@ -171,7 +171,7 @@ if next_due_at < now:
 1. D1：先在 `hantang-dynamic` 建立 `video_collection_state`、bootstrap 配置校验和 state upsert/停采 SQL 函数。
 2. D2：函数入参或内部读取必须覆盖 `aid`、`pubdate`、`ctime`、`tid_v2`、`label_content_type`、`label_origin`、`labeled_by`、`is_deleted`、`is_filtered` 和 daily history。
 3. D3：临时阶段允许本仓库按 `tid_v2 in (2022, 2061)` 触发 bootstrap，便于在 `icedata_label` trigger 接入前跑通 minute 闭环。
-4. D4：正式阶段要求 `icedata_label` 的规则 trigger 直接调用 D1 的 SQL 函数或执行等价 upsert，不引入 outbox consumer。
+4. D4：正式阶段要求 `icedata_label` 的规则 trigger 在显式启用开关打开后直接调用 D1 的 schema-qualified SQL 函数或执行等价 upsert，不引入 outbox consumer。
 5. D5：trigger 必须覆盖 demotion 和删除。已有 state 的 AID 不再满足正式 label 口径时，写成 `priority = -1` 并清空普通 minute due；没有 state 的非正例不创建追踪行。
 
 ### 5.5 工作包 E：Minute Handler
@@ -238,7 +238,7 @@ if next_due_at < now:
 2. `video_daily` 使用 `AFTER INSERT` statement-level trigger，或在现有 pg_cron 同步 SQL 后调用同一个 refresh 函数。
 3. queue 完成只使用显式 `ack_video_collection_tasks(task_ids)`，避免只按 AID 误完成非本轮任务；部分成功 batch 只 ack 成功 AID 对应的 task id 子集。
 4. daily 不记录 attempt。失败率来自应用日志或 queue `attempt_count` 汇总。
-5. `hantang-dynamic` 提供 `fn_upsert_collection_state_from_processed_video()` 或同等 SQL 函数，供 `icedata_label` 的 `AFTER INSERT OR UPDATE` trigger 直接调用；该函数只维护调度状态，不搬视频详情字段，并忽略 `NEW.aid < 0` 的 repair 中间态。
+5. `hantang-dynamic` 提供 `fn_upsert_collection_state_from_processed_video()` 或同等 SQL 函数，供 `icedata_label` 的 `AFTER INSERT OR UPDATE` trigger 在 `icedata_label.enable_collection_state_sync = 'on'` 后直接调用；该函数只维护调度状态，不搬视频详情字段，并忽略 `NEW.aid < 0` 的 repair 中间态。
 6. queue 完成只走 `ack_video_collection_tasks(task_ids)`，按 task id 和任务状态校验；失败任务等待 `locked_until` 过期重试或显式回到 `pending`，超过 `max_attempts` 后进入 `abandoned`。
 
 ### 5.8 工作包 H：日志脱敏

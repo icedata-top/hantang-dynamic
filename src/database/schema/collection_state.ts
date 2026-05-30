@@ -368,6 +368,15 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         RETURN 'ignored_existing_disabled';
       END IF;
 
+      IF p_is_filtered IS FALSE THEN
+        UPDATE video_collection_state
+        SET priority = -1,
+            next_minute_due_at = NULL,
+            updated_at = p_now
+        WHERE aid = p_aid;
+        RETURN CASE WHEN found THEN 'disabled_filtered_out' ELSE 'ignored_filtered_out' END;
+      END IF;
+
       has_formal_label_input :=
         p_label_content_type IS NOT NULL
         OR p_label_origin IS NOT NULL
@@ -394,10 +403,6 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
             updated_at = p_now
         WHERE aid = p_aid;
         RETURN CASE WHEN found THEN 'disabled_label_demotion' ELSE 'ignored_label_demotion' END;
-      END IF;
-
-      IF p_is_filtered IS FALSE AND NOT should_track THEN
-        RETURN 'ignored_filtered_out';
       END IF;
 
       IF NOT should_track THEN
