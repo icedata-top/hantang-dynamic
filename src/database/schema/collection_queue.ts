@@ -435,18 +435,15 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
     DECLARE
       completed_count integer;
     BEGIN
-      WITH completed AS (
-        UPDATE video_collection_queue q
-        SET status = 'completed',
-            locked_until = NULL,
-            updated_at = p_now
+      WITH leased AS (
+        SELECT q.id, q.aid, q.gate_value
+        FROM video_collection_queue q
         WHERE q.id = ANY(p_task_ids)
           AND q.status = 'leased'
-        RETURNING q.id, q.aid, q.gate_value
       ),
-      gate_completed AS (
+      gate_leased AS (
         SELECT *
-        FROM completed
+        FROM leased
         WHERE gate_value IS NOT NULL
       ),
       sample_pairs AS (
@@ -456,7 +453,7 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
           g.gate_value,
           latest."view"::bigint AS current_view,
           previous."view"::bigint AS previous_view
-        FROM gate_completed g
+        FROM gate_leased g
         LEFT JOIN LATERAL (
           SELECT vm."view", vm."time"
           FROM video_minute vm
@@ -474,6 +471,40 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
           LIMIT 1
         ) previous ON true
       ),
+      gate_outcome AS (
+        SELECT
+          sp.*,
+          COALESCE(sp.current_view >= sp.gate_value, false) AS crossed
+        FROM sample_pairs sp
+      ),
+      completed AS (
+        UPDATE video_collection_queue q
+        SET status = 'completed',
+            locked_until = NULL,
+            updated_at = p_now
+        FROM leased l
+        LEFT JOIN gate_outcome go ON go.id = l.id
+        WHERE q.id = l.id
+          AND (
+            l.gate_value IS NULL
+            OR go.crossed
+          )
+        RETURNING q.id, q.aid, q.gate_value
+      ),
+      deferred_gate AS (
+        UPDATE video_collection_queue q
+        SET status = CASE
+              WHEN q.attempt_count >= q.max_attempts THEN 'abandoned'
+              ELSE 'pending'
+            END,
+            locked_until = NULL,
+            updated_at = p_now
+        FROM gate_outcome go
+        WHERE q.id = go.id
+          AND q.status = 'leased'
+          AND NOT go.crossed
+        RETURNING q.id
+      ),
       inserted_crossings AS (
         INSERT INTO video_collection_gate_crossings (
           aid,
@@ -484,19 +515,23 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
           source_task_id
         )
         SELECT
-          sp.aid,
-          sp.gate_value,
-          sp.previous_view,
-          sp.current_view,
+          go.aid,
+          go.gate_value,
+          go.previous_view,
+          go.current_view,
           p_now,
-          sp.id
-        FROM sample_pairs sp
-        WHERE sp.gate_value IS NOT NULL
-          AND sp.current_view >= sp.gate_value
+          go.id
+        FROM gate_outcome go
+        WHERE go.crossed
         ON CONFLICT (aid, gate_value) DO NOTHING
         RETURNING 1
       )
-      SELECT count(*) INTO completed_count FROM completed;
+      SELECT count(*) INTO completed_count
+      FROM (
+        SELECT id FROM completed
+        UNION ALL
+        SELECT id FROM deferred_gate
+      ) processed;
 
       RETURN completed_count;
     END;
