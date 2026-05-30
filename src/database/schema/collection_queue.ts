@@ -124,6 +124,28 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
     DECLARE
       inserted_count integer;
     BEGIN
+      WITH expired_bootstrap AS (
+        UPDATE video_collection_state
+        SET priority = 0,
+            next_minute_due_at = NULL,
+            updated_at = p_now
+        WHERE priority > 0
+          AND daily_delta_source = 'bootstrap'
+          AND bootstrap_until IS NOT NULL
+          AND bootstrap_until <= p_now
+          AND latest_daily_delta IS NULL
+          AND weekly_avg_daily_delta IS NULL
+        RETURNING aid
+      )
+      UPDATE video_collection_queue q
+      SET status = 'abandoned',
+          locked_until = NULL,
+          updated_at = p_now
+      FROM expired_bootstrap eb
+      WHERE q.aid = eb.aid
+        AND q.task_type = 'minute'
+        AND q.status IN ('pending', 'leased');
+
       UPDATE video_collection_queue
       SET status = 'abandoned',
           updated_at = p_now
@@ -150,6 +172,11 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
       WHERE s.priority > 0
         AND s.next_minute_due_at IS NOT NULL
         AND s.next_minute_due_at <= p_now
+        AND NOT EXISTS (
+          SELECT 1
+          FROM video_collection_queue q
+          WHERE q.dedupe_key = concat('minute:', s.aid, ':', extract(epoch FROM s.next_minute_due_at)::bigint)
+        )
       ON CONFLICT DO NOTHING;
 
       GET DIAGNOSTICS inserted_count = ROW_COUNT;
@@ -169,18 +196,26 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
     DECLARE
       inserted_count integer;
     BEGIN
-      WITH samples AS (
-        SELECT aid, updated_at AS sample_time, "view"::bigint AS view_count
-        FROM video_daily_latest
-        WHERE "view" IS NOT NULL
+      WITH active_state AS (
+        SELECT aid, priority, next_minute_due_at
+        FROM video_collection_state
+        WHERE priority <> -1
+      ),
+      samples AS (
+        SELECT vdl.aid, vdl.updated_at AS sample_time, vdl."view"::bigint AS view_count
+        FROM video_daily_latest vdl
+        JOIN active_state state ON state.aid = vdl.aid
+        WHERE vdl."view" IS NOT NULL
         UNION ALL
-        SELECT aid, record_date::timestamptz AS sample_time, "view"::bigint AS view_count
-        FROM video_daily
-        WHERE "view" IS NOT NULL
+        SELECT vd.aid, vd.record_date::timestamptz AS sample_time, vd."view"::bigint AS view_count
+        FROM video_daily vd
+        JOIN active_state state ON state.aid = vd.aid
+        WHERE vd."view" IS NOT NULL
         UNION ALL
-        SELECT aid, "time" AS sample_time, "view"::bigint AS view_count
-        FROM video_minute
-        WHERE "view" IS NOT NULL
+        SELECT vm.aid, vm."time" AS sample_time, vm."view"::bigint AS view_count
+        FROM video_minute vm
+        JOIN active_state state ON state.aid = vm.aid
+        WHERE vm."view" IS NOT NULL
       ),
       ranked AS (
         SELECT
@@ -198,12 +233,11 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
           state.priority,
           state.next_minute_due_at
         FROM ranked current_sample
-        JOIN video_collection_state state ON state.aid = current_sample.aid
+        JOIN active_state state ON state.aid = current_sample.aid
         LEFT JOIN ranked previous_sample
           ON previous_sample.aid = current_sample.aid
          AND previous_sample.rn = 2
         WHERE current_sample.rn = 1
-          AND state.priority <> -1
       ),
       candidates AS (
         SELECT
@@ -282,6 +316,12 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
           FROM video_collection_gate_crossings c
           WHERE c.aid = s.aid
             AND c.gate_value = s.gate_value
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM video_collection_queue q
+          WHERE q.dedupe_key = concat('gate:', s.aid, ':', s.gate_value)
+            AND q.status = 'abandoned'
         )
       ON CONFLICT DO NOTHING;
 
@@ -413,6 +453,7 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
           sp.id
         FROM sample_pairs sp
         WHERE sp.gate_value IS NOT NULL
+          AND sp.current_view >= sp.gate_value
         ON CONFLICT (aid, gate_value) DO NOTHING
         RETURNING 1
       )

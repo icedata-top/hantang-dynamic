@@ -48,7 +48,10 @@ import {
   updateUserStats,
 } from "./users.js";
 import { getDailyCollectionCandidates } from "./videoDaily.js";
-import { insertVideoMinuteSamples } from "./videoMinute.js";
+import {
+  insertVideoMinuteSamples,
+  insertVideoMinuteSamplesAndAck,
+} from "./videoMinute.js";
 import {
   getAllProcessedIds,
   getBvidList,
@@ -322,7 +325,14 @@ export class Database {
     aids?: bigint[],
     now?: Date,
   ): Promise<number> {
-    return refreshVideoCollectionStateFromDaily(this.ensurePool(), aids, now);
+    return refreshVideoCollectionStateFromDaily(this.ensurePool(), aids, now, {
+      targetDeltaPerSample: config.minute.targetDeltaPerSample,
+      targetDeltaLower: config.minute.targetDeltaLower,
+      targetDeltaUpper: config.minute.targetDeltaUpper,
+      minPositivePriority: config.minute.minPositivePriority,
+      maxPositivePriority: config.minute.maxPositivePriority,
+      businessTimezone: config.minute.collectionBusinessTimezone,
+    });
   }
 
   public async upsertCollectionStateFromProcessedVideo(
@@ -333,6 +343,16 @@ export class Database {
       this.ensurePool(),
       input,
       now,
+      {
+        bootstrapPriority: config.minute.bootstrapPriority,
+        bootstrapTtlHours: config.minute.bootstrapTtlHours,
+        bootstrapLabelContentTypes: config.minute.bootstrapLabelContentTypes,
+        bootstrapLabelOrigin: config.minute.bootstrapLabelOrigin,
+        bootstrapLabelWriters: config.minute.bootstrapLabelWriters,
+        bootstrapTidV2Allowlist: config.minute.bootstrapTidV2Allowlist,
+        processedBackfillNewVideoAgeDays:
+          config.minute.processedBackfillNewVideoAgeDays,
+      },
     );
   }
 
@@ -386,6 +406,19 @@ export class Database {
     samples: VideoMinuteSample[],
   ): Promise<number> {
     return insertVideoMinuteSamples(this.ensurePool(), samples);
+  }
+
+  public async insertVideoMinuteSamplesAndAck(
+    samples: VideoMinuteSample[],
+    taskIds: bigint[],
+    now?: Date,
+  ): Promise<{ inserted: number; acked: number }> {
+    return insertVideoMinuteSamplesAndAck(
+      this.ensurePool(),
+      samples,
+      taskIds,
+      now,
+    );
   }
 
   // ===== Connection Management =====

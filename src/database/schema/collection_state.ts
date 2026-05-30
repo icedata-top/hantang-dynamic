@@ -1,5 +1,18 @@
 import type { Pool } from "pg";
+import { config } from "../../config/index.js";
 import { logger } from "../../utils/logger.js";
+
+function sqlText(value: string): string {
+  return value.split("'").join("''");
+}
+
+function sqlTextArray(values: string[]): string {
+  return values.map((value) => `'${sqlText(value)}'`).join(", ");
+}
+
+function sqlIntegerArray(values: number[]): string {
+  return values.join(", ");
+}
 
 export async function initCollectionStateSchema(pool: Pool): Promise<void> {
   await pool.query(`
@@ -67,11 +80,11 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
   await pool.query(`
     CREATE OR REPLACE FUNCTION fn_video_collection_priority(
       p_daily_delta numeric,
-      p_target_delta_per_sample integer DEFAULT 100,
-      p_target_delta_lower integer DEFAULT 50,
-      p_target_delta_upper integer DEFAULT 200,
-      p_min_positive_priority integer DEFAULT 1,
-      p_max_positive_priority integer DEFAULT 720
+      p_target_delta_per_sample integer DEFAULT ${config.minute.targetDeltaPerSample},
+      p_target_delta_lower integer DEFAULT ${config.minute.targetDeltaLower},
+      p_target_delta_upper integer DEFAULT ${config.minute.targetDeltaUpper},
+      p_min_positive_priority integer DEFAULT ${config.minute.minPositivePriority},
+      p_max_positive_priority integer DEFAULT ${config.minute.maxPositivePriority}
     ) RETURNS integer AS $$
     DECLARE
       effective_target integer;
@@ -95,15 +108,32 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_video_collection_priority(
+      p_daily_delta numeric
+    ) RETURNS integer AS $$
+    BEGIN
+      RETURN fn_video_collection_priority(
+        p_daily_delta,
+        ${config.minute.targetDeltaPerSample},
+        ${config.minute.targetDeltaLower},
+        ${config.minute.targetDeltaUpper},
+        ${config.minute.minPositivePriority},
+        ${config.minute.maxPositivePriority}
+      );
+    END;
+    $$ LANGUAGE plpgsql IMMUTABLE
+  `);
+
+  await pool.query(`
     CREATE OR REPLACE FUNCTION fn_refresh_video_collection_state_from_daily(
       p_aids bigint[] DEFAULT NULL,
       p_now timestamptz DEFAULT now(),
-      p_target_delta_per_sample integer DEFAULT 100,
-      p_target_delta_lower integer DEFAULT 50,
-      p_target_delta_upper integer DEFAULT 200,
-      p_min_positive_priority integer DEFAULT 1,
-      p_max_positive_priority integer DEFAULT 720,
-      p_business_timezone text DEFAULT 'Asia/Shanghai'
+      p_target_delta_per_sample integer DEFAULT ${config.minute.targetDeltaPerSample},
+      p_target_delta_lower integer DEFAULT ${config.minute.targetDeltaLower},
+      p_target_delta_upper integer DEFAULT ${config.minute.targetDeltaUpper},
+      p_min_positive_priority integer DEFAULT ${config.minute.minPositivePriority},
+      p_max_positive_priority integer DEFAULT ${config.minute.maxPositivePriority},
+      p_business_timezone text DEFAULT '${sqlText(config.minute.collectionBusinessTimezone)}'
     ) RETURNS integer AS $$
     DECLARE
       changed_count integer;
@@ -263,6 +293,26 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_refresh_video_collection_state_from_daily(
+      p_aids bigint[],
+      p_now timestamptz
+    ) RETURNS integer AS $$
+    BEGIN
+      RETURN fn_refresh_video_collection_state_from_daily(
+        p_aids,
+        p_now,
+        ${config.minute.targetDeltaPerSample},
+        ${config.minute.targetDeltaLower},
+        ${config.minute.targetDeltaUpper},
+        ${config.minute.minPositivePriority},
+        ${config.minute.maxPositivePriority},
+        '${sqlText(config.minute.collectionBusinessTimezone)}'
+      );
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+
+  await pool.query(`
     CREATE OR REPLACE FUNCTION fn_upsert_collection_state_from_processed_video(
       p_aid bigint,
       p_pubdate bigint DEFAULT NULL,
@@ -274,19 +324,20 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       p_is_deleted boolean DEFAULT false,
       p_is_filtered boolean DEFAULT NULL,
       p_now timestamptz DEFAULT now(),
-      p_bootstrap_priority integer DEFAULT 10,
-      p_bootstrap_ttl_hours integer DEFAULT 24,
-      p_bootstrap_label_content_types text[] DEFAULT ARRAY['vocaloid', 'maybe_vocaloid'],
-      p_bootstrap_label_origin text DEFAULT 'rule',
-      p_bootstrap_label_writers text[] DEFAULT ARRAY['classification_apply', 'classification_trigger'],
-      p_bootstrap_tid_v2_allowlist integer[] DEFAULT ARRAY[2022, 2061],
-      p_processed_backfill_new_video_age_days integer DEFAULT 7
+      p_bootstrap_priority integer DEFAULT ${config.minute.bootstrapPriority},
+      p_bootstrap_ttl_hours integer DEFAULT ${config.minute.bootstrapTtlHours},
+      p_bootstrap_label_content_types text[] DEFAULT ARRAY[${sqlTextArray(config.minute.bootstrapLabelContentTypes)}]::text[],
+      p_bootstrap_label_origin text DEFAULT '${sqlText(config.minute.bootstrapLabelOrigin)}',
+      p_bootstrap_label_writers text[] DEFAULT ARRAY[${sqlTextArray(config.minute.bootstrapLabelWriters)}]::text[],
+      p_bootstrap_tid_v2_allowlist integer[] DEFAULT ARRAY[${sqlIntegerArray(config.minute.bootstrapTidV2Allowlist)}]::integer[],
+      p_processed_backfill_new_video_age_days integer DEFAULT ${config.minute.processedBackfillNewVideoAgeDays}
     ) RETURNS text AS $$
     DECLARE
       has_existing boolean;
       existing_priority integer;
       has_daily_history boolean;
       has_formal_label_input boolean;
+      has_complete_formal_label_input boolean;
       formal_label_pass boolean;
       fallback_pass boolean;
       should_track boolean;
@@ -321,6 +372,10 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         p_label_content_type IS NOT NULL
         OR p_label_origin IS NOT NULL
         OR p_labeled_by IS NOT NULL;
+      has_complete_formal_label_input :=
+        p_label_content_type IS NOT NULL
+        AND p_label_origin IS NOT NULL
+        AND p_labeled_by IS NOT NULL;
       formal_label_pass := COALESCE(
         p_label_content_type = ANY(p_bootstrap_label_content_types)
         AND p_label_origin = p_bootstrap_label_origin
@@ -332,7 +387,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         AND p_tid_v2 = ANY(p_bootstrap_tid_v2_allowlist);
       should_track := COALESCE(formal_label_pass OR fallback_pass, false);
 
-      IF has_formal_label_input AND NOT formal_label_pass THEN
+      IF has_complete_formal_label_input AND NOT formal_label_pass THEN
         UPDATE video_collection_state
         SET priority = -1,
             next_minute_due_at = NULL,
@@ -405,6 +460,43 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_upsert_collection_state_from_processed_video(
+      p_aid bigint,
+      p_pubdate bigint,
+      p_ctime bigint,
+      p_tid_v2 integer,
+      p_label_content_type text,
+      p_label_origin text,
+      p_labeled_by text,
+      p_is_deleted boolean,
+      p_is_filtered boolean,
+      p_now timestamptz
+    ) RETURNS text AS $$
+    BEGIN
+      RETURN fn_upsert_collection_state_from_processed_video(
+        p_aid,
+        p_pubdate,
+        p_ctime,
+        p_tid_v2,
+        p_label_content_type,
+        p_label_origin,
+        p_labeled_by,
+        p_is_deleted,
+        p_is_filtered,
+        p_now,
+        ${config.minute.bootstrapPriority},
+        ${config.minute.bootstrapTtlHours},
+        ARRAY[${sqlTextArray(config.minute.bootstrapLabelContentTypes)}]::text[],
+        '${sqlText(config.minute.bootstrapLabelOrigin)}',
+        ARRAY[${sqlTextArray(config.minute.bootstrapLabelWriters)}]::text[],
+        ARRAY[${sqlIntegerArray(config.minute.bootstrapTidV2Allowlist)}]::integer[],
+        ${config.minute.processedBackfillNewVideoAgeDays}
+      );
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+
+  await pool.query(`
     CREATE OR REPLACE FUNCTION fn_apply_video_minute_collection_update()
     RETURNS trigger AS $$
     BEGIN
@@ -429,46 +521,37 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           ORDER BY vm."time" DESC
           LIMIT 1
         ) prev ON true
-      )
-      UPDATE video_collection_state s
-      SET last_minute_success_at = l."time",
-          last_view = l.latest_view,
-          priority = CASE
+      ),
+      computed AS (
+        SELECT
+          s.aid,
+          l."time",
+          l.latest_view,
+          CASE
             WHEN s.priority = -1 THEN -1
             WHEN p.previous_view IS NOT NULL
-             AND l.latest_view - p.previous_view >= 500
+             AND l.latest_view - p.previous_view >= ${config.minute.minuteBurstDeltaThreshold}
             THEN CASE
-              WHEN s.priority > 0 THEN least(s.priority, 1)
-              ELSE 1
+              WHEN s.priority > 0 THEN least(s.priority, ${config.minute.minuteBurstPriority})
+              ELSE ${config.minute.minuteBurstPriority}
             END
             ELSE s.priority
-          END,
+          END AS next_priority
+        FROM video_collection_state s
+        JOIN latest_rows l ON l.aid = s.aid
+        LEFT JOIN previous_rows p ON p.aid = l.aid
+      )
+      UPDATE video_collection_state s
+      SET last_minute_success_at = c."time",
+          last_view = c.latest_view,
+          priority = c.next_priority,
           next_minute_due_at = CASE
-            WHEN s.priority = -1 THEN NULL
-            WHEN (
-              CASE
-                WHEN p.previous_view IS NOT NULL
-                 AND l.latest_view - p.previous_view >= 500
-                THEN CASE WHEN s.priority > 0 THEN least(s.priority, 1) ELSE 1 END
-                ELSE s.priority
-              END
-            ) > 0
-            THEN fn_video_collection_next_due_at(
-              s.aid,
-              CASE
-                WHEN p.previous_view IS NOT NULL
-                 AND l.latest_view - p.previous_view >= 500
-                THEN CASE WHEN s.priority > 0 THEN least(s.priority, 1) ELSE 1 END
-                ELSE s.priority
-              END,
-              l."time"
-            )
+            WHEN c.next_priority > 0 THEN c."time" + make_interval(mins => c.next_priority)
             ELSE NULL
           END,
           updated_at = now()
-      FROM latest_rows l
-      LEFT JOIN previous_rows p ON p.aid = l.aid
-      WHERE s.aid = l.aid;
+      FROM computed c
+      WHERE s.aid = c.aid;
 
       RETURN NULL;
     END;

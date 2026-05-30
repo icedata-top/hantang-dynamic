@@ -109,8 +109,10 @@ export class MinuteHandler {
 
     if (samples.length > 0) {
       try {
-        await this.db.insertVideoMinuteSamples(samples);
-        await this.db.ackVideoCollectionTasks(successfulTaskIds);
+        await this.db.insertVideoMinuteSamplesAndAck(
+          samples,
+          successfulTaskIds,
+        );
       } catch (error) {
         logger.error("Minute sample write failed:", error);
         await this.db.failVideoCollectionTasks(tasks.map((task) => task.id));

@@ -82,17 +82,11 @@ export async function batchSampleVideoStats(
   for (const aidBatch of chunk(aids, batchSize)) {
     const release = await sharedApiRateLimiter.acquire();
     try {
-      let data: BiliMedialistResponse;
-      try {
-        data = await fetchStatsBatch(aidBatch, false);
-      } catch (proxyError) {
-        logger.warn("Minute stats proxy request failed; trying direct request");
-        logger.debug(proxyError);
-        data = await fetchStatsBatch(aidBatch, true);
-      }
+      const data = await fetchStatsBatchWithFallback(aidBatch);
 
       if (data.code !== 0 || !Array.isArray(data.data)) {
-        throw new Error(`Minute stats API failed with code ${data.code}`);
+        logger.warn(`Minute stats API failed with code ${data.code}`);
+        continue;
       }
 
       for (const item of data.data) {
@@ -107,4 +101,27 @@ export async function batchSampleVideoStats(
   }
 
   return samples;
+}
+
+async function fetchStatsBatchWithFallback(
+  aidBatch: bigint[],
+): Promise<BiliMedialistResponse> {
+  try {
+    return await fetchStatsBatch(aidBatch, false);
+  } catch (proxyError) {
+    logger.warn("Minute stats proxy request failed; trying direct request");
+    logger.debug(proxyError);
+  }
+
+  try {
+    return await fetchStatsBatch(aidBatch, true);
+  } catch (directError) {
+    logger.warn("Minute stats direct request failed");
+    logger.debug(directError);
+    return {
+      code: -1,
+      message: "request_failed",
+      data: [],
+    };
+  }
 }

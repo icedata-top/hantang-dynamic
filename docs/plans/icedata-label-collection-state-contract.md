@@ -33,6 +33,8 @@ Expected trigger behavior in `icedata_label`:
    'classification_trigger')`, call the function so existing state is disabled.
 5. Do not use `classification_crawler_handoff_events` as the formal integration
    contract.
+6. Calls with partial formal label fields are treated as label-not-ready and do
+   not disable state. Demotion calls must include all three formal label fields.
 
 Formal positive label predicate:
 

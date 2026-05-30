@@ -52,6 +52,9 @@ jobs:
         with:
           tag: v2.1.5-procursus7
 
+      - name: Check formatting and lint
+        run: pnpm run check
+
       - name: Build project
         run: pnpm run build
 
