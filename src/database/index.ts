@@ -84,9 +84,16 @@ export class Database {
   }
 
   /**
-   * Initialize the database connection pool and schema
+   * Initialize the database connection pool.
+   *
+   * Schema initialization is intentionally opt-in. Normal startup and restarts
+   * should not run DDL against the database; run `--init-schema` for install or
+   * upgrade steps that explicitly need it.
    */
-  public async init(url: string = config.database.url): Promise<void> {
+  public async init(
+    url: string = config.database.url,
+    options: { initializeSchema?: boolean } = {},
+  ): Promise<void> {
     if (this.pool) {
       logger.warn("Database already initialized");
       return;
@@ -113,8 +120,9 @@ export class Database {
       const client = await this.pool.connect();
       client.release();
 
-      // Initialize schema
-      await initializeSchema(this.pool, schema);
+      if (options.initializeSchema === true) {
+        await initializeSchema(this.pool, schema);
+      }
 
       logger.info("PostgreSQL initialized successfully");
     } catch (error) {

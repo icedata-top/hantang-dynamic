@@ -49,6 +49,15 @@ async function runTracker() {
 async function main() {
   const args = process.argv.slice(2);
 
+  if (args.includes("--init-schema")) {
+    logger.info("Initializing database schema");
+    const db = Database.getInstance();
+    await db.init(config.database.url, { initializeSchema: true });
+    await db.close();
+    logger.info("Database schema initialization complete");
+    return;
+  }
+
   // Check for tool mode
   if (args.includes("--repair")) {
     const repairIndex = args.indexOf("--repair");

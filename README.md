@@ -32,7 +32,11 @@ See [Changelog](./changelog.md) for version history.
    cp config.toml.example config.toml
    ```
 4. Edit `config.toml` with your settings.
-5. Run the executable:
+5. Initialize or upgrade database schema once:
+   ```bash
+   ./bilibili-dynamic-subscribe-linux --init-schema
+   ```
+6. Run the executable:
    ```bash
    ./bilibili-dynamic-subscribe-linux
    ```
@@ -46,9 +50,15 @@ pnpm install
 # Build
 pnpm build
 
+# Initialize or upgrade database schema once
+pnpm init-schema
+
 # Start
 pnpm start
 ```
+
+`pnpm init-schema` runs database DDL. Run it during install or upgrade only.
+Normal startup and restarts do not create or alter database objects.
 
 ## Configuration
 
