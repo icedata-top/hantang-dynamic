@@ -16,6 +16,7 @@ import {
 import { getRandomDelay, retryDelay, sleep } from "../utils/datetime";
 import { logger } from "../utils/logger";
 import { notifyWarning } from "../utils/notifier/notifier";
+import { redactSensitive } from "../utils/redact";
 import { generateBiliTicket } from "./signatures/biliTicket";
 import { buildSignedQuery } from "./signatures/wbiSignature";
 
@@ -87,6 +88,10 @@ interface CreateClientOptions {
   stateManager?: StateManager;
 }
 
+type CookieJarAxiosDefaults = AxiosInstance["defaults"] & {
+  jar?: CookieJar;
+};
+
 function createClient(
   baseURL: string,
   optionsOrSkip?: boolean | CreateClientOptions,
@@ -129,7 +134,7 @@ function createClient(
 
   if (jar) {
     // Use tough-cookie jar for cookie management
-    client.defaults.jar = jar;
+    (client.defaults as CookieJarAxiosDefaults).jar = jar;
     client.defaults.withCredentials = true;
   } else if (!skipCookie) {
     // Fall back to manual cookie string from config
@@ -203,7 +208,7 @@ function createClient(
           `API Error:\n` +
           `Code: ${response.data.code}\n` +
           `baseURL: ${baseURL + response.config.url}\n` +
-          `Config: ${JSON.stringify(response.config)}\n` +
+          `Config: ${JSON.stringify(redactSensitive(response.config))}\n` +
           `Response: ${JSON.stringify(response.data || "No message")?.slice(
             0,
             1000,
@@ -329,6 +334,17 @@ export const webInterfaceClient = createClient(
 // Direct client without proxy for fallback
 export const webInterfaceDirectClient = createClient(
   "https://api.bilibili.com/x/web-interface",
+);
+
+export const medialistClient = createClient(
+  config.bilibili.apiProxyUrl
+    ? `${config.bilibili.apiProxyUrl}/medialist`
+    : "https://api.bilibili.com/medialist",
+  !!config.bilibili.apiProxyUrl,
+);
+
+export const medialistDirectClient = createClient(
+  "https://api.bilibili.com/medialist",
 );
 
 export const relationClient = createClient(

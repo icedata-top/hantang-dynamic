@@ -18,5 +18,9 @@ exports/*
 state*.json
 
 .claude/
+.agents/
 CLAUDE.md
 nul
+
+AGENTS.md
+output/*

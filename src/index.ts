@@ -1,6 +1,7 @@
 import { config } from "./config";
 import { loadAccounts } from "./core/account";
 import { Database } from "./database";
+import { MinuteHandler } from "./services/minute/minuteHandler";
 import { DynamicTracker } from "./services/tracker";
 import { logger } from "./utils/logger";
 
@@ -18,6 +19,8 @@ async function runTracker() {
   );
 
   const trackers = accounts.map((account) => new DynamicTracker(account));
+  const minuteHandler = config.minute.enabled ? new MinuteHandler() : null;
+  minuteHandler?.start();
 
   // Graceful shutdown
   const shutdown = async () => {
@@ -25,6 +28,7 @@ async function runTracker() {
     for (const tracker of trackers) {
       tracker.stop();
     }
+    minuteHandler?.stop();
     try {
       await Database.getInstance().close();
       logger.info("Database connection closed");
@@ -44,6 +48,15 @@ async function runTracker() {
 
 async function main() {
   const args = process.argv.slice(2);
+
+  if (args.includes("--init-schema")) {
+    logger.info("Initializing database schema");
+    const db = Database.getInstance();
+    await db.init(config.database.url, { initializeSchema: true });
+    await db.close();
+    logger.info("Database schema initialization complete");
+    return;
+  }
 
   // Check for tool mode
   if (args.includes("--repair")) {

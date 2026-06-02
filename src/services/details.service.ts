@@ -1,12 +1,12 @@
 import { getDynamic } from "../api/dynamic";
 import { fetchVideoFullDetail } from "../api/video";
-import { config } from "../config";
 import { Database } from "../database";
 import type { BiliDynamicCard, RecommendedVideo, VideoData } from "../types";
 import type { DynamicData } from "../types/models/database";
+import { sharedApiRateLimiter } from "../utils/apiRateLimiter";
 import { filterVideo } from "../utils/filter";
 import { logger } from "../utils/logger";
-import { RateLimiter } from "../utils/rateLimiter";
+import type { RateLimiter } from "../utils/rateLimiter";
 
 export class DetailsService {
   private rateLimiter: RateLimiter;
@@ -14,9 +14,7 @@ export class DetailsService {
 
   constructor() {
     this.db = Database.getInstance();
-    this.rateLimiter = new RateLimiter(
-      config.application.concurrencyLimit || 1,
-    );
+    this.rateLimiter = sharedApiRateLimiter;
   }
 
   /**

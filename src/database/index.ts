@@ -10,10 +10,20 @@ import type {
   UserStatsUpdate,
   VideoSnapshot,
 } from "../types/models/database.js";
+import type {
+  DailyCollectionCandidate,
+  ProcessedVideoCollectionInput,
+  VideoCollectionTask,
+  VideoMinuteSample,
+} from "../types/models/minute.js";
 import type { VideoData } from "../types/models/video.js";
 import { logger } from "../utils/logger.js";
 
 // Import operation modules
+import {
+  refreshVideoCollectionStateFromDaily,
+  upsertCollectionStateFromProcessedVideo,
+} from "./collectionState.js";
 import { getCachedForwardBvid, saveDynamic } from "./dynamics.js";
 import {
   getTopRecommendedVideos,
@@ -23,6 +33,13 @@ import {
 import { initializeSchema } from "./schema/index.js";
 import { getStats } from "./stats.js";
 import {
+  ackVideoCollectionTasks,
+  claimVideoCollectionTasks,
+  enqueueVideoCollectionGateTasks,
+  enqueueVideoCollectionTasks,
+  failVideoCollectionTasks,
+} from "./taskQueue.js";
+import {
   addDiscoveredUser,
   getTopDiscoveredUsers,
   getUserProfileHistory,
@@ -30,6 +47,11 @@ import {
   syncFollowingStatus,
   updateUserStats,
 } from "./users.js";
+import { getDailyCollectionCandidates } from "./videoDaily.js";
+import {
+  insertVideoMinuteSamples,
+  insertVideoMinuteSamplesAndAck,
+} from "./videoMinute.js";
 import {
   getAllProcessedIds,
   getBvidList,
@@ -62,9 +84,16 @@ export class Database {
   }
 
   /**
-   * Initialize the database connection pool and schema
+   * Initialize the database connection pool.
+   *
+   * Schema initialization is intentionally opt-in. Normal startup and restarts
+   * should not run DDL against the database; run `--init-schema` for install or
+   * upgrade steps that explicitly need it.
    */
-  public async init(url: string = config.database.url): Promise<void> {
+  public async init(
+    url: string = config.database.url,
+    options: { initializeSchema?: boolean } = {},
+  ): Promise<void> {
     if (this.pool) {
       logger.warn("Database already initialized");
       return;
@@ -91,8 +120,9 @@ export class Database {
       const client = await this.pool.connect();
       client.release();
 
-      // Initialize schema
-      await initializeSchema(this.pool, schema);
+      if (options.initializeSchema === true) {
+        await initializeSchema(this.pool, schema);
+      }
 
       logger.info("PostgreSQL initialized successfully");
     } catch (error) {
@@ -286,6 +316,117 @@ export class Database {
    */
   public async getStats(): Promise<DatabaseStats> {
     return getStats(this.ensurePool());
+  }
+
+  // ===== Adaptive Minute Operations =====
+
+  public async getDailyCollectionCandidates(options?: {
+    includeWeeklyOnly?: boolean;
+    now?: Date;
+    businessTimezone?: string;
+    limit?: number;
+  }): Promise<DailyCollectionCandidate[]> {
+    return getDailyCollectionCandidates(this.ensurePool(), options);
+  }
+
+  public async refreshVideoCollectionStateFromDaily(
+    aids?: bigint[],
+    now?: Date,
+  ): Promise<number> {
+    return refreshVideoCollectionStateFromDaily(this.ensurePool(), aids, now, {
+      targetDeltaPerSample: config.minute.targetDeltaPerSample,
+      targetDeltaLower: config.minute.targetDeltaLower,
+      targetDeltaUpper: config.minute.targetDeltaUpper,
+      minPositivePriority: config.minute.minPositivePriority,
+      maxPositivePriority: config.minute.maxPositivePriority,
+      businessTimezone: config.minute.collectionBusinessTimezone,
+    });
+  }
+
+  public async upsertCollectionStateFromProcessedVideo(
+    input: ProcessedVideoCollectionInput,
+    now?: Date,
+  ): Promise<string> {
+    return upsertCollectionStateFromProcessedVideo(
+      this.ensurePool(),
+      input,
+      now,
+      {
+        bootstrapPriority: config.minute.bootstrapPriority,
+        bootstrapTtlHours: config.minute.bootstrapTtlHours,
+        bootstrapLabelContentTypes: config.minute.bootstrapLabelContentTypes,
+        bootstrapLabelOrigin: config.minute.bootstrapLabelOrigin,
+        bootstrapLabelWriters: config.minute.bootstrapLabelWriters,
+        bootstrapTidV2Allowlist: config.minute.bootstrapTidV2Allowlist,
+        processedBackfillNewVideoAgeDays:
+          config.minute.processedBackfillNewVideoAgeDays,
+      },
+    );
+  }
+
+  public async enqueueVideoCollectionTasks(
+    now?: Date,
+    maxAttempts?: number,
+  ): Promise<number> {
+    return enqueueVideoCollectionTasks(this.ensurePool(), now, maxAttempts);
+  }
+
+  public async enqueueVideoCollectionGateTasks(
+    now?: Date,
+    options?: {
+      gateLeadTimeMinutes?: number;
+      gateMinLeadRatio?: number;
+      gateMaxLeadViews?: number;
+      maxAttempts?: number;
+    },
+  ): Promise<number> {
+    return enqueueVideoCollectionGateTasks(this.ensurePool(), now, options);
+  }
+
+  public async claimVideoCollectionTasks(
+    limit?: number,
+    lockDurationSeconds?: number,
+    now?: Date,
+  ): Promise<VideoCollectionTask[]> {
+    return claimVideoCollectionTasks(
+      this.ensurePool(),
+      limit,
+      lockDurationSeconds,
+      now,
+    );
+  }
+
+  public async ackVideoCollectionTasks(
+    taskIds: bigint[],
+    now?: Date,
+  ): Promise<number> {
+    return ackVideoCollectionTasks(this.ensurePool(), taskIds, now);
+  }
+
+  public async failVideoCollectionTasks(
+    taskIds: bigint[],
+    now?: Date,
+  ): Promise<number> {
+    return failVideoCollectionTasks(this.ensurePool(), taskIds, now);
+  }
+
+  public async insertVideoMinuteSamples(
+    samples: VideoMinuteSample[],
+  ): Promise<number> {
+    return insertVideoMinuteSamples(this.ensurePool(), samples);
+  }
+
+  public async insertVideoMinuteSamplesAndAck(
+    samples: VideoMinuteSample[],
+    taskIds: bigint[],
+    now?: Date,
+  ): Promise<{ inserted: number; acked: number }> {
+    return insertVideoMinuteSamplesAndAck(
+      this.ensurePool(),
+      samples,
+      taskIds,
+      now,
+    );
   }
 
   // ===== Connection Management =====

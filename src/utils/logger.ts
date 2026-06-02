@@ -1,4 +1,5 @@
 import { config } from "../config";
+import { redactForLog } from "./redact";
 
 type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -22,13 +23,7 @@ class Logger {
   }
 
   private formatMessage(message: unknown): string {
-    if (typeof message === "string") return message;
-    if (message instanceof Error) {
-      return `${message.name}: ${message.message}${
-        message.stack ? `\n${message.stack}` : ""
-      }`;
-    }
-    return JSON.stringify(message);
+    return redactForLog(message);
   }
 
   debug(...args: unknown[]): void {
