@@ -8,7 +8,7 @@ export const applicationSchema = z.object({
   apiWaitTime: z.coerce.number().default(2000),
   maxHistoryDays: z.coerce.number().default(7),
   maxItem: z.coerce.number().default(0),
-  concurrencyLimit: z.coerce.number().default(1),
+  concurrencyLimit: z.coerce.number().min(1).default(1),
   retrospectiveInterval: z.coerce.number().default(7 * 24 * 3600 * 1000),
   retrospectiveDays: z.coerce.number().default(30),
 });
