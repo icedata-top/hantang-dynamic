@@ -42,6 +42,11 @@ export async function initVideoDailySchema(pool: Pool): Promise<void> {
       ON video_daily(aid, record_date ASC)
     `);
     await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_video_daily_aid_date_desc
+      ON video_daily(aid, record_date DESC)
+      WHERE "view" IS NOT NULL
+    `);
+    await pool.query(`
       SELECT create_hypertable(
         'video_daily',
         by_range('record_date', INTERVAL '90 days'),

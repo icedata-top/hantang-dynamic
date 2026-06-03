@@ -36,6 +36,17 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_video_collection_queue_claim_order
+    ON video_collection_queue(
+      status,
+      (CASE WHEN task_type = 'minute' THEN 0 ELSE 1 END),
+      due_at,
+      id
+    )
+    WHERE status IN ('pending', 'leased')
+  `);
+
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_video_collection_queue_abandoned_dedupe
     ON video_collection_queue(dedupe_key)
     WHERE status = 'abandoned'
@@ -45,6 +56,12 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_video_collection_queue_cleanup
     ON video_collection_queue(updated_at)
     WHERE status IN ('completed', 'abandoned')
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_video_collection_queue_active_aid_type
+    ON video_collection_queue(aid, task_type, status)
+    WHERE status IN ('pending', 'leased')
   `);
 
   await pool.query(`
@@ -240,9 +257,46 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
       inserted_count integer;
     BEGIN
       WITH active_state AS (
-        SELECT aid, priority, next_minute_due_at
-        FROM video_collection_state
-        WHERE priority <> -1
+        SELECT
+          s.aid,
+          s.priority,
+          s.next_minute_due_at,
+          vdl.updated_at AS latest_daily_sample_time,
+          vdl."view"::bigint AS latest_daily_view
+        FROM video_collection_state s
+        LEFT JOIN video_daily_latest vdl ON vdl.aid = s.aid
+        WHERE s.priority <> -1
+          AND NOT EXISTS (
+            SELECT 1
+            FROM video_collection_queue q
+            WHERE q.aid = s.aid
+              AND q.task_type = 'gate'
+              AND q.status IN ('pending', 'leased')
+          )
+          AND (
+            (
+              s.priority > 0
+              AND s.next_minute_due_at IS NOT NULL
+              AND s.next_minute_due_at <= p_now + p_gate_lead_time
+            )
+            OR fn_video_collection_exact_gate_value(vdl."view"::bigint) IS NOT NULL
+            OR (
+              fn_video_collection_next_gate_value(vdl."view"::bigint) IS NOT NULL
+              AND fn_video_collection_next_gate_value(vdl."view"::bigint) - vdl."view"::bigint <= least(
+                ceil(fn_video_collection_next_gate_value(vdl."view"::bigint) * p_gate_min_lead_ratio)::bigint,
+                p_gate_max_lead_views
+              )
+            )
+          )
+        ORDER BY
+          CASE
+            WHEN s.priority > 0
+             AND s.next_minute_due_at IS NOT NULL
+            THEN s.next_minute_due_at
+            ELSE p_now
+          END ASC,
+          s.aid ASC
+        LIMIT 1000
       ),
       paired AS (
         SELECT
@@ -266,11 +320,9 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
               row_number() OVER (ORDER BY candidate_samples.sample_time DESC) AS rn
             FROM (
               SELECT
-                vdl.updated_at AS sample_time,
-                vdl."view"::bigint AS view_count
-              FROM video_daily_latest vdl
-              WHERE vdl.aid = state.aid
-                AND vdl."view" IS NOT NULL
+                state.latest_daily_sample_time AS sample_time,
+                state.latest_daily_view AS view_count
+              WHERE state.latest_daily_view IS NOT NULL
               UNION ALL
               SELECT
                 recent_daily.record_date::timestamptz AS sample_time,
@@ -430,7 +482,7 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
             OR (q.status = 'leased' AND q.locked_until <= p_now)
           )
         ORDER BY
-          q.task_type ASC,
+          CASE WHEN q.task_type = 'minute' THEN 0 ELSE 1 END ASC,
           q.due_at ASC,
           q.id ASC
         LIMIT p_limit

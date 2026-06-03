@@ -32,6 +32,7 @@ export class MinuteHandler {
   private poolBuilder = new MinutePoolBuilder();
   private timer: NodeJS.Timeout | null = null;
   private running = false;
+  private gateRunning = false;
 
   start(): void {
     if (this.timer) return;
@@ -61,10 +62,10 @@ export class MinuteHandler {
 
     this.running = true;
     try {
-      const enqueued = await this.poolBuilder.enqueueDueTasks();
-      if (enqueued.minute > 0 || enqueued.gate > 0) {
+      const enqueuedMinute = await this.poolBuilder.enqueueDueMinuteTasks();
+      if (enqueuedMinute > 0) {
         logger.info(
-          `Minute handler enqueued tasks: minute=${enqueued.minute}, gate=${enqueued.gate}`,
+          `Minute handler enqueued minute tasks: minute=${enqueuedMinute}`,
         );
       }
 
@@ -72,13 +73,36 @@ export class MinuteHandler {
         config.minute.claimBatchSize,
         config.minute.lockDurationSeconds,
       );
-      if (tasks.length === 0) return;
+      if (tasks.length > 0) {
+        await this.processTasks(tasks);
+      }
 
-      await this.processTasks(tasks);
+      void this.enqueueGateTasks();
     } catch (error) {
       logger.error("Minute handler tick failed:", error);
     } finally {
       this.running = false;
+    }
+  }
+
+  private async enqueueGateTasks(): Promise<void> {
+    if (this.gateRunning) {
+      logger.debug(
+        "Minute gate enqueue skipped because previous run is active",
+      );
+      return;
+    }
+
+    this.gateRunning = true;
+    try {
+      const enqueuedGate = await this.poolBuilder.enqueueGateTasks();
+      if (enqueuedGate > 0) {
+        logger.info(`Minute handler enqueued gate tasks: gate=${enqueuedGate}`);
+      }
+    } catch (error) {
+      logger.error("Minute gate enqueue failed:", error);
+    } finally {
+      this.gateRunning = false;
     }
   }
 
