@@ -36,6 +36,17 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_video_collection_queue_claim_order
+    ON video_collection_queue(
+      status,
+      (CASE WHEN task_type = 'minute' THEN 0 ELSE 1 END),
+      due_at,
+      id
+    )
+    WHERE status IN ('pending', 'leased')
+  `);
+
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_video_collection_queue_abandoned_dedupe
     ON video_collection_queue(dedupe_key)
     WHERE status = 'abandoned'
@@ -45,6 +56,12 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_video_collection_queue_cleanup
     ON video_collection_queue(updated_at)
     WHERE status IN ('completed', 'abandoned')
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_video_collection_queue_active_aid_type
+    ON video_collection_queue(aid, task_type, status)
+    WHERE status IN ('pending', 'leased')
   `);
 
   await pool.query(`
@@ -229,6 +246,12 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
   `);
 
   await pool.query(`
+    DROP FUNCTION IF EXISTS fn_enqueue_video_collection_gate_tasks(
+      timestamptz, interval, numeric, bigint, integer
+    )
+  `);
+
+  await pool.query(`
     CREATE OR REPLACE FUNCTION fn_enqueue_video_collection_gate_tasks(
       p_now timestamptz DEFAULT now(),
       p_gate_lead_time interval DEFAULT interval '30 minutes',
@@ -250,7 +273,6 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
         FROM video_daily vd
         WHERE vd.record_date IN (v_today, v_yesterday)
       ),
-
       pivoted AS (
         SELECT
           ds.aid,
@@ -260,7 +282,7 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
         GROUP BY ds.aid
         HAVING max(ds.vw) FILTER (WHERE ds.record_date = v_today) IS NOT NULL
       ),
-
+      -- 预计算 gate 函数
       enriched AS (
         SELECT
           p.aid,
@@ -272,7 +294,7 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
           fn_video_collection_next_gate_value(p.current_view) AS next_gate
         FROM pivoted p
       ),
-
+      -- 关联 state 并做资格过滤
       active_state AS (
         SELECT
           e.*,
@@ -302,9 +324,9 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
             -- 条件 D：接近下一个门槛
             OR (
               e.next_gate IS NOT NULL
-              AND e.next_gate - e.current_view <= least(
-                ceil(e.next_gate * p_gate_min_lead_ratio)::bigint,
-                p_gate_max_lead_views
+                AND e.next_gate - e.current_view <= least(
+                  ceil(e.next_gate * p_gate_min_lead_ratio)::bigint,
+                  p_gate_max_lead_views
               )
             )
           )
@@ -334,22 +356,22 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
                 THEN a.crossed_gate
               -- 预测：用 daily_delta 推算到下次 minute 采集 + lead_time 时能否到达
               WHEN a.next_gate IS NOT NULL
-              AND a.daily_delta > 0
-              AND a.priority > 0
-              AND a.next_minute_due_at IS NOT NULL
-              AND a.current_view + (
-                  a.daily_delta::numeric
-                  * extract(epoch FROM (a.next_minute_due_at + p_gate_lead_time - p_now))
-                  / 86400
-                ) >= a.next_gate
+               AND a.daily_delta > 0
+               AND a.priority > 0
+               AND a.next_minute_due_at IS NOT NULL
+               AND a.current_view + (
+                   a.daily_delta::numeric
+                   * extract(epoch FROM (a.next_minute_due_at + p_gate_lead_time - p_now))
+                   / 86400
+                 ) >= a.next_gate
                 THEN a.next_gate
               -- 近距离检测
               WHEN a.next_gate IS NOT NULL
-              AND a.daily_delta > 0
-              AND a.next_gate - a.current_view <= least(
-                  ceil(a.next_gate * p_gate_min_lead_ratio)::bigint,
-                  p_gate_max_lead_views
-                )
+               AND a.daily_delta > 0
+               AND a.next_gate - a.current_view <= least(
+                   ceil(a.next_gate * p_gate_min_lead_ratio)::bigint,
+                   p_gate_max_lead_views
+                 )
                 THEN a.next_gate
               ELSE NULL
             END AS gate_value,
@@ -357,14 +379,14 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
               WHEN a.exact_gate IS NOT NULL THEN 'view_threshold'
               WHEN a.crossed_gate IS NOT NULL THEN 'crossed_threshold'
               WHEN a.next_gate IS NOT NULL
-              AND a.daily_delta > 0
-              AND a.priority > 0
-              AND a.next_minute_due_at IS NOT NULL
-              AND a.current_view + (
-                  a.daily_delta::numeric
-                  * extract(epoch FROM (a.next_minute_due_at + p_gate_lead_time - p_now))
-                  / 86400
-                ) >= a.next_gate
+               AND a.daily_delta > 0
+               AND a.priority > 0
+               AND a.next_minute_due_at IS NOT NULL
+               AND a.current_view + (
+                   a.daily_delta::numeric
+                   * extract(epoch FROM (a.next_minute_due_at + p_gate_lead_time - p_now))
+                   / 86400
+                 ) >= a.next_gate
                 THEN 'predicted_threshold'
               ELSE 'near_threshold'
             END AS gate_reason
@@ -422,12 +444,12 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
       gate_reason text
     ) AS $$
     BEGIN
-      UPDATE video_collection_queue
+      UPDATE video_collection_queue q
       SET status = 'abandoned',
           updated_at = p_now
-      WHERE status = 'leased'
-        AND locked_until <= p_now
-        AND attempt_count >= max_attempts;
+      WHERE q.status = 'leased'
+        AND q.locked_until <= p_now
+        AND q.attempt_count >= q.max_attempts;
 
       PERFORM fn_advance_abandoned_minute_collection_state(p_now);
 
@@ -442,7 +464,7 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
             OR (q.status = 'leased' AND q.locked_until <= p_now)
           )
         ORDER BY
-          q.task_type ASC,
+          CASE WHEN q.task_type = 'minute' THEN 0 ELSE 1 END ASC,
           q.due_at ASC,
           q.id ASC
         LIMIT p_limit
