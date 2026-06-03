@@ -36,6 +36,18 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_video_collection_queue_abandoned_dedupe
+    ON video_collection_queue(dedupe_key)
+    WHERE status = 'abandoned'
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_video_collection_queue_cleanup
+    ON video_collection_queue(updated_at)
+    WHERE status IN ('completed', 'abandoned')
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS video_collection_gate_crossings (
       id bigserial PRIMARY KEY,
       aid bigint NOT NULL,
@@ -53,40 +65,25 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
     CREATE OR REPLACE FUNCTION fn_video_collection_exact_gate_value(
       p_view bigint
     ) RETURNS bigint AS $$
-    BEGIN
-      IF p_view IS NULL OR p_view <= 0 THEN
-        RETURN NULL;
-      END IF;
-
-      IF p_view < 10000 AND p_view % 1000 = 0 THEN
-        RETURN p_view;
-      END IF;
-
-      IF p_view >= 10000 AND p_view % 10000 = 0 THEN
-        RETURN p_view;
-      END IF;
-
-      RETURN NULL;
-    END;
-    $$ LANGUAGE plpgsql IMMUTABLE
+      SELECT CASE
+        WHEN p_view IS NULL OR p_view <= 0 THEN NULL
+        WHEN p_view < 10000 AND p_view % 1000 = 0 THEN p_view
+        WHEN p_view >= 10000 AND p_view % 10000 = 0 THEN p_view
+        ELSE NULL
+      END
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE
   `);
 
   await pool.query(`
     CREATE OR REPLACE FUNCTION fn_video_collection_next_gate_value(
       p_view bigint
     ) RETURNS bigint AS $$
-    BEGIN
-      IF p_view IS NULL OR p_view < 0 THEN
-        RETURN NULL;
-      END IF;
-
-      IF p_view < 10000 THEN
-        RETURN ((p_view / 1000) + 1) * 1000;
-      END IF;
-
-      RETURN ((p_view / 10000) + 1) * 10000;
-    END;
-    $$ LANGUAGE plpgsql IMMUTABLE
+      SELECT CASE
+        WHEN p_view IS NULL OR p_view < 0 THEN NULL
+        WHEN p_view < 10000 THEN ((p_view / 1000) + 1) * 1000
+        ELSE ((p_view / 10000) + 1) * 10000
+      END
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE
   `);
 
   await pool.query(`
@@ -94,26 +91,26 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
       p_previous_view bigint,
       p_current_view bigint
     ) RETURNS bigint AS $$
-    DECLARE
-      candidate bigint;
-      crossed bigint := NULL;
-    BEGIN
-      IF p_previous_view IS NULL
-        OR p_current_view IS NULL
-        OR p_current_view <= p_previous_view
-      THEN
-        RETURN NULL;
-      END IF;
-
-      candidate := fn_video_collection_next_gate_value(p_previous_view);
-      WHILE candidate IS NOT NULL AND candidate <= p_current_view LOOP
-        crossed := candidate;
-        candidate := fn_video_collection_next_gate_value(candidate);
-      END LOOP;
-
-      RETURN crossed;
-    END;
-    $$ LANGUAGE plpgsql IMMUTABLE
+      SELECT CASE
+        WHEN p_previous_view IS NULL
+          OR p_current_view IS NULL
+          OR p_current_view <= p_previous_view
+          OR p_current_view < 1000
+          THEN NULL
+        ELSE (
+          SELECT max(v) FROM (VALUES
+            (CASE WHEN p_current_view >= 10000
+              THEN (p_current_view / 10000) * 10000
+            END),
+            (CASE WHEN least(p_current_view, 9999) >= 1000
+              THEN (least(p_current_view, 9999) / 1000) * 1000
+            END)
+          ) AS candidates(v)
+          WHERE v > p_previous_view
+            AND v > 0
+        )
+      END
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE
   `);
 
   await pool.query(`
@@ -123,29 +120,26 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
     DECLARE
       advanced_count integer;
     BEGIN
-      WITH advanced AS (
-        UPDATE video_collection_state s
-        SET next_minute_due_at = fn_video_collection_next_due_at(
-              s.aid,
-              s.priority,
-              greatest(
-                p_now + interval '1 second',
-                q.due_at + make_interval(mins => s.priority)
-              )
-            ),
-            updated_at = p_now
-        FROM video_collection_queue q
-        WHERE q.aid = s.aid
-          AND q.task_type = 'minute'
-          AND q.status = 'abandoned'
-          AND q.due_at <= p_now
-          AND s.priority > 0
-          AND s.next_minute_due_at IS NOT NULL
-          AND s.next_minute_due_at <= q.due_at
-        RETURNING 1
-      )
-      SELECT count(*) INTO advanced_count FROM advanced;
+      UPDATE video_collection_state s
+      SET next_minute_due_at = fn_video_collection_next_due_at(
+            s.aid,
+            s.priority,
+            greatest(
+              p_now + interval '1 second',
+              q.due_at + make_interval(mins => s.priority)
+            )
+          ),
+          updated_at = p_now
+      FROM video_collection_queue q
+      WHERE q.aid = s.aid
+        AND q.task_type = 'minute'
+        AND q.status = 'abandoned'
+        AND q.due_at <= p_now
+        AND s.priority > 0
+        AND s.next_minute_due_at IS NOT NULL
+        AND s.next_minute_due_at <= q.due_at;
 
+      GET DIAGNOSTICS advanced_count = ROW_COUNT;
       RETURN advanced_count;
     END;
     $$ LANGUAGE plpgsql
@@ -159,6 +153,10 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
     DECLARE
       inserted_count integer;
     BEGIN
+      DELETE FROM video_collection_queue
+      WHERE status IN ('completed', 'abandoned')
+        AND updated_at < p_now - interval '3 days';
+
       WITH expired_bootstrap AS (
         UPDATE video_collection_state
         SET priority = 0,
@@ -190,6 +188,16 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
 
       PERFORM fn_advance_abandoned_minute_collection_state(p_now);
 
+      WITH minute_candidates AS (
+        SELECT
+          s.aid,
+          s.next_minute_due_at,
+          concat('minute:', s.aid, ':', extract(epoch FROM s.next_minute_due_at)::bigint) AS dedupe_key
+        FROM video_collection_state s
+        WHERE s.priority > 0
+          AND s.next_minute_due_at IS NOT NULL
+          AND s.next_minute_due_at <= p_now
+      )
       INSERT INTO video_collection_queue (
         aid,
         task_type,
@@ -199,21 +207,19 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
         updated_at
       )
       SELECT
-        s.aid,
+        mc.aid,
         'minute',
-        concat('minute:', s.aid, ':', extract(epoch FROM s.next_minute_due_at)::bigint),
-        s.next_minute_due_at,
+        mc.dedupe_key,
+        mc.next_minute_due_at,
         p_max_attempts,
         p_now
-      FROM video_collection_state s
-      WHERE s.priority > 0
-        AND s.next_minute_due_at IS NOT NULL
-        AND s.next_minute_due_at <= p_now
-        AND NOT EXISTS (
-          SELECT 1
-          FROM video_collection_queue q
-          WHERE q.dedupe_key = concat('minute:', s.aid, ':', extract(epoch FROM s.next_minute_due_at)::bigint)
-        )
+      FROM minute_candidates mc
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM video_collection_queue q
+        WHERE q.dedupe_key = mc.dedupe_key
+          AND q.status IN ('pending', 'leased')
+      )
       ON CONFLICT DO NOTHING;
 
       GET DIAGNOSTICS inserted_count = ROW_COUNT;
@@ -424,7 +430,7 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
             OR (q.status = 'leased' AND q.locked_until <= p_now)
           )
         ORDER BY
-          CASE WHEN q.task_type = 'gate' THEN 0 ELSE 1 END,
+          q.task_type ASC,
           q.due_at ASC,
           q.id ASC
         LIMIT p_limit

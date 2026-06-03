@@ -34,45 +34,20 @@ export async function initUsersSchema(pool: Pool): Promise<void> {
     ON discovered_users(is_following)
   `);
 
-  // Migrations for existing databases
   await pool.query(`
-    ALTER TABLE discovered_users
-    ADD COLUMN IF NOT EXISTS followed_by BIGINT[] DEFAULT '{}'
-  `);
-  await pool.query(`
-    ALTER TABLE discovered_users
-    ADD COLUMN IF NOT EXISTS face VARCHAR
-  `);
-  await pool.query(`
-    ALTER TABLE discovered_users
-    DROP COLUMN IF EXISTS discovered_from
-  `);
-  await pool.query(`
-    ALTER TABLE discovered_users
-    ADD COLUMN IF NOT EXISTS sign VARCHAR
-  `);
-  await pool.query(`
-    ALTER TABLE discovered_users
-    ADD COLUMN IF NOT EXISTS level SMALLINT DEFAULT 0
-  `);
-  await pool.query(`
-    ALTER TABLE discovered_users
-    ADD COLUMN IF NOT EXISTS official_role SMALLINT DEFAULT -1
-  `);
-  await pool.query(`
-    ALTER TABLE discovered_users
-    ADD COLUMN IF NOT EXISTS official_title VARCHAR
-  `);
-  await pool.query(`
-    ALTER TABLE discovered_users
-    ADD COLUMN IF NOT EXISTS videos_seen INTEGER DEFAULT 0
-  `);
-  await pool.query(`
-    ALTER TABLE discovered_users
-    ADD COLUMN IF NOT EXISTS videos_filtered INTEGER DEFAULT 0
-  `);
-  await pool.query(`
-    ALTER TABLE discovered_users
-    ADD COLUMN IF NOT EXISTS filter_pass_rate REAL DEFAULT 0.0
+    DO $$
+    BEGIN
+      ALTER TABLE discovered_users ADD COLUMN IF NOT EXISTS followed_by BIGINT[] DEFAULT '{}';
+      ALTER TABLE discovered_users ADD COLUMN IF NOT EXISTS face VARCHAR;
+      ALTER TABLE discovered_users DROP COLUMN IF EXISTS discovered_from;
+      ALTER TABLE discovered_users ADD COLUMN IF NOT EXISTS sign VARCHAR;
+      ALTER TABLE discovered_users ADD COLUMN IF NOT EXISTS level SMALLINT DEFAULT 0;
+      ALTER TABLE discovered_users ADD COLUMN IF NOT EXISTS official_role SMALLINT DEFAULT -1;
+      ALTER TABLE discovered_users ADD COLUMN IF NOT EXISTS official_title VARCHAR;
+      ALTER TABLE discovered_users ADD COLUMN IF NOT EXISTS videos_seen INTEGER DEFAULT 0;
+      ALTER TABLE discovered_users ADD COLUMN IF NOT EXISTS videos_filtered INTEGER DEFAULT 0;
+      ALTER TABLE discovered_users ADD COLUMN IF NOT EXISTS filter_pass_rate REAL DEFAULT 0.0;
+    END;
+    $$
   `);
 }

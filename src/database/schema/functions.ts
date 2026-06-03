@@ -14,7 +14,7 @@ import type { Pool } from "pg";
 export async function initFunctionsSchema(pool: Pool): Promise<void> {
   await pool.query(`
     CREATE OR REPLACE FUNCTION bv2av(bvid TEXT) RETURNS BIGINT
-    LANGUAGE plpgsql IMMUTABLE STRICT AS $$
+    LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE STRICT AS $$
     DECLARE
       tbl       CONSTANT TEXT   := 'FcwAPNKTMug3GV5Lj7EJnHpWsx4tb8haYeviqBz6rkCy12mUSDQX9RdoZf';
       xor_code  CONSTANT BIGINT := 23442827791579;
@@ -39,7 +39,7 @@ export async function initFunctionsSchema(pool: Pool): Promise<void> {
 
   await pool.query(`
     CREATE OR REPLACE FUNCTION av2bv(aid BIGINT) RETURNS TEXT
-    LANGUAGE plpgsql IMMUTABLE STRICT AS $$
+    LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE STRICT AS $$
     DECLARE
       tbl      CONSTANT TEXT   := 'FcwAPNKTMug3GV5Lj7EJnHpWsx4tb8haYeviqBz6rkCy12mUSDQX9RdoZf';
       xor_code CONSTANT BIGINT := 23442827791579;
