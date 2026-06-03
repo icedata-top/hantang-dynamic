@@ -27,6 +27,7 @@ export async function initCronVideoStatic(
           WHERE NOT EXISTS (
             SELECT 1 FROM "${schema}".video_static v
             WHERE v.aid      = m.aid
+              AND v.bvid     = m.bvid
               AND v.title    = m.title
               AND v.priority IS NOT DISTINCT FROM m.priority
           )
