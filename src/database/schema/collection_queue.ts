@@ -238,43 +238,62 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
         FROM video_collection_state
         WHERE priority <> -1
       ),
-      samples AS (
-        SELECT vdl.aid, vdl.updated_at AS sample_time, vdl."view"::bigint AS view_count
-        FROM video_daily_latest vdl
-        JOIN active_state state ON state.aid = vdl.aid
-        WHERE vdl."view" IS NOT NULL
-        UNION ALL
-        SELECT vd.aid, vd.record_date::timestamptz AS sample_time, vd."view"::bigint AS view_count
-        FROM video_daily vd
-        JOIN active_state state ON state.aid = vd.aid
-        WHERE vd."view" IS NOT NULL
-        UNION ALL
-        SELECT vm.aid, vm."time" AS sample_time, vm."view"::bigint AS view_count
-        FROM video_minute vm
-        JOIN active_state state ON state.aid = vm.aid
-        WHERE vm."view" IS NOT NULL
-      ),
-      ranked AS (
-        SELECT
-          s.*,
-          row_number() OVER (PARTITION BY aid ORDER BY sample_time DESC) AS rn
-        FROM samples s
-      ),
       paired AS (
         SELECT
-          current_sample.aid,
-          current_sample.sample_time AS current_sample_time,
-          current_sample.view_count AS current_view,
-          previous_sample.sample_time AS previous_sample_time,
-          previous_sample.view_count AS previous_view,
+          state.aid,
+          max(samples.sample_time) FILTER (WHERE samples.rn = 1) AS current_sample_time,
+          max(samples.view_count) FILTER (WHERE samples.rn = 1) AS current_view,
+          max(samples.sample_time) FILTER (WHERE samples.rn = 2) AS previous_sample_time,
+          max(samples.view_count) FILTER (WHERE samples.rn = 2) AS previous_view,
           state.priority,
           state.next_minute_due_at
-        FROM ranked current_sample
-        JOIN active_state state ON state.aid = current_sample.aid
-        LEFT JOIN ranked previous_sample
-          ON previous_sample.aid = current_sample.aid
-         AND previous_sample.rn = 2
-        WHERE current_sample.rn = 1
+        FROM active_state state
+        LEFT JOIN LATERAL (
+          SELECT
+            ranked_samples.sample_time,
+            ranked_samples.view_count,
+            ranked_samples.rn
+          FROM (
+            SELECT
+              candidate_samples.sample_time,
+              candidate_samples.view_count,
+              row_number() OVER (ORDER BY candidate_samples.sample_time DESC) AS rn
+            FROM (
+              SELECT
+                vdl.updated_at AS sample_time,
+                vdl."view"::bigint AS view_count
+              FROM video_daily_latest vdl
+              WHERE vdl.aid = state.aid
+                AND vdl."view" IS NOT NULL
+              UNION ALL
+              SELECT
+                recent_daily.record_date::timestamptz AS sample_time,
+                recent_daily."view"::bigint AS view_count
+              FROM (
+                SELECT vd.record_date, vd."view"
+                FROM video_daily vd
+                WHERE vd.aid = state.aid
+                  AND vd."view" IS NOT NULL
+                ORDER BY vd.record_date DESC
+                LIMIT 2
+              ) recent_daily
+              UNION ALL
+              SELECT
+                recent_minute."time" AS sample_time,
+                recent_minute."view"::bigint AS view_count
+              FROM (
+                SELECT vm."time", vm."view"
+                FROM video_minute vm
+                WHERE vm.aid = state.aid
+                  AND vm."view" IS NOT NULL
+                ORDER BY vm."time" DESC
+                LIMIT 2
+              ) recent_minute
+            ) candidate_samples
+          ) ranked_samples
+          WHERE ranked_samples.rn <= 2
+        ) samples ON true
+        GROUP BY state.aid, state.priority, state.next_minute_due_at
       ),
       candidates AS (
         SELECT
