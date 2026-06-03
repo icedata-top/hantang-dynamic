@@ -53,28 +53,21 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       p_priority integer,
       p_now timestamptz DEFAULT now()
     ) RETURNS timestamptz AS $$
-    DECLARE
-      seconds_per_period numeric;
-      base_epoch numeric;
-      candidate timestamptz;
-      offset_minutes integer;
-    BEGIN
-      IF p_priority IS NULL OR p_priority <= 0 THEN
-        RETURN NULL;
-      END IF;
-
-      seconds_per_period := p_priority * 60;
-      base_epoch := floor(extract(epoch FROM p_now) / seconds_per_period) * seconds_per_period;
-      offset_minutes := (abs(p_aid) % p_priority)::integer;
-      candidate := to_timestamp(base_epoch) + make_interval(mins => offset_minutes);
-
-      IF candidate < p_now THEN
-        candidate := candidate + make_interval(mins => p_priority);
-      END IF;
-
-      RETURN candidate;
-    END;
-    $$ LANGUAGE plpgsql STABLE
+      SELECT CASE
+        WHEN p_priority IS NULL OR p_priority <= 0 THEN NULL
+        ELSE (
+          SELECT CASE WHEN cand < p_now
+            THEN cand + make_interval(mins => p_priority)
+            ELSE cand
+          END
+          FROM (
+            SELECT to_timestamp(
+              floor(extract(epoch FROM p_now) / (p_priority * 60)) * (p_priority * 60)
+            ) + make_interval(mins => (abs(p_aid) % p_priority)::integer) AS cand
+          ) t
+        )
+      END
+    $$ LANGUAGE sql STABLE PARALLEL SAFE
   `);
 
   await pool.query(`
@@ -86,42 +79,64 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       p_min_positive_priority integer DEFAULT ${config.minute.minPositivePriority},
       p_max_positive_priority integer DEFAULT ${config.minute.maxPositivePriority}
     ) RETURNS integer AS $$
-    DECLARE
-      effective_target integer;
-      calculated integer;
-    BEGIN
-      IF p_daily_delta IS NULL OR p_daily_delta <= 0 THEN
-        RETURN 0;
-      END IF;
+      SELECT CASE
+        WHEN p_daily_delta IS NULL OR p_daily_delta <= 0 THEN 0
+        ELSE least(
+          greatest(
+            round(
+              least(
+                greatest(p_target_delta_per_sample, p_target_delta_lower),
+                p_target_delta_upper
+              ) * 1440.0 / p_daily_delta
+            )::integer,
+            p_min_positive_priority
+          ),
+          p_max_positive_priority
+        )
+      END
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE
+  `);
 
-      effective_target := least(
-        greatest(p_target_delta_per_sample, p_target_delta_lower),
-        p_target_delta_upper
-      );
-      calculated := round(effective_target * 1440.0 / p_daily_delta);
-      RETURN least(
-        greatest(calculated, p_min_positive_priority),
-        p_max_positive_priority
-      );
-    END;
-    $$ LANGUAGE plpgsql IMMUTABLE
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_video_collection_priority(
+      p_daily_delta bigint,
+      p_target_delta_per_sample integer DEFAULT ${config.minute.targetDeltaPerSample},
+      p_target_delta_lower integer DEFAULT ${config.minute.targetDeltaLower},
+      p_target_delta_upper integer DEFAULT ${config.minute.targetDeltaUpper},
+      p_min_positive_priority integer DEFAULT ${config.minute.minPositivePriority},
+      p_max_positive_priority integer DEFAULT ${config.minute.maxPositivePriority}
+    ) RETURNS integer AS $$
+      SELECT CASE
+        WHEN p_daily_delta IS NULL OR p_daily_delta <= 0 THEN 0
+        ELSE least(
+          greatest(
+            round(
+              least(
+                greatest(p_target_delta_per_sample, p_target_delta_lower),
+                p_target_delta_upper
+              ) * 1440e0 / p_daily_delta
+            )::integer,
+            p_min_positive_priority
+          ),
+          p_max_positive_priority
+        )
+      END
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE
   `);
 
   await pool.query(`
     CREATE OR REPLACE FUNCTION fn_video_collection_priority(
       p_daily_delta numeric
     ) RETURNS integer AS $$
-    BEGIN
-      RETURN fn_video_collection_priority(
+      SELECT fn_video_collection_priority(
         p_daily_delta,
         ${config.minute.targetDeltaPerSample},
         ${config.minute.targetDeltaLower},
         ${config.minute.targetDeltaUpper},
         ${config.minute.minPositivePriority},
         ${config.minute.maxPositivePriority}
-      );
-    END;
-    $$ LANGUAGE plpgsql IMMUTABLE
+      )
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE
   `);
 
   await pool.query(`
@@ -137,164 +152,131 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     ) RETURNS integer AS $$
     DECLARE
       changed_count integer;
+      v_today          date;
+      v_yesterday      date;
+      v_seven_days_ago date;
     BEGIN
-      WITH target_dates AS (
-        SELECT
-          (p_now AT TIME ZONE p_business_timezone)::date AS today,
-          ((p_now AT TIME ZONE p_business_timezone)::date - 1) AS yesterday,
-          ((p_now AT TIME ZONE p_business_timezone)::date - 7) AS seven_days_ago
-      ),
-      target_date_values AS (
-        SELECT today AS record_date, 'today'::text AS date_role FROM target_dates
-        UNION ALL
-        SELECT yesterday, 'yesterday'::text FROM target_dates
-        UNION ALL
-        SELECT seven_days_ago, 'seven_days_ago'::text FROM target_dates
-      ),
-      daily_window AS (
-        SELECT
-          vd.aid,
-          tdv.date_role,
-          vd."view"::bigint AS view_count
+      v_today          := (p_now AT TIME ZONE p_business_timezone)::date;
+      v_yesterday      := v_today - 1;
+      v_seven_days_ago := v_today - 7;
+
+      SET LOCAL work_mem = '256MB';
+
+      WITH daily_snapshot AS (
+        SELECT vd.aid, vd.record_date, vd."view"::bigint AS vw
         FROM video_daily vd
-        JOIN target_date_values tdv ON tdv.record_date = vd.record_date
-        WHERE p_aids IS NULL
+        WHERE vd.record_date IN (v_today, v_yesterday, v_seven_days_ago)
+          AND p_aids IS NULL
+
         UNION ALL
-        SELECT
-          vd.aid,
-          tdv.date_role,
-          vd."view"::bigint AS view_count
-        FROM (
-          SELECT DISTINCT requested_aid AS aid
-          FROM unnest(p_aids) AS requested_aids(requested_aid)
-        ) requested
-        CROSS JOIN target_date_values tdv
+
+        SELECT vd.aid, vd.record_date, vd."view"::bigint
+        FROM unnest(p_aids) AS req(aid)
         JOIN video_daily vd
-          ON vd.aid = requested.aid
-         AND vd.record_date = tdv.record_date
+          ON vd.aid = req.aid
+         AND vd.record_date IN (v_today, v_yesterday, v_seven_days_ago)
         WHERE p_aids IS NOT NULL
       ),
       measured AS (
         SELECT
-          dw.aid,
-          td.today AS record_date,
-          max(dw.view_count) FILTER (WHERE dw.date_role = 'today') AS current_view,
-          max(dw.view_count) FILTER (WHERE dw.date_role = 'yesterday') AS previous_view,
-          max(dw.view_count) FILTER (WHERE dw.date_role = 'seven_days_ago') AS seven_day_view
-        FROM daily_window dw
-        CROSS JOIN target_dates td
-        GROUP BY dw.aid, td.today
-        HAVING max(dw.view_count) FILTER (WHERE dw.date_role = 'today') IS NOT NULL
+          agg.aid,
+          agg.current_view,
+          agg.seven_day_view,
+          CASE WHEN agg.previous_view IS NOT NULL
+            THEN greatest(agg.current_view - agg.previous_view, 0)
+          END AS daily_delta,
+          CASE WHEN agg.seven_day_view IS NOT NULL
+            THEN greatest(agg.current_view - agg.seven_day_view, 0) / 7
+          END AS weekly_delta
+        FROM (
+          SELECT
+            ds.aid,
+            max(ds.vw) FILTER (WHERE ds.record_date = v_today)          AS current_view,
+            max(ds.vw) FILTER (WHERE ds.record_date = v_yesterday)      AS previous_view,
+            max(ds.vw) FILTER (WHERE ds.record_date = v_seven_days_ago) AS seven_day_view
+          FROM daily_snapshot ds
+          GROUP BY ds.aid
+          HAVING max(ds.vw) FILTER (WHERE ds.record_date = v_today) IS NOT NULL
+        ) agg
       ),
       calculated AS (
         SELECT
           m.aid,
+          m.daily_delta  AS latest_daily_delta,
+          m.weekly_delta AS weekly_avg_daily_delta,
           CASE
-            WHEN m.previous_view IS NULL THEN NULL
-            ELSE greatest(m.current_view - m.previous_view, 0)
-          END AS latest_daily_delta,
-          CASE
-            WHEN m.seven_day_view IS NULL THEN NULL
-            ELSE greatest(m.current_view - m.seven_day_view, 0)::numeric / 7.0
-          END AS weekly_avg_daily_delta,
-          CASE
-            WHEN m.previous_view IS NOT NULL THEN 'daily_delta'
-            WHEN m.seven_day_view IS NOT NULL THEN 'weekly_avg'
+            WHEN m.daily_delta  IS NOT NULL THEN 'daily_delta'
+            WHEN m.weekly_delta IS NOT NULL THEN 'weekly_avg'
             ELSE 'processed_backfill'
           END AS daily_delta_source,
           CASE
             WHEN m.seven_day_view IS NOT NULL AND m.current_view = m.seven_day_view THEN -2
-            WHEN COALESCE(greatest(m.current_view - m.previous_view, 0), 0) > 100 THEN
+            WHEN COALESCE(m.daily_delta, 0) > 100 THEN
               fn_video_collection_priority(
-                greatest(m.current_view - m.previous_view, 0),
-                p_target_delta_per_sample,
-                p_target_delta_lower,
-                p_target_delta_upper,
-                p_min_positive_priority,
-                p_max_positive_priority
-              )
-            WHEN COALESCE(greatest(m.current_view - m.seven_day_view, 0)::numeric / 7.0, 0) >= 100 THEN
+                m.daily_delta,
+                p_target_delta_per_sample, p_target_delta_lower,
+                p_target_delta_upper, p_min_positive_priority, p_max_positive_priority)
+            WHEN COALESCE(m.weekly_delta, 0) >= 100 THEN
               fn_video_collection_priority(
-                greatest(m.current_view - m.seven_day_view, 0)::numeric / 7.0,
-                p_target_delta_per_sample,
-                p_target_delta_lower,
-                p_target_delta_upper,
-                p_min_positive_priority,
-                p_max_positive_priority
-              )
+                m.weekly_delta,
+                p_target_delta_per_sample, p_target_delta_lower,
+                p_target_delta_upper, p_min_positive_priority, p_max_positive_priority)
             WHEN m.seven_day_view IS NOT NULL AND m.current_view > m.seven_day_view THEN 0
             ELSE 0
           END AS priority,
-          m.record_date AS last_daily_record_date,
           m.current_view AS last_view
         FROM measured m
-      ),
-      upserted AS (
-        INSERT INTO video_collection_state (
-          aid,
-          latest_daily_delta,
-          weekly_avg_daily_delta,
-          daily_delta_source,
-          priority,
-          next_minute_due_at,
-          last_daily_record_date,
-          last_view,
-          updated_at
-        )
-        SELECT
-          c.aid,
-          c.latest_daily_delta,
-          c.weekly_avg_daily_delta,
-          c.daily_delta_source,
-          c.priority,
-          CASE
-            WHEN c.priority > 0 THEN fn_video_collection_next_due_at(c.aid, c.priority, p_now)
-            ELSE NULL
-          END,
-          c.last_daily_record_date,
-          c.last_view,
-          p_now
-        FROM calculated c
-        ON CONFLICT (aid) DO UPDATE SET
-          latest_daily_delta = EXCLUDED.latest_daily_delta,
-          weekly_avg_daily_delta = EXCLUDED.weekly_avg_daily_delta,
-          daily_delta_source = CASE
-            WHEN EXCLUDED.latest_daily_delta IS NULL
-             AND EXCLUDED.weekly_avg_daily_delta IS NULL
-            THEN video_collection_state.daily_delta_source
-            ELSE EXCLUDED.daily_delta_source
-          END,
-          priority = CASE
-            WHEN video_collection_state.priority = -1 THEN -1
-            ELSE EXCLUDED.priority
-          END,
-          next_minute_due_at = CASE
-            WHEN video_collection_state.priority = -1 THEN NULL
-            WHEN EXCLUDED.priority > 0
-             AND (
-               video_collection_state.next_minute_due_at IS NULL
-               OR video_collection_state.priority IS DISTINCT FROM EXCLUDED.priority
-             )
-            THEN fn_video_collection_next_due_at(EXCLUDED.aid, EXCLUDED.priority, p_now)
-            WHEN EXCLUDED.priority > 0 THEN video_collection_state.next_minute_due_at
-            ELSE NULL
-          END,
-          bootstrap_until = CASE
-            WHEN EXCLUDED.latest_daily_delta IS NOT NULL
-              OR EXCLUDED.weekly_avg_daily_delta IS NOT NULL
-            THEN NULL
-            ELSE video_collection_state.bootstrap_until
-          END,
-          last_daily_record_date = EXCLUDED.last_daily_record_date,
-          last_view = EXCLUDED.last_view,
-          updated_at = p_now
-        RETURNING 1
       )
-      SELECT count(*) INTO changed_count FROM upserted;
+      INSERT INTO video_collection_state (
+        aid, latest_daily_delta, weekly_avg_daily_delta, daily_delta_source,
+        priority, next_minute_due_at, last_daily_record_date, last_view, updated_at
+      )
+      SELECT
+        c.aid, c.latest_daily_delta, c.weekly_avg_daily_delta, c.daily_delta_source,
+        c.priority,
+        CASE WHEN c.priority > 0
+          THEN fn_video_collection_next_due_at(c.aid, c.priority, p_now)
+        END,
+        v_today,
+        c.last_view,
+        p_now
+      FROM calculated c
+      ON CONFLICT (aid) DO UPDATE SET
+        latest_daily_delta     = EXCLUDED.latest_daily_delta,
+        weekly_avg_daily_delta = EXCLUDED.weekly_avg_daily_delta,
+        daily_delta_source = CASE
+          WHEN EXCLUDED.latest_daily_delta IS NULL
+           AND EXCLUDED.weekly_avg_daily_delta IS NULL
+          THEN video_collection_state.daily_delta_source
+          ELSE EXCLUDED.daily_delta_source
+        END,
+        priority = CASE
+          WHEN video_collection_state.priority = -1 THEN -1
+          ELSE EXCLUDED.priority
+        END,
+        next_minute_due_at = CASE
+          WHEN video_collection_state.priority = -1 THEN NULL
+          WHEN EXCLUDED.priority > 0
+           AND (video_collection_state.next_minute_due_at IS NULL
+             OR video_collection_state.priority IS DISTINCT FROM EXCLUDED.priority)
+          THEN EXCLUDED.next_minute_due_at
+          WHEN EXCLUDED.priority > 0 THEN video_collection_state.next_minute_due_at
+          ELSE NULL
+        END,
+        bootstrap_until = CASE
+          WHEN EXCLUDED.latest_daily_delta IS NOT NULL
+            OR EXCLUDED.weekly_avg_daily_delta IS NOT NULL
+          THEN NULL
+          ELSE video_collection_state.bootstrap_until
+        END,
+        last_daily_record_date = EXCLUDED.last_daily_record_date,
+        last_view              = EXCLUDED.last_view,
+        updated_at             = p_now;
 
+      GET DIAGNOSTICS changed_count = ROW_COUNT;
       RETURN changed_count;
     END;
-    $$ LANGUAGE plpgsql
+    $$ LANGUAGE plpgsql PARALLEL SAFE
   `);
 
   await pool.query(`
@@ -345,12 +327,15 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       has_existing := found;
 
       IF p_is_deleted IS TRUE THEN
-        UPDATE video_collection_state
-        SET priority = -1,
-            next_minute_due_at = NULL,
-            updated_at = p_now
-        WHERE aid = p_aid;
-        RETURN CASE WHEN found THEN 'disabled_deleted' ELSE 'ignored_deleted' END;
+        IF has_existing THEN
+          UPDATE video_collection_state
+          SET priority = -1,
+              next_minute_due_at = NULL,
+              updated_at = p_now
+          WHERE aid = p_aid;
+          RETURN 'disabled_deleted';
+        END IF;
+        RETURN 'ignored_deleted';
       END IF;
 
       IF has_existing AND existing_priority = -1 THEN
@@ -358,12 +343,15 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       END IF;
 
       IF p_is_filtered IS FALSE THEN
-        UPDATE video_collection_state
-        SET priority = -1,
-            next_minute_due_at = NULL,
-            updated_at = p_now
-        WHERE aid = p_aid;
-        RETURN CASE WHEN found THEN 'disabled_filtered_out' ELSE 'ignored_filtered_out' END;
+        IF has_existing THEN
+          UPDATE video_collection_state
+          SET priority = -1,
+              next_minute_due_at = NULL,
+              updated_at = p_now
+          WHERE aid = p_aid;
+          RETURN 'disabled_filtered_out';
+        END IF;
+        RETURN 'ignored_filtered_out';
       END IF;
 
       has_formal_label_input :=
@@ -386,12 +374,15 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       should_track := COALESCE(formal_label_pass OR fallback_pass, false);
 
       IF has_complete_formal_label_input AND NOT formal_label_pass THEN
-        UPDATE video_collection_state
-        SET priority = -1,
-            next_minute_due_at = NULL,
-            updated_at = p_now
-        WHERE aid = p_aid;
-        RETURN CASE WHEN found THEN 'disabled_label_demotion' ELSE 'ignored_label_demotion' END;
+        IF has_existing THEN
+          UPDATE video_collection_state
+          SET priority = -1,
+              next_minute_due_at = NULL,
+              updated_at = p_now
+          WHERE aid = p_aid;
+          RETURN 'disabled_label_demotion';
+        END IF;
+        RETURN 'ignored_label_demotion';
       END IF;
 
       IF NOT should_track THEN
@@ -399,7 +390,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       END IF;
 
       SELECT EXISTS (
-        SELECT 1 FROM video_daily WHERE aid = p_aid LIMIT 1
+        SELECT 1 FROM video_daily WHERE aid = p_aid
       ) INTO has_daily_history;
 
       IF has_daily_history THEN
@@ -502,20 +493,6 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         FROM new_video_minute_rows
         ORDER BY aid, "time" DESC
       ),
-      previous_rows AS (
-        SELECT
-          l.aid,
-          prev."view"::bigint AS previous_view
-        FROM latest_rows l
-        LEFT JOIN LATERAL (
-          SELECT vm."view"
-          FROM video_minute vm
-          WHERE vm.aid = l.aid
-            AND vm."time" < l."time"
-          ORDER BY vm."time" DESC
-          LIMIT 1
-        ) prev ON true
-      ),
       computed AS (
         SELECT
           s.aid,
@@ -533,7 +510,14 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           END AS next_priority
         FROM video_collection_state s
         JOIN latest_rows l ON l.aid = s.aid
-        LEFT JOIN previous_rows p ON p.aid = l.aid
+        LEFT JOIN LATERAL (
+          SELECT vm."view"::bigint AS previous_view
+          FROM video_minute vm
+          WHERE vm.aid = l.aid
+            AND vm."time" < l."time"
+          ORDER BY vm."time" DESC
+          LIMIT 1
+        ) p ON true
       )
       UPDATE video_collection_state s
       SET last_minute_success_at = c."time",
