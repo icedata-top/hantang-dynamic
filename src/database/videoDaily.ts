@@ -33,41 +33,34 @@ export async function getDailyCollectionCandidates(
 ): Promise<DailyCollectionCandidate[]> {
   const result = await pool.query(
     `
-    WITH business_day AS (
-      SELECT ($1::timestamptz AT TIME ZONE $2)::date AS today
+    WITH target_dates AS (
+      SELECT
+        ($1::timestamptz AT TIME ZONE $2)::date AS today,
+        (($1::timestamptz AT TIME ZONE $2)::date - 1) AS yesterday,
+        (($1::timestamptz AT TIME ZONE $2)::date - 7) AS seven_days_ago
     ),
-    latest AS (
-      SELECT DISTINCT ON (vd.aid)
+    current_rows AS (
+      SELECT
         vd.aid,
-        vd.record_date,
         vd."view"::bigint AS current_view
       FROM video_daily vd
-      JOIN business_day bd ON vd.record_date < bd.today
-      ORDER BY vd.aid, vd.record_date DESC
+      JOIN target_dates td ON vd.record_date = td.today
     ),
     measured AS (
       SELECT
-        l.aid,
-        l.record_date,
-        l.current_view,
-        prev."view"::bigint AS previous_view,
+        c.aid,
+        td.today AS record_date,
+        c.current_view,
+        yesterday."view"::bigint AS previous_view,
         seven."view"::bigint AS seven_day_view
-      FROM latest l
-      LEFT JOIN LATERAL (
-        SELECT vd."view"
-        FROM video_daily vd
-        WHERE vd.aid = l.aid
-          AND vd.record_date < l.record_date
-        ORDER BY vd.record_date DESC
-        LIMIT 1
-      ) prev ON true
-      LEFT JOIN LATERAL (
-        SELECT vd."view"
-        FROM video_daily vd
-        WHERE vd.aid = l.aid
-          AND vd.record_date = l.record_date - 7
-        LIMIT 1
-      ) seven ON true
+      FROM current_rows c
+      CROSS JOIN target_dates td
+      LEFT JOIN video_daily yesterday
+        ON yesterday.aid = c.aid
+       AND yesterday.record_date = td.yesterday
+      LEFT JOIN video_daily seven
+        ON seven.aid = c.aid
+       AND seven.record_date = td.seven_days_ago
     )
     SELECT
       m.aid,
