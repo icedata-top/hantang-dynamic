@@ -42,6 +42,12 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_video_collection_queue_cleanup
+    ON video_collection_queue(updated_at)
+    WHERE status IN ('completed', 'abandoned')
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS video_collection_gate_crossings (
       id bigserial PRIMARY KEY,
       aid bigint NOT NULL,
