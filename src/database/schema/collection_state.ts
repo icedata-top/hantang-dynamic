@@ -138,48 +138,35 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     DECLARE
       changed_count integer;
     BEGIN
-      WITH business_day AS (
-        SELECT (p_now AT TIME ZONE p_business_timezone)::date AS today
+      WITH target_dates AS (
+        SELECT
+          (p_now AT TIME ZONE p_business_timezone)::date AS today,
+          ((p_now AT TIME ZONE p_business_timezone)::date - 1) AS yesterday,
+          ((p_now AT TIME ZONE p_business_timezone)::date - 7) AS seven_days_ago
       ),
-      source_aids AS (
-        SELECT DISTINCT vd.aid
-        FROM video_daily vd, business_day bd
-        WHERE vd.record_date < bd.today
-          AND (p_aids IS NULL OR vd.aid = ANY(p_aids))
-      ),
-      latest AS (
-        SELECT DISTINCT ON (vd.aid)
+      current_rows AS (
+        SELECT
           vd.aid,
-          vd.record_date,
           vd."view"::bigint AS current_view
         FROM video_daily vd
-        JOIN source_aids sa ON sa.aid = vd.aid
-        JOIN business_day bd ON vd.record_date < bd.today
-        ORDER BY vd.aid, vd.record_date DESC
+        JOIN target_dates td ON vd.record_date = td.today
+        WHERE p_aids IS NULL OR vd.aid = ANY(p_aids)
       ),
       measured AS (
         SELECT
-          l.aid,
-          l.record_date,
-          l.current_view,
-          prev."view"::bigint AS previous_view,
+          c.aid,
+          td.today AS record_date,
+          c.current_view,
+          yesterday."view"::bigint AS previous_view,
           seven."view"::bigint AS seven_day_view
-        FROM latest l
-        LEFT JOIN LATERAL (
-          SELECT vd."view"
-          FROM video_daily vd
-          WHERE vd.aid = l.aid
-            AND vd.record_date < l.record_date
-          ORDER BY vd.record_date DESC
-          LIMIT 1
-        ) prev ON true
-        LEFT JOIN LATERAL (
-          SELECT vd."view"
-          FROM video_daily vd
-          WHERE vd.aid = l.aid
-            AND vd.record_date = l.record_date - 7
-          LIMIT 1
-        ) seven ON true
+        FROM current_rows c
+        CROSS JOIN target_dates td
+        LEFT JOIN video_daily yesterday
+          ON yesterday.aid = c.aid
+         AND yesterday.record_date = td.yesterday
+        LEFT JOIN video_daily seven
+          ON seven.aid = c.aid
+         AND seven.record_date = td.seven_days_ago
       ),
       calculated AS (
         SELECT
@@ -293,23 +280,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
   `);
 
   await pool.query(`
-    CREATE OR REPLACE FUNCTION fn_refresh_video_collection_state_from_daily(
-      p_aids bigint[],
-      p_now timestamptz
-    ) RETURNS integer AS $$
-    BEGIN
-      RETURN fn_refresh_video_collection_state_from_daily(
-        p_aids,
-        p_now,
-        ${config.minute.targetDeltaPerSample},
-        ${config.minute.targetDeltaLower},
-        ${config.minute.targetDeltaUpper},
-        ${config.minute.minPositivePriority},
-        ${config.minute.maxPositivePriority},
-        '${sqlText(config.minute.collectionBusinessTimezone)}'
-      );
-    END;
-    $$ LANGUAGE plpgsql
+    DROP FUNCTION IF EXISTS fn_refresh_video_collection_state_from_daily(bigint[], timestamptz)
   `);
 
   await pool.query(`
