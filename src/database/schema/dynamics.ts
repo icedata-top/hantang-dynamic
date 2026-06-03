@@ -18,16 +18,17 @@ export async function initDynamicsSchema(pool: Pool): Promise<void> {
     )
   `);
 
-  // Safe to re-run: drop NOT NULL on columns that may have been created strict in a prior version
-  await pool.query(`ALTER TABLE dynamics ALTER COLUMN user_id DROP NOT NULL`);
-  await pool.query(`ALTER TABLE dynamics ALTER COLUMN timestamp DROP NOT NULL`);
-
-  // Add title column for article dynamics (type=64)
-  await pool.query(`ALTER TABLE dynamics ADD COLUMN IF NOT EXISTS title TEXT`);
-
-  // Drop card and extend_json columns (no longer stored)
-  await pool.query(`ALTER TABLE dynamics DROP COLUMN IF EXISTS card`);
-  await pool.query(`ALTER TABLE dynamics DROP COLUMN IF EXISTS extend_json`);
+  await pool.query(`
+    DO $$
+    BEGIN
+      ALTER TABLE dynamics ALTER COLUMN user_id DROP NOT NULL;
+      ALTER TABLE dynamics ALTER COLUMN timestamp DROP NOT NULL;
+      ALTER TABLE dynamics ADD COLUMN IF NOT EXISTS title TEXT;
+      ALTER TABLE dynamics DROP COLUMN IF EXISTS card;
+      ALTER TABLE dynamics DROP COLUMN IF EXISTS extend_json;
+    END;
+    $$
+  `);
 
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_dynamics_user_id

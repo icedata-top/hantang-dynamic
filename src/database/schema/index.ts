@@ -25,22 +25,31 @@ export async function initializeSchema(
   logger.info("Initializing database schema");
 
   await initFunctionsSchema(pool);
-  await initVideosSchema(pool);
-  await initDynamicsSchema(pool);
-  await initRecommendationsSchema(pool);
-  await initUsersSchema(pool);
-  await initVideoHistorySchema(pool);
-  await initUserHistorySchema(pool);
-  await initVideoDailySchema(pool);
-  await initVideoDailyLatestSchema(pool);
-  await initVideoMinuteSchema(pool);
-  await initVideoStaticSchema(pool);
-  await initCollectionStateSchema(pool);
-  await initCollectionQueueSchema(pool);
-  await initCronVideoDaily(pool, schema);
-  await initCronVideoDailyLatest(pool, schema);
-  await initCronVideoStatic(pool, schema);
-  await initCronUserStats(pool, schema);
+
+  await Promise.all([
+    initVideosSchema(pool),
+    initDynamicsSchema(pool),
+    initUsersSchema(pool),
+    initVideoDailySchema(pool),
+    initVideoDailyLatestSchema(pool),
+    initVideoMinuteSchema(pool),
+    initVideoStaticSchema(pool),
+  ]);
+
+  await Promise.all([
+    initRecommendationsSchema(pool),
+    initVideoHistorySchema(pool),
+    initUserHistorySchema(pool),
+    initCollectionStateSchema(pool),
+  ]);
+
+  await Promise.all([
+    initCollectionQueueSchema(pool),
+    initCronVideoDaily(pool, schema),
+    initCronVideoDailyLatest(pool, schema),
+    initCronVideoStatic(pool, schema),
+    initCronUserStats(pool, schema),
+  ]);
 
   logger.info("Database schema initialized");
 }

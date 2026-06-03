@@ -47,11 +47,8 @@ export async function initRecommendationsSchema(pool: Pool): Promise<void> {
     END $$
   `);
 
-  // Create indexes after migration so video_aid is guaranteed to exist
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_rec_video
-    ON recommendations(video_aid)
-  `);
+  await pool.query(`DROP INDEX IF EXISTS idx_rec_video`);
+
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_rec_count
     ON recommendations(recommend_count DESC)

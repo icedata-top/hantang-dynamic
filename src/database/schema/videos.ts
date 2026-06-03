@@ -28,14 +28,9 @@ export async function initVideosSchema(pool: Pool): Promise<void> {
     )
   `);
 
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_processed_bvid
-    ON processed_videos(bvid)
-  `);
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_processed_user
-    ON processed_videos(user_id)
-  `);
+  await pool.query(`DROP INDEX IF EXISTS idx_processed_bvid`);
+  await pool.query(`DROP INDEX IF EXISTS idx_processed_user`);
+
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_processed_filtered
     ON processed_videos(is_filtered)

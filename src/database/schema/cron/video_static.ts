@@ -21,18 +21,21 @@ export async function initCronVideoStatic(
         '0 * * * *',
         $$
         SET search_path TO "${schema}";
+        WITH changed AS (
+          SELECT m.*
+          FROM "${schema}".mysql_video_static m
+          WHERE NOT EXISTS (
+            SELECT 1 FROM "${schema}".video_static v
+            WHERE v.aid      = m.aid
+              AND v.title    = m.title
+              AND v.priority IS NOT DISTINCT FROM m.priority
+          )
+        )
         INSERT INTO "${schema}".video_static
           (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id, priority, updated_at)
         SELECT
           aid, av2bv(aid), to_timestamp(pubdate), title, description, tag, pic, type_id, user_id, priority, now()
-        FROM "${schema}".mysql_video_static m
-        WHERE NOT EXISTS (
-          SELECT 1 FROM "${schema}".video_static v
-          WHERE v.aid      = m.aid
-            AND v.bvid     = av2bv(m.aid)
-            AND v.title    = m.title
-            AND v.priority IS NOT DISTINCT FROM m.priority
-        )
+        FROM changed
         ON CONFLICT (aid) DO UPDATE SET
           bvid        = EXCLUDED.bvid,
           pubdate     = EXCLUDED.pubdate,
