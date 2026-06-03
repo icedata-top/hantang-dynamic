@@ -144,29 +144,47 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           ((p_now AT TIME ZONE p_business_timezone)::date - 1) AS yesterday,
           ((p_now AT TIME ZONE p_business_timezone)::date - 7) AS seven_days_ago
       ),
-      current_rows AS (
+      target_date_values AS (
+        SELECT today AS record_date, 'today'::text AS date_role FROM target_dates
+        UNION ALL
+        SELECT yesterday, 'yesterday'::text FROM target_dates
+        UNION ALL
+        SELECT seven_days_ago, 'seven_days_ago'::text FROM target_dates
+      ),
+      daily_window AS (
         SELECT
           vd.aid,
-          vd."view"::bigint AS current_view
+          tdv.date_role,
+          vd."view"::bigint AS view_count
         FROM video_daily vd
-        JOIN target_dates td ON vd.record_date = td.today
-        WHERE p_aids IS NULL OR vd.aid = ANY(p_aids)
+        JOIN target_date_values tdv ON tdv.record_date = vd.record_date
+        WHERE p_aids IS NULL
+        UNION ALL
+        SELECT
+          vd.aid,
+          tdv.date_role,
+          vd."view"::bigint AS view_count
+        FROM (
+          SELECT DISTINCT requested_aid AS aid
+          FROM unnest(p_aids) AS requested_aids(requested_aid)
+        ) requested
+        CROSS JOIN target_date_values tdv
+        JOIN video_daily vd
+          ON vd.aid = requested.aid
+         AND vd.record_date = tdv.record_date
+        WHERE p_aids IS NOT NULL
       ),
       measured AS (
         SELECT
-          c.aid,
+          dw.aid,
           td.today AS record_date,
-          c.current_view,
-          yesterday."view"::bigint AS previous_view,
-          seven."view"::bigint AS seven_day_view
-        FROM current_rows c
+          max(dw.view_count) FILTER (WHERE dw.date_role = 'today') AS current_view,
+          max(dw.view_count) FILTER (WHERE dw.date_role = 'yesterday') AS previous_view,
+          max(dw.view_count) FILTER (WHERE dw.date_role = 'seven_days_ago') AS seven_day_view
+        FROM daily_window dw
         CROSS JOIN target_dates td
-        LEFT JOIN video_daily yesterday
-          ON yesterday.aid = c.aid
-         AND yesterday.record_date = td.yesterday
-        LEFT JOIN video_daily seven
-          ON seven.aid = c.aid
-         AND seven.record_date = td.seven_days_ago
+        GROUP BY dw.aid, td.today
+        HAVING max(dw.view_count) FILTER (WHERE dw.date_role = 'today') IS NOT NULL
       ),
       calculated AS (
         SELECT
