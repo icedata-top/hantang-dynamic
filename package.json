@@ -1,6 +1,6 @@
 {
   "name": "bilibili-dynamic-subscribe",
-  "version": "5.0.2",
+  "version": "5.0.3",
   "main": "dist/index.js",
   "scripts": {
     "build": "ncc build src/index.ts -o dist",

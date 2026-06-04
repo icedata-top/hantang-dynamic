@@ -31,7 +31,7 @@ export class MinuteHandler {
     if (this.loopPromise) return;
     this.isRunning = true;
     this.abortController = new AbortController();
-    this.loopPromise = this.loop();
+    this.loopPromise = this.loop(this.abortController.signal);
     logger.info("Adaptive minute handler started (dynamic sleep)");
   }
 
@@ -51,8 +51,7 @@ export class MinuteHandler {
    * No fixed tick interval — wakes exactly when the next video is due.
    * Single-consumer by design — no row locking needed.
    */
-  private async loop(): Promise<void> {
-    const signal = this.abortController!.signal;
+  private async loop(signal: AbortSignal): Promise<void> {
     while (this.isRunning) {
       try {
         const processed = await this.tick();

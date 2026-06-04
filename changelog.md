@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.0.3
+
+refactor: reactive gate detection and queue elimination
+fix: near-gate boost, daily crossings, and cron handling
+
 ## 5.0.2
 
 fix: handle unavailable forwarded dynamics returned as HTTP 404
