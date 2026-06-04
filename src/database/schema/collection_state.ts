@@ -237,7 +237,11 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           fn_video_collection_crossed_gate_value(m.previous_view, m.current_view) AS crossed_gate
         FROM measured m
       ),
-      -- Record daily-level gate crossings for non-minute-sampled videos
+      -- Record daily-level gate crossings.
+      -- For minute-sampled videos the minute trigger usually records crossings
+      -- first; ON CONFLICT (aid, gate_value) DO NOTHING deduplicates.
+      -- No JOIN on video_collection_state — the state row may not exist yet
+      -- for new videos (the main INSERT below creates it).
       daily_crossings AS (
         INSERT INTO video_collection_gate_crossings (
           aid, gate_value, previous_view, current_view, crossed_at
@@ -249,11 +253,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           c.last_view,
           p_now
         FROM calculated c
-        JOIN video_collection_state s ON s.aid = c.aid
         WHERE c.crossed_gate IS NOT NULL
-          -- Only record for non-minute-sampled videos; minute-sampled ones
-          -- get crossings detected in the video_minute trigger instead
-          AND (s.priority <= 0 OR s.next_minute_due_at IS NULL)
         ON CONFLICT (aid, gate_value) DO NOTHING
         RETURNING aid
       )
@@ -611,11 +611,11 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
               WHEN s.priority > 0 THEN least(s.priority, ${config.minute.minuteBurstPriority})
               ELSE ${config.minute.minuteBurstPriority}
             END
-            -- Near-gate boost: within 10% of gate step from next gate
+            -- Near-gate boost: within min(10% of gate step, 250 views) from next gate
             WHEN s.next_gate_value IS NOT NULL
              AND l.latest_view < s.next_gate_value
              AND s.next_gate_value - l.latest_view <=
-                 greatest(fn_video_collection_gate_step(l.latest_view) / 10, 50)
+                 least(fn_video_collection_gate_step(l.latest_view) / 10, 250)
              AND s.priority > ${config.minute.minuteBurstPriority}
             THEN ${config.minute.minuteBurstPriority}
             ELSE s.priority
