@@ -543,6 +543,10 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
   // Replaces the enqueue→claim→ack/fail cycle on video_collection_queue.
   // Single consumer + reactive gate triggers make the queue unnecessary.
 
+  // Select videos due for minute sampling. Returns (aid, last_view) for
+  // handler-side dedup (skip INSERT when view count hasn't changed).
+  // Single-consumer architecture: no row locking (FOR UPDATE SKIP LOCKED)
+  // needed — only one handler instance runs at a time.
   await pool.query(`
     CREATE OR REPLACE FUNCTION fn_select_due_minute_videos(
       p_now timestamptz DEFAULT now(),
@@ -754,13 +758,6 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
                 greatest(c.gate_dist / c.delta * c.sample_secs / 3, 5),
                 c.next_priority * 60
               ) * interval '1 second'
-
-            -- Near gate + delta=0 (B站 75s refresh window):
-            -- maintain previous interval if we were in approach mode (< 2 min)
-            WHEN c.gate_dist IS NOT NULL
-             AND c.delta = 0
-             AND c.sample_secs > 0 AND c.sample_secs < 120
-            THEN c."time" + c.sample_secs * interval '1 second'
 
             -- Normal schedule from priority
             ELSE c."time" + make_interval(mins => c.next_priority)

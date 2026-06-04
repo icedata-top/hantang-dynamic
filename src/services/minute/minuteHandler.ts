@@ -10,15 +10,14 @@ const MIN_SLEEP_MS = 100;
 function cancellableSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     if (signal.aborted) return resolve();
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
+    const onDone = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onDone);
+      resolve();
+    };
+    const timer = setTimeout(onDone, ms);
+    signal.addEventListener("abort", onDone, { once: true });
+    if (signal.aborted) onDone();
   });
 }
 
@@ -50,7 +49,7 @@ export class MinuteHandler {
   /**
    * Main loop: process due aids, then sleep until the next due time.
    * No fixed tick interval — wakes exactly when the next video is due.
-   * Latency = DB query (~0.1ms) + sleep precision (~10ms).
+   * Single-consumer by design — no row locking needed.
    */
   private async loop(): Promise<void> {
     const signal = this.abortController?.signal;
