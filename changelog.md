@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.0.1
+
+perf: improve SQL efficiency for collection state refresh and queue processing
+fix: refine collection queue handling after SQL optimization
+
 ## 2.0
 
 Refactor all code
