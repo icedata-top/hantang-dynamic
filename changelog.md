@@ -1,5 +1,9 @@
 # Changelog
 
+## 5.0.7
+
+perf: floor minute sampling cadence and keep normal scheduling grid-aligned
+
 ## 5.0.6
 
 perf: batch non-gate minute sampling while preserving near-gate latency
