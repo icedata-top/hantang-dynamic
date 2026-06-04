@@ -61,6 +61,18 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     ADD COLUMN IF NOT EXISTS last_view_change_at timestamptz
   `);
 
+  // B站 view counters refresh roughly every 75 s (varies 60-90 s).
+  // Polling faster than that just retrieves stale values, so the effective
+  // base interval is floored to 75 s.  Only affects priority = 1
+  // (60 s → 75 s); priority ≥ 2 (120 s) already exceeds the floor.
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_video_collection_interval_secs(
+      p_priority integer
+    ) RETURNS integer AS $$
+      SELECT greatest(p_priority * 60, 75)
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE
+  `);
+
   await pool.query(`
     CREATE OR REPLACE FUNCTION fn_video_collection_next_due_at(
       p_aid bigint,
@@ -71,12 +83,13 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         WHEN p_priority IS NULL OR p_priority <= 0 THEN NULL
         ELSE (
           SELECT CASE WHEN cand < p_now
-            THEN cand + make_interval(mins => p_priority)
+            THEN cand + make_interval(secs => fn_video_collection_interval_secs(p_priority))
             ELSE cand
           END
           FROM (
             SELECT to_timestamp(
-              floor(extract(epoch FROM p_now) / (p_priority * 60)) * (p_priority * 60)
+              floor(extract(epoch FROM p_now) / fn_video_collection_interval_secs(p_priority))
+                * fn_video_collection_interval_secs(p_priority)
             ) + make_interval(mins => (abs(p_aid) % p_priority)::integer) AS cand
           ) t
         )
@@ -572,15 +585,17 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
 
       RETURN QUERY
       SELECT s.aid, s.last_view,
-        -- A video is "near gate" (time-critical) when its actual polling
-        -- interval has been compressed below 60 s by gate-proximity
-        -- acceleration or burst-mode scheduling.  The 60 s threshold means
-        -- the 30 s batch timeout would exceed 50 % of the interval.
-        -- First-ever samples (last_minute_success_at IS NULL) are never
-        -- time-critical: they have no acceleration history.
+        -- A video is "near gate" (time-critical) when its actual scheduled
+        -- interval has been compressed below its normal priority-based
+        -- interval (priority × 60 s).  Gate-proximity acceleration and
+        -- burst-mode are the only code paths that shorten the interval
+        -- below that baseline, so this test is equivalent to "the system
+        -- is actively accelerating this video toward a gate crossing."
+        -- First-ever samples (last_minute_success_at IS NULL) have no
+        -- acceleration history and are never time-critical.
         (s.last_minute_success_at IS NOT NULL
           AND extract(epoch from s.next_minute_due_at - s.last_minute_success_at)
-            BETWEEN 0 AND 60
+              BETWEEN 0 AND fn_video_collection_interval_secs(s.priority) - 1
         ) AS near_gate,
         s.next_minute_due_at AS due_at
       FROM video_collection_state s
@@ -607,7 +622,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
             s.priority,
             greatest(
               p_now + interval '1 second',
-              s.next_minute_due_at + make_interval(mins => s.priority)
+              s.next_minute_due_at + make_interval(secs => fn_video_collection_interval_secs(s.priority))
             )
           ),
           updated_at = p_now
@@ -640,7 +655,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           COALESCE(extract(epoch from p_now - s.last_view_change_at), 9999)::numeric
             AS secs_since_change,
           greatest(
-            COALESCE(extract(epoch from p_now - s.last_minute_success_at), s.priority * 60),
+            COALESCE(extract(epoch from p_now - s.last_minute_success_at), fn_video_collection_interval_secs(s.priority)),
             5
           )::numeric
             AS maintain_secs,
@@ -766,17 +781,20 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
             WHEN c.next_priority <= 0 THEN NULL
 
             -- Near gate + observed growth → progressive acceleration
-            -- interval = est_seconds_to_gate / 3, clamped to [5s, priority]
+            -- interval = est_seconds_to_gate / 3, clamped to [5s, priority interval]
             WHEN c.gate_dist IS NOT NULL
              AND c.delta > 0
              AND c.sample_secs > 0
             THEN c."time" + least(
                 greatest(c.gate_dist / c.delta * c.sample_secs / 3, 5),
-                c.next_priority * 60
+                fn_video_collection_interval_secs(c.next_priority)
               ) * interval '1 second'
 
-            -- Normal schedule from priority
-            ELSE c."time" + make_interval(mins => c.next_priority)
+            -- Normal schedule: find the next grid-aligned slot strictly after
+            -- the sample time.  This avoids two problems at once:
+            --   • batch-accumulation delay does not cascade (grid is fixed)
+            --   • handler outage does not cause catch-up storms (skips ahead)
+            ELSE fn_video_collection_next_due_at(s.aid, c.next_priority, c."time" + interval '1 second')
           END,
           next_gate_value = c.new_next_gate,
           updated_at = now()

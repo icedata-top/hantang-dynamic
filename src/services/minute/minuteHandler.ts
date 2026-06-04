@@ -54,7 +54,7 @@ export class MinuteHandler {
    * Non-gate videos are held until one of three flush triggers fires:
    *   1. A near-gate video appears among the due set
    *   2. The due set reaches {@link config.minute.claimBatchSize} (SELECT limit)
-   *   3. The earliest pending video is overdue by ≥ {@link BATCH_TIMEOUT_MS}
+   *   3. The earliest pending video has been due for ≥ {@link BATCH_TIMEOUT_MS}
    *
    * Gate videos cause an immediate flush of the entire due set (including any
    * non-gate videos that have accumulated), so gate latency stays minimal.
@@ -84,10 +84,9 @@ export class MinuteHandler {
         const hasGate = due.some((d) => d.nearGate);
         const isFull = due.length >= config.minute.claimBatchSize;
         const earliestDueAt = Math.min(...due.map((d) => d.dueAt.getTime()));
-        const overdueLongEnough =
-          Date.now() - earliestDueAt >= BATCH_TIMEOUT_MS;
+        const waitedLongEnough = Date.now() - earliestDueAt >= BATCH_TIMEOUT_MS;
 
-        if (hasGate || isFull || overdueLongEnough) {
+        if (hasGate || isFull || waitedLongEnough) {
           if (hasGate) {
             logger.debug(`Minute batch flush: gate (${due.length} video(s))`);
           } else if (isFull) {
