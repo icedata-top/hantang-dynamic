@@ -113,9 +113,11 @@ export async function selectDueMinuteVideos(
   pool: Pool,
   limit = 50,
   now = new Date(),
-): Promise<{ aid: bigint; lastView: bigint | null }[]> {
+): Promise<
+  { aid: bigint; lastView: bigint | null; nearGate: boolean; dueAt: Date }[]
+> {
   const result = await pool.query(
-    "SELECT aid, last_view FROM fn_select_due_minute_videos($1, $2)",
+    "SELECT aid, last_view, near_gate, due_at FROM fn_select_due_minute_videos($1, $2)",
     [now, limit],
   );
   return result.rows.map((row: Record<string, unknown>) => ({
@@ -124,6 +126,8 @@ export async function selectDueMinuteVideos(
       row.last_view === null || row.last_view === undefined
         ? null
         : BigInt(row.last_view as string | number),
+    nearGate: row.near_gate as boolean,
+    dueAt: new Date(row.due_at as string | number),
   }));
 }
 

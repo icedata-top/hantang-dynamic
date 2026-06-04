@@ -369,7 +369,9 @@ export class Database {
   public async selectDueMinuteVideos(
     limit?: number,
     now?: Date,
-  ): Promise<{ aid: bigint; lastView: bigint | null }[]> {
+  ): Promise<
+    { aid: bigint; lastView: bigint | null; nearGate: boolean; dueAt: Date }[]
+  > {
     return selectDueMinuteVideos(this.ensurePool(), limit, now);
   }
 

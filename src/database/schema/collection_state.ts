@@ -526,8 +526,8 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     $$ LANGUAGE plpgsql
   `);
 
-  // For the dynamic-sleep handler loop: find the nearest due time.
-  // Returns NULL if no active videos exist.
+  // For the dynamic-sleep handler loop: find the nearest *future* due time.
+  // Returns NULL if no active videos exist (or all are already past-due).
   await pool.query(`
     CREATE OR REPLACE FUNCTION fn_next_minute_due_at(
       p_now timestamptz DEFAULT now()
@@ -536,6 +536,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       FROM video_collection_state
       WHERE priority > 0
         AND next_minute_due_at IS NOT NULL
+        AND next_minute_due_at > p_now
     $$ LANGUAGE sql STABLE
   `);
 
@@ -543,15 +544,19 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
   // Replaces the enqueue→claim→ack/fail cycle on video_collection_queue.
   // Single consumer + reactive gate triggers make the queue unnecessary.
 
-  // Select videos due for minute sampling. Returns (aid, last_view) for
-  // handler-side dedup (skip INSERT when view count hasn't changed).
-  // Single-consumer architecture: no row locking (FOR UPDATE SKIP LOCKED)
-  // needed — only one handler instance runs at a time.
+  // Select videos due for minute sampling.
+  // Returns (aid, last_view, near_gate, due_at) — the handler uses near_gate
+  // and due_at to implement batch-accumulation: non-gate videos are held
+  // until the batch is full (50), 30 s have elapsed, or a gate video appears.
+  // Single-consumer architecture: no row locking needed.
+  await pool.query(`
+    DROP FUNCTION IF EXISTS fn_select_due_minute_videos(timestamptz, integer)
+  `);
   await pool.query(`
     CREATE OR REPLACE FUNCTION fn_select_due_minute_videos(
       p_now timestamptz DEFAULT now(),
       p_limit integer DEFAULT 50
-    ) RETURNS TABLE (aid bigint, last_view bigint) AS $$
+    ) RETURNS TABLE (aid bigint, last_view bigint, near_gate boolean, due_at timestamptz) AS $$
     BEGIN
       -- Expire bootstrap entries that never got daily data
       UPDATE video_collection_state
@@ -566,7 +571,18 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         AND weekly_avg_daily_delta IS NULL;
 
       RETURN QUERY
-      SELECT s.aid, s.last_view
+      SELECT s.aid, s.last_view,
+        -- A video is "near gate" (time-critical) when its actual polling
+        -- interval has been compressed below 60 s by gate-proximity
+        -- acceleration or burst-mode scheduling.  The 60 s threshold means
+        -- the 30 s batch timeout would exceed 50 % of the interval.
+        -- First-ever samples (last_minute_success_at IS NULL) are never
+        -- time-critical: they have no acceleration history.
+        (s.last_minute_success_at IS NOT NULL
+          AND extract(epoch from s.next_minute_due_at - s.last_minute_success_at)
+            BETWEEN 0 AND 60
+        ) AS near_gate,
+        s.next_minute_due_at AS due_at
       FROM video_collection_state s
       WHERE s.priority > 0
         AND s.next_minute_due_at IS NOT NULL
