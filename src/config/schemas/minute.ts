@@ -7,11 +7,8 @@ const configBoolean = z.preprocess((value) => {
 
 export const minuteSchema = z.object({
   enabled: configBoolean.default(false),
-  consumerTickMs: z.coerce.number().int().positive().default(60_000),
   claimBatchSize: z.coerce.number().int().positive().default(50),
   batchSize: z.coerce.number().int().positive().default(50),
-  lockDurationSeconds: z.coerce.number().int().positive().default(30),
-  maxAttempts: z.coerce.number().int().positive().default(5),
   targetDeltaPerSample: z.coerce.number().int().positive().default(100),
   targetDeltaLower: z.coerce.number().int().positive().default(50),
   targetDeltaUpper: z.coerce.number().int().positive().default(200),
@@ -29,8 +26,6 @@ export const minuteSchema = z.object({
   bootstrapTidV2Allowlist: z
     .array(z.coerce.number().int())
     .default([2022, 2061]),
-  weeklyZeroDeltaDays: z.coerce.number().int().positive().default(7),
-  weeklyDailyPriority: z.literal(-2).default(-2),
   minuteBurstDeltaThreshold: z.coerce.number().int().positive().default(500),
   minuteBurstPriority: z.coerce.number().int().positive().default(1),
   processedBackfillNewVideoAgeDays: z.coerce
@@ -38,9 +33,6 @@ export const minuteSchema = z.object({
     .int()
     .positive()
     .default(7),
-  gateLeadTimeMinutes: z.coerce.number().int().positive().default(30),
-  gateMinLeadRatio: z.coerce.number().positive().default(0.1),
-  gateMaxLeadViews: z.coerce.number().int().positive().default(500),
   collectionBusinessTimezone: z.string().default("Asia/Shanghai"),
 });
 
@@ -57,11 +49,6 @@ export function createMinuteConfig(
 ): MinuteConfig {
   const raw = {
     enabled: getConfigValue(["minute", "enabled"], "MINUTE_ENABLED", false),
-    consumerTickMs: getConfigValue(
-      ["minute", "consumer_tick_ms"],
-      "MINUTE_CONSUMER_TICK_MS",
-      60_000,
-    ),
     claimBatchSize: getConfigValue(
       ["minute", "claim_batch_size"],
       "MINUTE_CLAIM_BATCH_SIZE",
@@ -71,16 +58,6 @@ export function createMinuteConfig(
       ["minute", "batch_size"],
       "MINUTE_BATCH_SIZE",
       50,
-    ),
-    lockDurationSeconds: getConfigValue(
-      ["minute", "lock_duration_seconds"],
-      "MINUTE_LOCK_DURATION_SECONDS",
-      30,
-    ),
-    maxAttempts: getConfigValue(
-      ["minute", "max_attempts"],
-      "MINUTE_MAX_ATTEMPTS",
-      5,
     ),
     targetDeltaPerSample: getConfigValue(
       ["minute", "target_delta_per_sample"],
@@ -137,16 +114,6 @@ export function createMinuteConfig(
       "MINUTE_BOOTSTRAP_TID_V2_ALLOWLIST",
       [2022, 2061],
     ),
-    weeklyZeroDeltaDays: getConfigValue(
-      ["minute", "weekly_zero_delta_days"],
-      "MINUTE_WEEKLY_ZERO_DELTA_DAYS",
-      7,
-    ),
-    weeklyDailyPriority: getConfigValue(
-      ["minute", "weekly_daily_priority"],
-      "MINUTE_WEEKLY_DAILY_PRIORITY",
-      -2,
-    ),
     minuteBurstDeltaThreshold: getConfigValue(
       ["minute", "minute_burst_delta_threshold"],
       "MINUTE_BURST_DELTA_THRESHOLD",
@@ -161,21 +128,6 @@ export function createMinuteConfig(
       ["minute", "processed_backfill_new_video_age_days"],
       "MINUTE_PROCESSED_BACKFILL_NEW_VIDEO_AGE_DAYS",
       7,
-    ),
-    gateLeadTimeMinutes: getConfigValue(
-      ["minute", "gate_lead_time_minutes"],
-      "MINUTE_GATE_LEAD_TIME_MINUTES",
-      30,
-    ),
-    gateMinLeadRatio: getConfigValue(
-      ["minute", "gate_min_lead_ratio"],
-      "MINUTE_GATE_MIN_LEAD_RATIO",
-      0.1,
-    ),
-    gateMaxLeadViews: getConfigValue(
-      ["minute", "gate_max_lead_views"],
-      "MINUTE_GATE_MAX_LEAD_VIEWS",
-      500,
     ),
     collectionBusinessTimezone: getConfigValue(
       ["minute", "collection_business_timezone"],

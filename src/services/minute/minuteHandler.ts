@@ -1,31 +1,49 @@
 import { config } from "../../config";
 import { Database } from "../../database";
 import type { VideoMinuteSample } from "../../types/models/minute";
-import { sleep } from "../../utils/datetime";
 import { logger } from "../../utils/logger";
 import { batchSampleVideoStats } from "./batchSampleVideoStats";
 
 const MAX_SLEEP_MS = 60_000;
 const MIN_SLEEP_MS = 100;
 
+function cancellableSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
 export class MinuteHandler {
   private db = Database.getInstance();
   private isRunning = false;
   private loopPromise: Promise<void> | null = null;
+  private abortController: AbortController | null = null;
 
   start(): void {
     if (this.loopPromise) return;
     this.isRunning = true;
+    this.abortController = new AbortController();
     this.loopPromise = this.loop();
     logger.info("Adaptive minute handler started (dynamic sleep)");
   }
 
   async stop(): Promise<void> {
     this.isRunning = false;
+    this.abortController?.abort();
     logger.info("Adaptive minute handler stopping");
     if (this.loopPromise) {
       await this.loopPromise;
     }
+    this.abortController = null;
     logger.info("Adaptive minute handler stopped");
   }
 
@@ -35,16 +53,14 @@ export class MinuteHandler {
    * Latency = DB query (~0.1ms) + sleep precision (~10ms).
    */
   private async loop(): Promise<void> {
+    const signal = this.abortController?.signal;
     while (this.isRunning) {
       try {
         const processed = await this.tick();
         if (processed > 0) {
-          // More work might be immediately due (sprint aids in sequence).
-          // Re-check without sleeping.
           continue;
         }
 
-        // Nothing due — sleep until the nearest next_minute_due_at.
         const nextDue = await this.db.getNextMinuteDueAt();
         const now = Date.now();
         const waitMs = nextDue
@@ -53,10 +69,10 @@ export class MinuteHandler {
               MIN_SLEEP_MS,
             )
           : MAX_SLEEP_MS;
-        await sleep(waitMs);
+        await cancellableSleep(waitMs, signal);
       } catch (error) {
         logger.error("Minute handler loop error:", error);
-        await sleep(5_000);
+        await cancellableSleep(5_000, signal);
       }
     }
     this.loopPromise = null;
