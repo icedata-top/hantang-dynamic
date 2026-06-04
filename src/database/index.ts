@@ -18,6 +18,10 @@ import type {
 import type { VideoData } from "../types/models/video.js";
 import { logger } from "../utils/logger.js";
 
+function quotePostgresIdentifier(identifier: string): string {
+  return `"${identifier.replace(/"/g, '""')}"`;
+}
+
 // Import operation modules
 import {
   advanceFailedMinuteVideos,
@@ -95,18 +99,17 @@ export class Database {
     logger.info("Initializing PostgreSQL connection pool");
 
     try {
+      const schema = config.database.schema;
+
       // Create connection pool
       this.pool = new Pool({
         connectionString: url,
         max: config.application.concurrencyLimit || 20,
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 10000,
-      });
-
-      // Set search_path on every new connection
-      const schema = config.database.schema;
-      this.pool.on("connect", (client) => {
-        client.query(`SET search_path TO "${schema}"`);
+        // Startup options run before pg exposes the client to pool queries.
+        // A pool "connect" hook cannot be awaited and can race the first query.
+        options: `-c search_path=${quotePostgresIdentifier(schema)}`,
       });
 
       // Test connection
