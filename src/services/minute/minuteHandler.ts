@@ -20,9 +20,13 @@ export class MinuteHandler {
     logger.info("Adaptive minute handler started (dynamic sleep)");
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.isRunning = false;
     logger.info("Adaptive minute handler stopping");
+    if (this.loopPromise) {
+      await this.loopPromise;
+    }
+    logger.info("Adaptive minute handler stopped");
   }
 
   /**
@@ -86,15 +90,14 @@ export class MinuteHandler {
 
     for (const sample of samples) {
       const key = sample.aid.toString();
+      // Skip samples with missing view — inserting NULL view would overwrite
+      // last_view and break near-gate scheduling. Let it fall to failedAids.
+      if (sample.view === null || sample.view === undefined) {
+        continue;
+      }
       sampledAidSet.add(key);
       const prev = lastViewByAid.get(key);
-      if (
-        prev === null ||
-        prev === undefined ||
-        sample.view === null ||
-        sample.view === undefined ||
-        BigInt(sample.view) !== prev
-      ) {
+      if (prev === null || prev === undefined || BigInt(sample.view) !== prev) {
         changed.push(sample);
       } else {
         unchangedAids.push(sample.aid);

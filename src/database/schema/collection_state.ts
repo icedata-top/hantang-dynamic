@@ -619,7 +619,10 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           s.aid,
           COALESCE(extract(epoch from p_now - s.last_view_change_at), 9999)::numeric
             AS secs_since_change,
-          greatest(extract(epoch from p_now - s.last_minute_success_at), 5)::numeric
+          greatest(
+            COALESCE(extract(epoch from p_now - s.last_minute_success_at), s.priority * 60),
+            5
+          )::numeric
             AS maintain_secs,
           s.last_view_change_at + interval '55 seconds'
             AS burst_start,

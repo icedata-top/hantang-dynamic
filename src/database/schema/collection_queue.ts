@@ -426,16 +426,14 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
           gate_value,
           previous_view,
           current_view,
-          crossed_at,
-          source_task_id
+          crossed_at
         )
         SELECT
           go.aid,
           go.gate_value,
           go.previous_view,
           go.current_view,
-          p_now,
-          go.id
+          p_now
         FROM gate_outcome go
         WHERE go.crossed
         ON CONFLICT (aid, gate_value) DO NOTHING

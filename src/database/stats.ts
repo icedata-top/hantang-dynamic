@@ -9,10 +9,10 @@ import type { DatabaseStats } from "../types/models/database.js";
 export async function getStats(pool: Pool): Promise<DatabaseStats> {
   const result = await pool.query(`
     SELECT
-      (SELECT n_live_tup FROM pg_stat_user_tables WHERE relname = 'processed_videos')  AS processed_count,
-      (SELECT n_live_tup FROM pg_stat_user_tables WHERE relname = 'dynamics')           AS dynamics_count,
-      (SELECT n_live_tup FROM pg_stat_user_tables WHERE relname = 'recommendations')    AS rec_count,
-      (SELECT n_live_tup FROM pg_stat_user_tables WHERE relname = 'discovered_users')   AS users_count,
+      (SELECT n_live_tup FROM pg_stat_user_tables WHERE schemaname = current_schema() AND relname = 'processed_videos')  AS processed_count,
+      (SELECT n_live_tup FROM pg_stat_user_tables WHERE schemaname = current_schema() AND relname = 'dynamics')           AS dynamics_count,
+      (SELECT n_live_tup FROM pg_stat_user_tables WHERE schemaname = current_schema() AND relname = 'recommendations')    AS rec_count,
+      (SELECT n_live_tup FROM pg_stat_user_tables WHERE schemaname = current_schema() AND relname = 'discovered_users')   AS users_count,
       (SELECT COUNT(*) FROM processed_videos WHERE is_filtered = true)                  AS filtered_count
   `);
 
