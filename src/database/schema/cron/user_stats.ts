@@ -39,6 +39,8 @@ export async function initCronUserStats(
           last_updated     = now()
         FROM stats
         WHERE u.user_id = stats.user_id
+          AND (u.videos_seen, u.videos_filtered)
+              IS DISTINCT FROM (stats.seen, stats.filtered)
         $$
       )
     `);

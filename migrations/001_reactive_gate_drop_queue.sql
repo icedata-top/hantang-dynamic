@@ -1,6 +1,6 @@
--- Migration: Reactive gate detection + queue elimination
--- Run AFTER --init-schema (which creates new functions, drops source_task_id, etc.)
--- ─────────────────────────────────────────────────────────────────────────────────
+-- Migration: Reactive gate detection + queue elimination + cron fixes
+-- Run AFTER --init-schema
+-- ──────────────────────────────────────────────────────────────────
 
 BEGIN;
 
