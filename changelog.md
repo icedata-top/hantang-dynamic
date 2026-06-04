@@ -1,5 +1,9 @@
 # Changelog
 
+## 5.0.4
+
+fix: avoid pg connect-hook search_path query race
+
 ## 5.0.3
 
 refactor: reactive gate detection and queue elimination
