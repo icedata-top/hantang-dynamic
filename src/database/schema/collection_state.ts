@@ -310,7 +310,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           ELSE video_collection_state.bootstrap_until
         END,
         last_daily_record_date = EXCLUDED.last_daily_record_date,
-        last_view              = greatest(EXCLUDED.last_view, video_collection_state.last_view),
+        last_view              = COALESCE(greatest(EXCLUDED.last_view, video_collection_state.last_view), EXCLUDED.last_view, video_collection_state.last_view),
         next_gate_value        = CASE
           WHEN EXCLUDED.last_view >= COALESCE(video_collection_state.last_view, 0)
           THEN EXCLUDED.next_gate_value
