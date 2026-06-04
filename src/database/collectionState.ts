@@ -103,18 +103,45 @@ export async function upsertCollectionStateFromProcessedVideo(
   return String(result.rows[0]?.result ?? "unknown");
 }
 
+export async function getNextMinuteDueAt(
+  pool: Pool,
+): Promise<Date | null> {
+  const result = await pool.query(
+    "SELECT fn_next_minute_due_at() AS due",
+  );
+  const due = result.rows[0]?.due;
+  return due ? new Date(due) : null;
+}
+
 export async function selectDueMinuteVideos(
   pool: Pool,
   limit = 50,
   now = new Date(),
-): Promise<bigint[]> {
+): Promise<{ aid: bigint; lastView: bigint | null }[]> {
   const result = await pool.query(
-    "SELECT aid FROM fn_select_due_minute_videos($1, $2)",
+    "SELECT aid, last_view FROM fn_select_due_minute_videos($1, $2)",
     [now, limit],
   );
-  return result.rows.map((row: Record<string, unknown>) =>
-    BigInt(row.aid as string | number),
+  return result.rows.map((row: Record<string, unknown>) => ({
+    aid: BigInt(row.aid as string | number),
+    lastView:
+      row.last_view === null || row.last_view === undefined
+        ? null
+        : BigInt(row.last_view as string | number),
+  }));
+}
+
+export async function advanceUnchangedMinuteVideos(
+  pool: Pool,
+  aids: bigint[],
+  now = new Date(),
+): Promise<number> {
+  if (aids.length === 0) return 0;
+  const result = await pool.query(
+    "SELECT fn_advance_unchanged_minute_videos($1::bigint[], $2) AS count",
+    [aids.map((a) => a.toString()), now],
   );
+  return Number(result.rows[0]?.count ?? 0);
 }
 
 export async function advanceFailedMinuteVideos(

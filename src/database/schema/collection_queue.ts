@@ -63,20 +63,6 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
     DROP INDEX IF EXISTS idx_video_collection_queue_active_aid_type
   `);
 
-  // Helper: gate step size for a given view count
-  await pool.query(`
-    CREATE OR REPLACE FUNCTION fn_video_collection_gate_step(
-      p_view bigint
-    ) RETURNS bigint AS $$
-      SELECT CASE
-        WHEN p_view IS NULL OR p_view < 1000 THEN 1000
-        WHEN p_view < 10000  THEN 1000
-        WHEN p_view < 100000 THEN 10000
-        ELSE 100000
-      END
-    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE
-  `);
-
   await pool.query(`
     CREATE TABLE IF NOT EXISTS video_collection_gate_crossings (
       id bigserial PRIMARY KEY,

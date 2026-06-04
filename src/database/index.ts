@@ -21,6 +21,8 @@ import { logger } from "../utils/logger.js";
 // Import operation modules
 import {
   advanceFailedMinuteVideos,
+  advanceUnchangedMinuteVideos,
+  getNextMinuteDueAt,
   refreshVideoCollectionStateFromDaily,
   selectDueMinuteVideos,
   upsertCollectionStateFromProcessedVideo,
@@ -357,11 +359,22 @@ export class Database {
 
   // ===== Queue-free minute collection =====
 
+  public async getNextMinuteDueAt(): Promise<Date | null> {
+    return getNextMinuteDueAt(this.ensurePool());
+  }
+
   public async selectDueMinuteVideos(
     limit?: number,
     now?: Date,
-  ): Promise<bigint[]> {
+  ): Promise<{ aid: bigint; lastView: bigint | null }[]> {
     return selectDueMinuteVideos(this.ensurePool(), limit, now);
+  }
+
+  public async advanceUnchangedMinuteVideos(
+    aids: bigint[],
+    now?: Date,
+  ): Promise<number> {
+    return advanceUnchangedMinuteVideos(this.ensurePool(), aids, now);
   }
 
   public async advanceFailedMinuteVideos(
