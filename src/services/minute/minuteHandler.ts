@@ -44,7 +44,10 @@ export class MinuteHandler {
         const nextDue = await this.db.getNextMinuteDueAt();
         const now = Date.now();
         const waitMs = nextDue
-          ? Math.max(Math.min(nextDue.getTime() - now, MAX_SLEEP_MS), MIN_SLEEP_MS)
+          ? Math.max(
+              Math.min(nextDue.getTime() - now, MAX_SLEEP_MS),
+              MIN_SLEEP_MS,
+            )
           : MAX_SLEEP_MS;
         await sleep(waitMs);
       } catch (error) {
@@ -98,9 +101,7 @@ export class MinuteHandler {
       }
     }
 
-    const failedAids = aids.filter(
-      (aid) => !sampledAidSet.has(aid.toString()),
-    );
+    const failedAids = aids.filter((aid) => !sampledAidSet.has(aid.toString()));
 
     if (changed.length > 0) {
       try {
@@ -117,9 +118,7 @@ export class MinuteHandler {
     }
 
     if (failedAids.length > 0) {
-      logger.warn(
-        `Minute stats response missed ${failedAids.length} aid(s)`,
-      );
+      logger.warn(`Minute stats response missed ${failedAids.length} aid(s)`);
       await this.db.advanceFailedMinuteVideos(failedAids);
     }
 

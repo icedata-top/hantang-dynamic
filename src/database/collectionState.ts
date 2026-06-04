@@ -103,12 +103,8 @@ export async function upsertCollectionStateFromProcessedVideo(
   return String(result.rows[0]?.result ?? "unknown");
 }
 
-export async function getNextMinuteDueAt(
-  pool: Pool,
-): Promise<Date | null> {
-  const result = await pool.query(
-    "SELECT fn_next_minute_due_at() AS due",
-  );
+export async function getNextMinuteDueAt(pool: Pool): Promise<Date | null> {
+  const result = await pool.query("SELECT fn_next_minute_due_at() AS due");
   const due = result.rows[0]?.due;
   return due ? new Date(due) : null;
 }
