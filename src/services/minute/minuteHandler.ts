@@ -52,7 +52,7 @@ export class MinuteHandler {
    * Single-consumer by design — no row locking needed.
    */
   private async loop(): Promise<void> {
-    const signal = this.abortController?.signal;
+    const signal = this.abortController!.signal;
     while (this.isRunning) {
       try {
         const processed = await this.tick();
