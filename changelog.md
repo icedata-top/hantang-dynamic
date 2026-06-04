@@ -1,5 +1,9 @@
 # Changelog
 
+## 5.0.6
+
+perf: batch non-gate minute sampling while preserving near-gate latency
+
 ## 5.0.5
 
 perf: avoid cross-chunk anti-join when inserting video minute samples
