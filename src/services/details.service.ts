@@ -205,6 +205,12 @@ export class DetailsService {
       }
 
       const response = await getDynamic(originalDynamicId);
+      if (!response) {
+        logger.info(
+          `Original dynamic ${originalDynamicId} for forward ${dynamicId} is unavailable (HTTP 404), skipping`,
+        );
+        return "";
+      }
 
       if (response.code !== 0 || !response.data.card?.desc) {
         logger.warn(`Failed to fetch original dynamic ${originalDynamicId}`);

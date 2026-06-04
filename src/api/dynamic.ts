@@ -32,7 +32,7 @@ const fetchDynamicsAPI = async (
 const fetchDynamicAPI = async (
   endpoint: string,
   params: Record<string, string | number | bigint>,
-): Promise<BiliDynamicDetailResponse> => {
+): Promise<BiliDynamicDetailResponse | null> => {
   try {
     const response = await dynamicDetailClient.get<BiliDynamicDetailResponse>(
       endpoint,
@@ -42,6 +42,10 @@ const fetchDynamicAPI = async (
     );
     return response.data;
   } catch (error) {
+    if (isHttpNotFound(error)) {
+      return null;
+    }
+
     logger.error("API Error:", error);
     if (error instanceof Error) {
       logger.error(error.stack);
@@ -49,6 +53,14 @@ const fetchDynamicAPI = async (
     throw new Error("API Error: Fetch dynamic detail failed");
   }
 };
+
+function isHttpNotFound(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  return "code" in error && error.code === 404;
+}
 
 export const getNewDynamic = (
   type: number,
