@@ -58,10 +58,9 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
     WHERE status IN ('completed', 'abandoned')
   `);
 
+  // idx_video_collection_queue_active_aid_type has 0 scans — drop it
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_video_collection_queue_active_aid_type
-    ON video_collection_queue(aid, task_type, status)
-    WHERE status IN ('pending', 'leased')
+    DROP INDEX IF EXISTS idx_video_collection_queue_active_aid_type
   `);
 
   await pool.query(`
@@ -72,10 +71,19 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
       previous_view bigint,
       current_view bigint,
       crossed_at timestamptz NOT NULL DEFAULT now(),
-      source_task_id bigint REFERENCES video_collection_queue(id),
       created_at timestamptz NOT NULL DEFAULT now(),
       CONSTRAINT uq_video_collection_gate_crossing UNIQUE (aid, gate_value)
     )
+  `);
+
+  // Drop legacy FK to queue table (new crossings come from triggers, not tasks)
+  await pool.query(`
+    ALTER TABLE video_collection_gate_crossings
+    DROP CONSTRAINT IF EXISTS video_collection_gate_crossings_source_task_id_fkey
+  `);
+  await pool.query(`
+    ALTER TABLE video_collection_gate_crossings
+    DROP COLUMN IF EXISTS source_task_id
   `);
 
   await pool.query(`
@@ -84,8 +92,9 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
     ) RETURNS bigint AS $$
       SELECT CASE
         WHEN p_view IS NULL OR p_view <= 0 THEN NULL
-        WHEN p_view < 10000 AND p_view % 1000 = 0 THEN p_view
-        WHEN p_view >= 10000 AND p_view % 10000 = 0 THEN p_view
+        WHEN p_view < 10000  AND p_view % 1000   = 0 THEN p_view
+        WHEN p_view < 100000 AND p_view % 10000  = 0 THEN p_view
+        WHEN p_view >= 100000 AND p_view % 100000 = 0 THEN p_view
         ELSE NULL
       END
     $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE
@@ -97,8 +106,9 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
     ) RETURNS bigint AS $$
       SELECT CASE
         WHEN p_view IS NULL OR p_view < 0 THEN NULL
-        WHEN p_view < 10000 THEN ((p_view / 1000) + 1) * 1000
-        ELSE ((p_view / 10000) + 1) * 10000
+        WHEN p_view < 10000  THEN ((p_view / 1000)   + 1) * 1000
+        WHEN p_view < 100000 THEN ((p_view / 10000)  + 1) * 10000
+        ELSE                      ((p_view / 100000) + 1) * 100000
       END
     $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE
   `);
@@ -116,8 +126,11 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
           THEN NULL
         ELSE (
           SELECT max(v) FROM (VALUES
-            (CASE WHEN p_current_view >= 10000
-              THEN (p_current_view / 10000) * 10000
+            (CASE WHEN p_current_view >= 100000
+              THEN (p_current_view / 100000) * 100000
+            END),
+            (CASE WHEN least(p_current_view, 99999) >= 10000
+              THEN (least(p_current_view, 99999) / 10000) * 10000
             END),
             (CASE WHEN least(p_current_view, 9999) >= 1000
               THEN (least(p_current_view, 9999) / 1000) * 1000
@@ -251,6 +264,8 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
     )
   `);
 
+  // Gate detection is now reactive (triggers on video_minute / video_daily),
+  // so the per-tick poll-based enqueue is replaced by a no-op stub.
   await pool.query(`
     CREATE OR REPLACE FUNCTION fn_enqueue_video_collection_gate_tasks(
       p_now timestamptz DEFAULT now(),
@@ -260,169 +275,8 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
       p_max_attempts integer DEFAULT 5,
       p_business_timezone text DEFAULT 'Asia/Shanghai'
     ) RETURNS integer AS $$
-    DECLARE
-      inserted_count integer;
-      v_today    date;
-      v_yesterday date;
     BEGIN
-      v_today    := (p_now AT TIME ZONE p_business_timezone)::date;
-      v_yesterday := v_today - 1;
-
-      WITH daily_snapshot AS (
-        SELECT vd.aid, vd.record_date, vd."view"::bigint AS vw
-        FROM video_daily vd
-        WHERE vd.record_date IN (v_today, v_yesterday)
-      ),
-      pivoted AS (
-        SELECT
-          ds.aid,
-          max(ds.vw) FILTER (WHERE ds.record_date = v_today)    AS current_view,
-          max(ds.vw) FILTER (WHERE ds.record_date = v_yesterday) AS previous_view
-        FROM daily_snapshot ds
-        GROUP BY ds.aid
-        HAVING max(ds.vw) FILTER (WHERE ds.record_date = v_today) IS NOT NULL
-      ),
-      -- 预计算 gate 函数
-      enriched AS (
-        SELECT
-          p.aid,
-          p.current_view,
-          p.previous_view,
-          greatest(p.current_view - p.previous_view, 0) AS daily_delta,
-          fn_video_collection_exact_gate_value(p.current_view) AS exact_gate,
-          fn_video_collection_crossed_gate_value(p.previous_view, p.current_view) AS crossed_gate,
-          fn_video_collection_next_gate_value(p.current_view) AS next_gate
-        FROM pivoted p
-      ),
-      -- 关联 state 并做资格过滤
-      active_state AS (
-        SELECT
-          e.*,
-          s.priority,
-          s.next_minute_due_at
-        FROM enriched e
-        JOIN video_collection_state s ON s.aid = e.aid
-        WHERE s.priority <> -1
-          AND NOT EXISTS (
-            SELECT 1
-            FROM video_collection_queue q
-            WHERE q.aid = e.aid
-              AND q.task_type = 'gate'
-              AND q.status IN ('pending', 'leased')
-          )
-          AND (
-            -- 条件 A：有 minute 采集计划且即将到期
-            (
-              s.priority > 0
-              AND s.next_minute_due_at IS NOT NULL
-              AND s.next_minute_due_at <= p_now + p_gate_lead_time
-            )
-            -- 条件 B：当前 view 恰好在门槛上
-            OR e.exact_gate IS NOT NULL
-            -- 条件 C：已经跨过了门槛
-            OR e.crossed_gate IS NOT NULL
-            -- 条件 D：接近下一个门槛
-            OR (
-              e.next_gate IS NOT NULL
-                AND e.next_gate - e.current_view <= least(
-                  ceil(e.next_gate * p_gate_min_lead_ratio)::bigint,
-                  p_gate_max_lead_views
-              )
-            )
-          )
-        ORDER BY
-          CASE
-            WHEN s.priority > 0 AND s.next_minute_due_at IS NOT NULL
-            THEN s.next_minute_due_at
-            ELSE p_now
-          END ASC,
-          e.aid ASC
-        LIMIT 1000
-      ),
-
-      -- ⑤ 选定 gate_value 和 gate_reason
-      selected AS (
-        SELECT
-          a.aid,
-          v.gate_value,
-          v.gate_reason
-        FROM active_state a
-        CROSS JOIN LATERAL (
-          SELECT
-            CASE
-              WHEN a.exact_gate IS NOT NULL
-                THEN a.exact_gate
-              WHEN a.crossed_gate IS NOT NULL
-                THEN a.crossed_gate
-              -- 预测：用 daily_delta 推算到下次 minute 采集 + lead_time 时能否到达
-              WHEN a.next_gate IS NOT NULL
-               AND a.daily_delta > 0
-               AND a.priority > 0
-               AND a.next_minute_due_at IS NOT NULL
-               AND a.current_view + (
-                   a.daily_delta::numeric
-                   * extract(epoch FROM (a.next_minute_due_at + p_gate_lead_time - p_now))
-                   / 86400
-                 ) >= a.next_gate
-                THEN a.next_gate
-              -- 近距离检测
-              WHEN a.next_gate IS NOT NULL
-               AND a.daily_delta > 0
-               AND a.next_gate - a.current_view <= least(
-                   ceil(a.next_gate * p_gate_min_lead_ratio)::bigint,
-                   p_gate_max_lead_views
-                 )
-                THEN a.next_gate
-              ELSE NULL
-            END AS gate_value,
-            CASE
-              WHEN a.exact_gate IS NOT NULL THEN 'view_threshold'
-              WHEN a.crossed_gate IS NOT NULL THEN 'crossed_threshold'
-              WHEN a.next_gate IS NOT NULL
-               AND a.daily_delta > 0
-               AND a.priority > 0
-               AND a.next_minute_due_at IS NOT NULL
-               AND a.current_view + (
-                   a.daily_delta::numeric
-                   * extract(epoch FROM (a.next_minute_due_at + p_gate_lead_time - p_now))
-                   / 86400
-                 ) >= a.next_gate
-                THEN 'predicted_threshold'
-              ELSE 'near_threshold'
-            END AS gate_reason
-        ) v
-      )
-
-      INSERT INTO video_collection_queue (
-        aid, task_type, dedupe_key, due_at,
-        max_attempts, gate_value, gate_reason, updated_at
-      )
-      SELECT
-        s.aid,
-        'gate',
-        concat('gate:', s.aid, ':', s.gate_value),
-        p_now,
-        p_max_attempts,
-        s.gate_value,
-        s.gate_reason,
-        p_now
-      FROM selected s
-      WHERE s.gate_value IS NOT NULL
-        AND NOT EXISTS (
-          SELECT 1
-          FROM video_collection_gate_crossings c
-          WHERE c.aid = s.aid AND c.gate_value = s.gate_value
-        )
-        AND NOT EXISTS (
-          SELECT 1
-          FROM video_collection_queue q
-          WHERE q.dedupe_key = concat('gate:', s.aid, ':', s.gate_value)
-            AND q.status = 'abandoned'
-        )
-      ON CONFLICT DO NOTHING;
-
-      GET DIAGNOSTICS inserted_count = ROW_COUNT;
-      RETURN inserted_count;
+      RETURN 0;
     END;
     $$ LANGUAGE plpgsql
   `);
@@ -572,16 +426,14 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
           gate_value,
           previous_view,
           current_view,
-          crossed_at,
-          source_task_id
+          crossed_at
         )
         SELECT
           go.aid,
           go.gate_value,
           go.previous_view,
           go.current_view,
-          p_now,
-          go.id
+          p_now
         FROM gate_outcome go
         WHERE go.crossed
         ON CONFLICT (aid, gate_value) DO NOTHING

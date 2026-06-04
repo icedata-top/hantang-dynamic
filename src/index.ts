@@ -28,7 +28,7 @@ async function runTracker() {
     for (const tracker of trackers) {
       tracker.stop();
     }
-    minuteHandler?.stop();
+    if (minuteHandler) await minuteHandler.stop();
     try {
       await Database.getInstance().close();
       logger.info("Database connection closed");

@@ -13,7 +13,6 @@ import type {
 import type {
   DailyCollectionCandidate,
   ProcessedVideoCollectionInput,
-  VideoCollectionTask,
   VideoMinuteSample,
 } from "../types/models/minute.js";
 import type { VideoData } from "../types/models/video.js";
@@ -21,7 +20,11 @@ import { logger } from "../utils/logger.js";
 
 // Import operation modules
 import {
+  advanceFailedMinuteVideos,
+  advanceUnchangedMinuteVideos,
+  getNextMinuteDueAt,
   refreshVideoCollectionStateFromDaily,
+  selectDueMinuteVideos,
   upsertCollectionStateFromProcessedVideo,
 } from "./collectionState.js";
 import { getCachedForwardBvid, saveDynamic } from "./dynamics.js";
@@ -33,13 +36,6 @@ import {
 import { initializeSchema } from "./schema/index.js";
 import { getStats } from "./stats.js";
 import {
-  ackVideoCollectionTasks,
-  claimVideoCollectionTasks,
-  enqueueVideoCollectionGateTasks,
-  enqueueVideoCollectionTasks,
-  failVideoCollectionTasks,
-} from "./taskQueue.js";
-import {
   addDiscoveredUser,
   getTopDiscoveredUsers,
   getUserProfileHistory,
@@ -48,10 +44,7 @@ import {
   updateUserStats,
 } from "./users.js";
 import { getDailyCollectionCandidates } from "./videoDaily.js";
-import {
-  insertVideoMinuteSamples,
-  insertVideoMinuteSamplesAndAck,
-} from "./videoMinute.js";
+import { insertVideoMinuteSamples } from "./videoMinute.js";
 import {
   getAllProcessedIds,
   getBvidList,
@@ -364,69 +357,37 @@ export class Database {
     );
   }
 
-  public async enqueueVideoCollectionTasks(
-    now?: Date,
-    maxAttempts?: number,
-  ): Promise<number> {
-    return enqueueVideoCollectionTasks(this.ensurePool(), now, maxAttempts);
+  // ===== Queue-free minute collection =====
+
+  public async getNextMinuteDueAt(): Promise<Date | null> {
+    return getNextMinuteDueAt(this.ensurePool());
   }
 
-  public async enqueueVideoCollectionGateTasks(
-    now?: Date,
-    options?: {
-      gateLeadTimeMinutes?: number;
-      gateMinLeadRatio?: number;
-      gateMaxLeadViews?: number;
-      maxAttempts?: number;
-    },
-  ): Promise<number> {
-    return enqueueVideoCollectionGateTasks(this.ensurePool(), now, options);
-  }
-
-  public async claimVideoCollectionTasks(
+  public async selectDueMinuteVideos(
     limit?: number,
-    lockDurationSeconds?: number,
     now?: Date,
-  ): Promise<VideoCollectionTask[]> {
-    return claimVideoCollectionTasks(
-      this.ensurePool(),
-      limit,
-      lockDurationSeconds,
-      now,
-    );
+  ): Promise<{ aid: bigint; lastView: bigint | null }[]> {
+    return selectDueMinuteVideos(this.ensurePool(), limit, now);
   }
 
-  public async ackVideoCollectionTasks(
-    taskIds: bigint[],
+  public async advanceUnchangedMinuteVideos(
+    aids: bigint[],
     now?: Date,
   ): Promise<number> {
-    return ackVideoCollectionTasks(this.ensurePool(), taskIds, now);
+    return advanceUnchangedMinuteVideos(this.ensurePool(), aids, now);
   }
 
-  public async failVideoCollectionTasks(
-    taskIds: bigint[],
+  public async advanceFailedMinuteVideos(
+    aids: bigint[],
     now?: Date,
   ): Promise<number> {
-    return failVideoCollectionTasks(this.ensurePool(), taskIds, now);
+    return advanceFailedMinuteVideos(this.ensurePool(), aids, now);
   }
 
   public async insertVideoMinuteSamples(
     samples: VideoMinuteSample[],
   ): Promise<number> {
     return insertVideoMinuteSamples(this.ensurePool(), samples);
-  }
-
-  public async insertVideoMinuteSamplesAndAck(
-    samples: VideoMinuteSample[],
-    taskIds: bigint[],
-    now?: Date,
-  ): Promise<{ inserted: number; acked: number }> {
-    return insertVideoMinuteSamplesAndAck(
-      this.ensurePool(),
-      samples,
-      taskIds,
-      now,
-    );
   }
 
   // ===== Connection Management =====
