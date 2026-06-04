@@ -2,44 +2,6 @@ import type { Pool } from "pg";
 import type { VideoMinuteSample } from "../types/models/minute.js";
 
 const INSERT_VIDEO_MINUTE_SQL = `
-  WITH incoming AS (
-    SELECT *
-    FROM unnest(
-      $1::timestamptz[],
-      $2::bigint[],
-      $3::integer[],
-      $4::integer[],
-      $5::integer[],
-      $6::integer[],
-      $7::integer[],
-      $8::integer[],
-      $9::integer[]
-    ) AS t(
-      "time",
-      aid,
-      coin,
-      favorite,
-      danmaku,
-      "view",
-      reply,
-      share,
-      "like"
-    )
-  ),
-  deduped AS (
-    SELECT DISTINCT ON (aid, "time")
-      "time",
-      aid,
-      coin,
-      favorite,
-      danmaku,
-      "view",
-      reply,
-      share,
-      "like"
-    FROM incoming
-    ORDER BY aid, "time"
-  )
   INSERT INTO video_minute (
     "time",
     aid,
@@ -51,23 +13,38 @@ const INSERT_VIDEO_MINUTE_SQL = `
     share,
     "like"
   )
-  SELECT
-    d."time",
-    d.aid,
-    d.coin,
-    d.favorite,
-    d.danmaku,
-    d."view",
-    d.reply,
-    d.share,
-    d."like"
-  FROM deduped d
-  WHERE NOT EXISTS (
-    SELECT 1
-    FROM video_minute vm
-    WHERE vm.aid = d.aid
-      AND vm."time" = d."time"
+  SELECT DISTINCT ON (aid, "time")
+    "time",
+    aid,
+    coin,
+    favorite,
+    danmaku,
+    "view",
+    reply,
+    share,
+    "like"
+  FROM unnest(
+    $1::timestamptz[],
+    $2::bigint[],
+    $3::integer[],
+    $4::integer[],
+    $5::integer[],
+    $6::integer[],
+    $7::integer[],
+    $8::integer[],
+    $9::integer[]
+  ) AS t(
+    "time",
+    aid,
+    coin,
+    favorite,
+    danmaku,
+    "view",
+    reply,
+    share,
+    "like"
   )
+  ORDER BY aid, "time"
 `;
 
 function sampleParams(samples: VideoMinuteSample[]): unknown[] {
