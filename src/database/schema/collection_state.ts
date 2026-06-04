@@ -47,6 +47,12 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     ON video_collection_state(priority, last_daily_record_date, aid)
   `);
 
+  // Add next_gate_value column (reactive gate detection)
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD COLUMN IF NOT EXISTS next_gate_value bigint
+  `);
+
   await pool.query(`
     CREATE OR REPLACE FUNCTION fn_video_collection_next_due_at(
       p_aid bigint,
@@ -181,6 +187,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         SELECT
           agg.aid,
           agg.current_view,
+          agg.previous_view,
           agg.seven_day_view,
           CASE WHEN agg.previous_view IS NOT NULL
             THEN greatest(agg.current_view - agg.previous_view, 0)
@@ -224,12 +231,36 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
             WHEN m.seven_day_view IS NOT NULL AND m.current_view > m.seven_day_view THEN 0
             ELSE 0
           END AS priority,
-          m.current_view AS last_view
+          m.current_view AS last_view,
+          m.previous_view,
+          fn_video_collection_next_gate_value(m.current_view) AS next_gate_value,
+          fn_video_collection_crossed_gate_value(m.previous_view, m.current_view) AS crossed_gate
         FROM measured m
+      ),
+      -- Record daily-level gate crossings for non-minute-sampled videos
+      daily_crossings AS (
+        INSERT INTO video_collection_gate_crossings (
+          aid, gate_value, previous_view, current_view, crossed_at
+        )
+        SELECT
+          c.aid,
+          c.crossed_gate,
+          c.previous_view,
+          c.last_view,
+          p_now
+        FROM calculated c
+        JOIN video_collection_state s ON s.aid = c.aid
+        WHERE c.crossed_gate IS NOT NULL
+          -- Only record for non-minute-sampled videos; minute-sampled ones
+          -- get crossings detected in the video_minute trigger instead
+          AND (s.priority <= 0 OR s.next_minute_due_at IS NULL)
+        ON CONFLICT (aid, gate_value) DO NOTHING
+        RETURNING aid
       )
       INSERT INTO video_collection_state (
         aid, latest_daily_delta, weekly_avg_daily_delta, daily_delta_source,
-        priority, next_minute_due_at, last_daily_record_date, last_view, updated_at
+        priority, next_minute_due_at, last_daily_record_date, last_view,
+        next_gate_value, updated_at
       )
       SELECT
         c.aid, c.latest_daily_delta, c.weekly_avg_daily_delta, c.daily_delta_source,
@@ -239,6 +270,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         END,
         v_today,
         c.last_view,
+        c.next_gate_value,
         p_now
       FROM calculated c
       ON CONFLICT (aid) DO UPDATE SET
@@ -271,6 +303,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         END,
         last_daily_record_date = EXCLUDED.last_daily_record_date,
         last_view              = EXCLUDED.last_view,
+        next_gate_value        = EXCLUDED.next_gate_value,
         updated_at             = p_now;
 
       GET DIAGNOSTICS changed_count = ROW_COUNT;
@@ -481,6 +514,68 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     $$ LANGUAGE plpgsql
   `);
 
+  // ── Queue-free minute collection ──────────────────────────────────
+  // Replaces the enqueue→claim→ack/fail cycle on video_collection_queue.
+  // Single consumer + reactive gate triggers make the queue unnecessary.
+
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_select_due_minute_videos(
+      p_now timestamptz DEFAULT now(),
+      p_limit integer DEFAULT 50
+    ) RETURNS TABLE (aid bigint) AS $$
+    BEGIN
+      -- Expire bootstrap entries that never got daily data
+      UPDATE video_collection_state
+      SET priority = 0,
+          next_minute_due_at = NULL,
+          updated_at = p_now
+      WHERE priority > 0
+        AND daily_delta_source = 'bootstrap'
+        AND bootstrap_until IS NOT NULL
+        AND bootstrap_until <= p_now
+        AND latest_daily_delta IS NULL
+        AND weekly_avg_daily_delta IS NULL;
+
+      RETURN QUERY
+      SELECT s.aid
+      FROM video_collection_state s
+      WHERE s.priority > 0
+        AND s.next_minute_due_at IS NOT NULL
+        AND s.next_minute_due_at <= p_now
+      ORDER BY s.next_minute_due_at ASC, s.aid ASC
+      LIMIT p_limit;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_advance_failed_minute_videos(
+      p_aids bigint[],
+      p_now timestamptz DEFAULT now()
+    ) RETURNS integer AS $$
+    DECLARE
+      advanced_count integer;
+    BEGIN
+      UPDATE video_collection_state s
+      SET next_minute_due_at = fn_video_collection_next_due_at(
+            s.aid,
+            s.priority,
+            greatest(
+              p_now + interval '1 second',
+              s.next_minute_due_at + make_interval(mins => s.priority)
+            )
+          ),
+          updated_at = p_now
+      WHERE s.aid = ANY(p_aids)
+        AND s.priority > 0
+        AND s.next_minute_due_at IS NOT NULL;
+
+      GET DIAGNOSTICS advanced_count = ROW_COUNT;
+      RETURN advanced_count;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+
   await pool.query(`
     CREATE OR REPLACE FUNCTION fn_apply_video_minute_collection_update()
     RETURNS trigger AS $$
@@ -498,16 +593,35 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           s.aid,
           l."time",
           l.latest_view,
+          s.next_gate_value,
+          p.previous_view,
+          -- Gate crossing: did this sample cross the next gate?
+          CASE
+            WHEN s.next_gate_value IS NOT NULL
+             AND l.latest_view >= s.next_gate_value
+            THEN s.next_gate_value
+          END AS crossed_gate,
+          -- Priority logic: burst, near-gate boost, or keep current
           CASE
             WHEN s.priority = -1 THEN -1
+            -- Burst: large delta in one sample
             WHEN p.previous_view IS NOT NULL
              AND l.latest_view - p.previous_view >= ${config.minute.minuteBurstDeltaThreshold}
             THEN CASE
               WHEN s.priority > 0 THEN least(s.priority, ${config.minute.minuteBurstPriority})
               ELSE ${config.minute.minuteBurstPriority}
             END
+            -- Near-gate boost: within 10% of gate step from next gate
+            WHEN s.next_gate_value IS NOT NULL
+             AND l.latest_view < s.next_gate_value
+             AND s.next_gate_value - l.latest_view <=
+                 greatest(fn_video_collection_gate_step(l.latest_view) / 10, 50)
+             AND s.priority > ${config.minute.minuteBurstPriority}
+            THEN ${config.minute.minuteBurstPriority}
             ELSE s.priority
-          END AS next_priority
+          END AS next_priority,
+          -- Recompute next gate value
+          fn_video_collection_next_gate_value(l.latest_view) AS new_next_gate
         FROM video_collection_state s
         JOIN latest_rows l ON l.aid = s.aid
         LEFT JOIN LATERAL (
@@ -518,6 +632,22 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           ORDER BY vm."time" DESC
           LIMIT 1
         ) p ON true
+      ),
+      -- Record gate crossings detected from minute samples
+      gate_crossings_recorded AS (
+        INSERT INTO video_collection_gate_crossings (
+          aid, gate_value, previous_view, current_view, crossed_at
+        )
+        SELECT
+          c.aid,
+          c.crossed_gate,
+          c.previous_view,
+          c.latest_view,
+          c."time"
+        FROM computed c
+        WHERE c.crossed_gate IS NOT NULL
+        ON CONFLICT (aid, gate_value) DO NOTHING
+        RETURNING aid, gate_value
       )
       UPDATE video_collection_state s
       SET last_minute_success_at = c."time",
@@ -527,6 +657,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
             WHEN c.next_priority > 0 THEN c."time" + make_interval(mins => c.next_priority)
             ELSE NULL
           END,
+          next_gate_value = c.new_next_gate,
           updated_at = now()
       FROM computed c
       WHERE s.aid = c.aid;

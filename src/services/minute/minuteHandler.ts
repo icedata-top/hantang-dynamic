@@ -1,35 +1,11 @@
 import { config } from "../../config";
 import { Database } from "../../database";
-import type {
-  VideoCollectionTask,
-  VideoMinuteSample,
-} from "../../types/models/minute";
+import type { VideoMinuteSample } from "../../types/models/minute";
 import { logger } from "../../utils/logger";
 import { batchSampleVideoStats } from "./batchSampleVideoStats";
-import { MinutePoolBuilder } from "./poolBuilder";
-
-function uniqueAids(tasks: VideoCollectionTask[]): bigint[] {
-  return [...new Set(tasks.map((task) => task.aid.toString()))].map((aid) =>
-    BigInt(aid),
-  );
-}
-
-function mapTasksByAid(
-  tasks: VideoCollectionTask[],
-): Map<string, VideoCollectionTask[]> {
-  const grouped = new Map<string, VideoCollectionTask[]>();
-  for (const task of tasks) {
-    const key = task.aid.toString();
-    const existing = grouped.get(key) ?? [];
-    existing.push(task);
-    grouped.set(key, existing);
-  }
-  return grouped;
-}
 
 export class MinuteHandler {
   private db = Database.getInstance();
-  private poolBuilder = new MinutePoolBuilder();
   private timer: NodeJS.Timeout | null = null;
   private running = false;
 
@@ -61,70 +37,55 @@ export class MinuteHandler {
 
     this.running = true;
     try {
-      const enqueued = await this.poolBuilder.enqueueDueTasks();
-      if (enqueued.minute > 0 || enqueued.gate > 0) {
-        logger.info(
-          `Minute handler enqueued tasks: minute=${enqueued.minute}, gate=${enqueued.gate}`,
-        );
+      // Query state table directly — no queue intermediary
+      const aids = await this.db.selectDueMinuteVideos(
+        config.minute.claimBatchSize,
+      );
+      if (aids.length === 0) return;
+
+      let samples: VideoMinuteSample[] = [];
+      try {
+        samples = await batchSampleVideoStats(aids, {
+          batchSize: config.minute.batchSize,
+        });
+      } catch (error) {
+        logger.error("Minute stats batch request failed:", error);
+        await this.db.advanceFailedMinuteVideos(aids);
+        return;
       }
 
-      const tasks = await this.db.claimVideoCollectionTasks(
-        config.minute.claimBatchSize,
-        config.minute.lockDurationSeconds,
+      const sampledAidSet = new Set(
+        samples.map((sample) => sample.aid.toString()),
       );
-      if (tasks.length === 0) return;
+      const failedAids = aids.filter(
+        (aid) => !sampledAidSet.has(aid.toString()),
+      );
 
-      await this.processTasks(tasks);
+      if (samples.length > 0) {
+        try {
+          // INSERT into video_minute fires trigger which:
+          //   - advances next_minute_due_at
+          //   - updates last_view
+          //   - detects gate crossings → writes to gate_crossings
+          //   - boosts priority when near a gate
+          await this.db.insertVideoMinuteSamples(samples);
+        } catch (error) {
+          logger.error("Minute sample write failed:", error);
+          await this.db.advanceFailedMinuteVideos(aids);
+          return;
+        }
+      }
+
+      if (failedAids.length > 0) {
+        logger.warn(
+          `Minute stats response missed ${failedAids.length} aid(s); advancing to next cycle`,
+        );
+        await this.db.advanceFailedMinuteVideos(failedAids);
+      }
     } catch (error) {
       logger.error("Minute handler tick failed:", error);
     } finally {
       this.running = false;
-    }
-  }
-
-  private async processTasks(tasks: VideoCollectionTask[]): Promise<void> {
-    const tasksByAid = mapTasksByAid(tasks);
-    const aids = uniqueAids(tasks);
-    let samples: VideoMinuteSample[] = [];
-
-    try {
-      samples = await batchSampleVideoStats(aids, {
-        batchSize: config.minute.batchSize,
-      });
-    } catch (error) {
-      logger.error("Minute stats batch request failed:", error);
-      await this.db.failVideoCollectionTasks(tasks.map((task) => task.id));
-      return;
-    }
-
-    const sampledAidKeys = new Set(
-      samples.map((sample) => sample.aid.toString()),
-    );
-    const successfulTaskIds = [...sampledAidKeys].flatMap((aid) =>
-      (tasksByAid.get(aid) ?? []).map((task) => task.id),
-    );
-    const failedTaskIds = tasks
-      .filter((task) => !sampledAidKeys.has(task.aid.toString()))
-      .map((task) => task.id);
-
-    if (samples.length > 0) {
-      try {
-        await this.db.insertVideoMinuteSamplesAndAck(
-          samples,
-          successfulTaskIds,
-        );
-      } catch (error) {
-        logger.error("Minute sample write failed:", error);
-        await this.db.failVideoCollectionTasks(tasks.map((task) => task.id));
-        return;
-      }
-    }
-
-    if (failedTaskIds.length > 0) {
-      logger.warn(
-        `Minute stats response missed ${failedTaskIds.length} task(s); leaving them on retry path`,
-      );
-      await this.db.failVideoCollectionTasks(failedTaskIds);
     }
   }
 }

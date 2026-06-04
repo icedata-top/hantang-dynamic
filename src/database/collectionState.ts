@@ -102,3 +102,30 @@ export async function upsertCollectionStateFromProcessedVideo(
   );
   return String(result.rows[0]?.result ?? "unknown");
 }
+
+export async function selectDueMinuteVideos(
+  pool: Pool,
+  limit = 50,
+  now = new Date(),
+): Promise<bigint[]> {
+  const result = await pool.query(
+    "SELECT aid FROM fn_select_due_minute_videos($1, $2)",
+    [now, limit],
+  );
+  return result.rows.map((row: Record<string, unknown>) =>
+    BigInt(row.aid as string | number),
+  );
+}
+
+export async function advanceFailedMinuteVideos(
+  pool: Pool,
+  aids: bigint[],
+  now = new Date(),
+): Promise<number> {
+  if (aids.length === 0) return 0;
+  const result = await pool.query(
+    "SELECT fn_advance_failed_minute_videos($1::bigint[], $2) AS count",
+    [aids.map((a) => a.toString()), now],
+  );
+  return Number(result.rows[0]?.count ?? 0);
+}

@@ -10,11 +10,11 @@ export async function hasProcessedVideo(
   bvid: string,
 ): Promise<boolean> {
   const result = await pool.query(
-    "SELECT COUNT(*) as count FROM processed_videos WHERE bvid = $1",
+    "SELECT EXISTS(SELECT 1 FROM processed_videos WHERE bvid = $1) AS exists",
     [bvid],
   );
 
-  return Number.parseInt(result.rows[0]?.count || "0", 10) > 0;
+  return result.rows[0]?.exists === true;
 }
 
 /**
@@ -26,13 +26,13 @@ export async function hasProcessedVideoById(
 ): Promise<boolean> {
   const isBvid = typeof id === "string" && id.startsWith("BV");
   const sql = isBvid
-    ? "SELECT COUNT(*) as count FROM processed_videos WHERE bvid = $1"
-    : "SELECT COUNT(*) as count FROM processed_videos WHERE aid = $1";
+    ? "SELECT EXISTS(SELECT 1 FROM processed_videos WHERE bvid = $1) AS exists"
+    : "SELECT EXISTS(SELECT 1 FROM processed_videos WHERE aid = $1) AS exists";
 
   const param = isBvid ? id : BigInt(id).toString();
 
   const result = await pool.query(sql, [param]);
-  return Number.parseInt(result.rows[0]?.count || "0", 10) > 0;
+  return result.rows[0]?.exists === true;
 }
 
 /**
@@ -213,7 +213,7 @@ export async function getVideoHistory(
   limit = 50,
 ): Promise<VideoSnapshot[]> {
   const result = await pool.query(
-    `SELECT id, aid, bvid, recorded_at, title, description, tag, tag_new,
+    `SELECT aid, bvid, recorded_at, title, description, tag, tag_new,
             pic, is_deleted, is_filtered, extras, notes
      FROM video_history
      WHERE bvid = $1
@@ -223,7 +223,6 @@ export async function getVideoHistory(
   );
 
   return result.rows.map((row) => ({
-    id: BigInt(row.id),
     aid: BigInt(row.aid),
     bvid: row.bvid as string,
     recordedAt: new Date(row.recorded_at),
