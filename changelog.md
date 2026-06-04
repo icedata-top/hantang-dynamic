@@ -1,5 +1,9 @@
 # Changelog
 
+## 5.0.5
+
+perf: avoid cross-chunk anti-join when inserting video minute samples
+
 ## 5.0.4
 
 fix: avoid pg connect-hook search_path query race
