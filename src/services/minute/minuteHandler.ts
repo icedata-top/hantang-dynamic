@@ -1,5 +1,10 @@
 import { config } from "../../config";
 import { Database } from "../../database";
+import {
+  minuteBatchDurationSeconds,
+  minuteBatchesTotal,
+  minuteSamplesTotal,
+} from "../../metrics/registry";
 import type { VideoMinuteSample } from "../../types/models/minute";
 import { logger } from "../../utils/logger";
 import { batchSampleVideoStats } from "./batchSampleVideoStats";
@@ -87,6 +92,8 @@ export class MinuteHandler {
         const waitedLongEnough = Date.now() - earliestDueAt >= BATCH_TIMEOUT_MS;
 
         if (hasGate || isFull || waitedLongEnough) {
+          const trigger = hasGate ? "gate" : isFull ? "full" : "timeout";
+          minuteBatchesTotal.inc({ trigger });
           if (hasGate) {
             logger.debug(`Minute batch flush: gate (${due.length} video(s))`);
           } else if (isFull) {
@@ -136,6 +143,7 @@ export class MinuteHandler {
     due: { aid: bigint; lastView: bigint | null }[],
   ): Promise<number> {
     if (due.length === 0) return 0;
+    const endBatch = minuteBatchDurationSeconds.startTimer();
 
     const aids = due.map((d) => d.aid);
     const lastViewByAid = new Map(
@@ -144,56 +152,78 @@ export class MinuteHandler {
 
     let samples: VideoMinuteSample[] = [];
     try {
-      samples = await batchSampleVideoStats(aids, {
-        batchSize: config.minute.batchSize,
-      });
-    } catch (error) {
-      logger.error("Minute stats batch request failed:", error);
-      await this.db.advanceFailedMinuteVideos(aids);
-      return aids.length;
-    }
-
-    const changed: VideoMinuteSample[] = [];
-    const unchangedAids: bigint[] = [];
-    const sampledAidSet = new Set<string>();
-
-    for (const sample of samples) {
-      const key = sample.aid.toString();
-      // Skip samples with missing view — inserting NULL view would overwrite
-      // last_view and break near-gate scheduling. Let it fall to failedAids.
-      if (sample.view === null || sample.view === undefined) {
-        continue;
-      }
-      sampledAidSet.add(key);
-      const prev = lastViewByAid.get(key);
-      if (prev === null || prev === undefined || BigInt(sample.view) !== prev) {
-        changed.push(sample);
-      } else {
-        unchangedAids.push(sample.aid);
-      }
-    }
-
-    const failedAids = aids.filter((aid) => !sampledAidSet.has(aid.toString()));
-
-    if (changed.length > 0) {
       try {
-        await this.db.insertVideoMinuteSamples(changed);
+        samples = await batchSampleVideoStats(aids, {
+          batchSize: config.minute.batchSize,
+        });
       } catch (error) {
-        logger.error("Minute sample write failed:", error);
+        logger.error("Minute stats batch request failed:", error);
+        minuteSamplesTotal.inc({ outcome: "failed" }, aids.length);
         await this.db.advanceFailedMinuteVideos(aids);
         return aids.length;
       }
-    }
 
-    if (unchangedAids.length > 0) {
-      await this.db.advanceUnchangedMinuteVideos(unchangedAids);
-    }
+      const changed: VideoMinuteSample[] = [];
+      const unchangedAids: bigint[] = [];
+      const sampledAidSet = new Set<string>();
 
-    if (failedAids.length > 0) {
-      logger.warn(`Minute stats response missed ${failedAids.length} aid(s)`);
-      await this.db.advanceFailedMinuteVideos(failedAids);
-    }
+      for (const sample of samples) {
+        const key = sample.aid.toString();
+        // Skip samples with missing view — inserting NULL view would overwrite
+        // last_view and break near-gate scheduling. Let it fall to failedAids.
+        if (sample.view === null || sample.view === undefined) {
+          continue;
+        }
+        sampledAidSet.add(key);
+        const prev = lastViewByAid.get(key);
+        if (
+          prev === null ||
+          prev === undefined ||
+          BigInt(sample.view) !== prev
+        ) {
+          changed.push(sample);
+        } else {
+          unchangedAids.push(sample.aid);
+        }
+      }
 
-    return aids.length;
+      const failedAids = aids.filter(
+        (aid) => !sampledAidSet.has(aid.toString()),
+      );
+
+      if (changed.length > 0) {
+        try {
+          await this.db.insertVideoMinuteSamples(changed);
+        } catch (error) {
+          logger.error("Minute sample write failed:", error);
+          minuteSamplesTotal.inc({ outcome: "failed" }, aids.length);
+          await this.db.advanceFailedMinuteVideos(aids);
+          return aids.length;
+        }
+      }
+
+      if (unchangedAids.length > 0) {
+        await this.db.advanceUnchangedMinuteVideos(unchangedAids);
+      }
+
+      if (failedAids.length > 0) {
+        logger.warn(`Minute stats response missed ${failedAids.length} aid(s)`);
+        await this.db.advanceFailedMinuteVideos(failedAids);
+      }
+
+      if (changed.length > 0) {
+        minuteSamplesTotal.inc({ outcome: "changed" }, changed.length);
+      }
+      if (unchangedAids.length > 0) {
+        minuteSamplesTotal.inc({ outcome: "unchanged" }, unchangedAids.length);
+      }
+      if (failedAids.length > 0) {
+        minuteSamplesTotal.inc({ outcome: "failed" }, failedAids.length);
+      }
+
+      return aids.length;
+    } finally {
+      endBatch();
+    }
   }
 }

@@ -1,5 +1,10 @@
 import { Pool } from "pg";
 import { config } from "../config/index.js";
+import {
+  dbPoolConnections,
+  dbQueryDurationSeconds,
+  dbQueryErrorsTotal,
+} from "../metrics/registry.js";
 import type {
   DatabaseStats,
   DiscoveredUserData,
@@ -20,6 +25,35 @@ import { logger } from "../utils/logger.js";
 
 function quotePostgresIdentifier(identifier: string): string {
   return `"${identifier.replace(/"/g, '""')}"`;
+}
+
+function extractSqlText(query: unknown): string {
+  if (typeof query === "string") return query;
+  if (
+    query &&
+    typeof query === "object" &&
+    "text" in query &&
+    typeof query.text === "string"
+  ) {
+    return query.text;
+  }
+  return "";
+}
+
+function queryOperationLabel(query: unknown): string {
+  const sql = extractSqlText(query)
+    .replace(/--.*$/gm, " ")
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .trim()
+    .toLowerCase();
+
+  const keyword = sql.match(/^[a-z]+/)?.[0] ?? "unknown";
+  const tableMatch = sql.match(
+    /\b(?:from|into|update|join|table|index on)\s+("?[\w.]+"?)/,
+  );
+  const table = tableMatch?.[1]?.replace(/"/g, "") ?? "";
+
+  return table ? `${keyword} ${table}` : keyword;
 }
 
 // Import operation modules
@@ -67,6 +101,7 @@ import {
 export class Database {
   private static instance: Database | null = null;
   private pool: Pool | null = null;
+  private poolMetricsTimer: NodeJS.Timeout | null = null;
 
   private constructor() {}
 
@@ -111,6 +146,8 @@ export class Database {
         // A pool "connect" hook cannot be awaited and can race the first query.
         options: `-c search_path=${quotePostgresIdentifier(schema)}`,
       });
+      this.wrapPoolQuery(this.pool);
+      this.startPoolMetricsSampler(this.pool);
 
       // Test connection
       const client = await this.pool.connect();
@@ -135,6 +172,55 @@ export class Database {
       throw new Error("Database not initialized");
     }
     return this.pool;
+  }
+
+  private wrapPoolQuery(pool: Pool): void {
+    const originalQuery = pool.query.bind(pool) as (
+      ...args: unknown[]
+    ) => unknown;
+
+    pool.query = ((...args: unknown[]): unknown => {
+      const callbackCandidate = args[args.length - 1];
+      if (typeof callbackCandidate === "function") {
+        return originalQuery(...args);
+      }
+
+      const operation = queryOperationLabel(args[0]);
+      const endQuery = dbQueryDurationSeconds.startTimer({ operation });
+
+      try {
+        const result = originalQuery(...args);
+        if (result && typeof (result as Promise<unknown>).then === "function") {
+          return (result as Promise<unknown>)
+            .catch((error) => {
+              dbQueryErrorsTotal.inc({ operation });
+              throw error;
+            })
+            .finally(() => {
+              endQuery();
+            });
+        }
+
+        endQuery();
+        return result;
+      } catch (error) {
+        dbQueryErrorsTotal.inc({ operation });
+        endQuery();
+        throw error;
+      }
+    }) as Pool["query"];
+  }
+
+  private startPoolMetricsSampler(pool: Pool): void {
+    const sample = () => {
+      dbPoolConnections.set({ state: "total" }, pool.totalCount);
+      dbPoolConnections.set({ state: "idle" }, pool.idleCount);
+      dbPoolConnections.set({ state: "waiting" }, pool.waitingCount);
+    };
+
+    sample();
+    this.poolMetricsTimer = setInterval(sample, 15_000);
+    this.poolMetricsTimer.unref();
   }
 
   // ===== Video Operations =====
@@ -401,6 +487,10 @@ export class Database {
    * Close the database connection pool
    */
   public async close(): Promise<void> {
+    if (this.poolMetricsTimer) {
+      clearInterval(this.poolMetricsTimer);
+      this.poolMetricsTimer = null;
+    }
     if (this.pool) {
       await this.pool.end();
       this.pool = null;

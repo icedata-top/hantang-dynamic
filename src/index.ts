@@ -1,9 +1,12 @@
 import { config } from "./config";
 import { loadAccounts } from "./core/account";
 import { Database } from "./database";
+import { initializeBuildInfo } from "./metrics/registry";
+import { startMetricsServer, stopMetricsServer } from "./metrics/server";
 import { MinuteHandler } from "./services/minute/minuteHandler";
 import { DynamicTracker } from "./services/tracker";
 import { logger } from "./utils/logger";
+import { APP_VERSION } from "./version";
 
 async function runTracker() {
   logger.info("Starting Bilibili Video Tracker");
@@ -11,6 +14,8 @@ async function runTracker() {
 
   // Initialize Database
   await Database.getInstance().init();
+  initializeBuildInfo(APP_VERSION);
+  await startMetricsServer();
 
   // Load all configured accounts (one per cookie file, or one legacy sessdata account)
   const accounts = loadAccounts();
@@ -29,6 +34,7 @@ async function runTracker() {
       tracker.stop();
     }
     if (minuteHandler) await minuteHandler.stop();
+    await stopMetricsServer();
     try {
       await Database.getInstance().close();
       logger.info("Database connection closed");
@@ -89,6 +95,13 @@ async function main() {
 }
 
 main().catch(async (error) => {
+  try {
+    const { fatalExitsTotal } = await import("./metrics/registry");
+    fatalExitsTotal.inc({ reason: "fatal_error" });
+  } catch (metricsError) {
+    logger.error("Failed to record fatal exit metric:", metricsError);
+  }
+
   const message = `Fatal Error: ${error}\n${
     error instanceof Error ? error.stack : ""
   }`;

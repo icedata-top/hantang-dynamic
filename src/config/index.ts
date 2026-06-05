@@ -9,11 +9,13 @@ import {
   createBilibiliConfig,
   createDatabaseConfig,
   createExportConfig,
+  createMetricsConfig,
   createMinuteConfig,
   createNotificationsConfig,
   createProcessingConfig,
   databaseSchema,
   exportSchema,
+  metricsSchema,
   minuteSchema,
   notificationsSchema,
   processingSchema,
@@ -77,6 +79,7 @@ const configSchema = z.object({
   minute: minuteSchema,
   processing: processingSchema,
   export: exportSchema,
+  metrics: metricsSchema,
   notifications: notificationsSchema,
 });
 
@@ -87,5 +90,6 @@ export const config = configSchema.parse({
   minute: createMinuteConfig(getConfigValue),
   processing: createProcessingConfig(getConfigValue),
   export: createExportConfig(getConfigValue),
+  metrics: createMetricsConfig(getConfigValue),
   notifications: createNotificationsConfig(getConfigValue),
 });
