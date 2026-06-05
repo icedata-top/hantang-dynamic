@@ -21,6 +21,22 @@ function isAuthorized(authorization: string | undefined): boolean {
   return timingSafeEqual(authorizationBuffer, expectedBuffer);
 }
 
+async function closeAfterFailedListen(
+  activeServer: Server | null,
+): Promise<void> {
+  if (!activeServer) return;
+
+  await new Promise<void>((resolve) => {
+    try {
+      activeServer.close(() => {
+        resolve();
+      });
+    } catch {
+      resolve();
+    }
+  });
+}
+
 export async function startMetricsServer(): Promise<void> {
   if (!config.metrics.enabled || server) return;
 
@@ -71,7 +87,7 @@ export async function startMetricsServer(): Promise<void> {
   } catch (error) {
     const activeServer = server;
     server = null;
-    activeServer?.close(() => {});
+    await closeAfterFailedListen(activeServer);
     throw error;
   }
 
