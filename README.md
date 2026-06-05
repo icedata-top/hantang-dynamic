@@ -112,6 +112,17 @@ scrape_configs:
       - targets: ["127.0.0.1:9469"]
 ```
 
+An example Grafana dashboard is available at
+[`examples/grafana/bili-tracker-dashboard.json`](./examples/grafana/bili-tracker-dashboard.json).
+Import it into Grafana and select your Prometheus datasource.
+
+Metric interpretation notes:
+
+- Bilibili video unavailable responses such as deleted or hidden videos are
+  treated as normal business outcomes, not API transport errors.
+- When a proxy is configured, a failed proxied API request followed by a direct
+  fallback is counted as two API request samples with different `host` labels.
+
 ## Development
 
 ```bash
@@ -130,6 +141,11 @@ pnpm format
 # Package executables
 pnpm package
 ```
+
+Release tag builds automatically derive the application version from tags named
+`vX.Y.Z`. The workflow updates `package.json` and `src/version.ts` in the
+runner before checking and packaging, so release artifacts report the tag
+version without a separate source change.
 
 Thanks a lot for the
 [bilibili-API-collect](https://github.com/SocialSisterYi/bilibili-API-collect)
