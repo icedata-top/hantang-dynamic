@@ -1,9 +1,25 @@
+import { timingSafeEqual } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { config } from "../config";
 import { logger } from "../utils/logger";
 import { metricsRegistry } from "./registry";
 
 let server: Server | null = null;
+
+function isAuthorized(authorization: string | undefined): boolean {
+  const expected = `Bearer ${config.metrics.authToken}`;
+  if (!authorization) {
+    return false;
+  }
+
+  const authorizationBuffer = Buffer.from(authorization);
+  const expectedBuffer = Buffer.from(expected);
+  if (authorizationBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(authorizationBuffer, expectedBuffer);
+}
 
 export async function startMetricsServer(): Promise<void> {
   if (!config.metrics.enabled || server) return;
@@ -23,8 +39,7 @@ export async function startMetricsServer(): Promise<void> {
     }
 
     if (config.metrics.authToken) {
-      const expected = `Bearer ${config.metrics.authToken}`;
-      if (req.headers.authorization !== expected) {
+      if (!isAuthorized(req.headers.authorization)) {
         res.statusCode = 401;
         res.end("Unauthorized\n");
         return;
@@ -42,16 +57,23 @@ export async function startMetricsServer(): Promise<void> {
     }
   });
 
-  await new Promise<void>((resolve, reject) => {
-    const activeServer = server;
-    if (!activeServer) return reject(new Error("Metrics server missing"));
-    activeServer.once("error", reject);
-    activeServer.listen(config.metrics.port, config.metrics.host, () => {
-      activeServer.off("error", reject);
-      activeServer.unref();
-      resolve();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const activeServer = server;
+      if (!activeServer) return reject(new Error("Metrics server missing"));
+      activeServer.once("error", reject);
+      activeServer.listen(config.metrics.port, config.metrics.host, () => {
+        activeServer.off("error", reject);
+        activeServer.unref();
+        resolve();
+      });
     });
-  });
+  } catch (error) {
+    const activeServer = server;
+    server = null;
+    activeServer?.close(() => {});
+    throw error;
+  }
 
   logger.info(
     `Prometheus metrics listening on http://${config.metrics.host}:${config.metrics.port}${config.metrics.path}`,
