@@ -8,6 +8,12 @@ import type { CookieJar } from "tough-cookie";
 import { config } from "../config";
 import { StateManager } from "../core/state";
 import {
+  apiErrorsByCodeTotal,
+  apiRequestDurationSeconds,
+  apiRequestsTotal,
+  fatalExitsTotal,
+} from "../metrics/registry";
+import {
   createCookieJarFromNetscape,
   getAllCookiesAsString,
   parseNetscapeCookieFile,
@@ -38,6 +44,54 @@ enum ApiErrorResponseCode {
 }
 
 const state = new StateManager();
+
+function hostLabel(baseURL: string | undefined): string {
+  if (!baseURL) return "unknown";
+  try {
+    return new URL(baseURL).hostname || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+export function routeLabel(url: string | undefined): string {
+  if (!url) return "unknown";
+
+  let path = url.split("?", 1)[0] || "/";
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    // Relative URLs are expected for project API calls.
+  }
+
+  const normalized = path
+    .split("/")
+    .map((segment) => {
+      if (/^\d+$/.test(segment)) return ":id";
+      if (/^(av|bv)[a-z0-9]+$/i.test(segment)) return ":id";
+      return segment;
+    })
+    .join("/");
+
+  return normalized || "/";
+}
+
+function recordApiRequest(
+  baseURL: string | undefined,
+  url: string | undefined,
+  result: "success" | "error" | "retry",
+  durationMs?: number,
+): void {
+  const labels = {
+    host: hostLabel(baseURL),
+    route: routeLabel(url),
+  };
+
+  apiRequestsTotal.inc({ ...labels, result });
+  if (durationMs !== undefined && durationMs >= 0) {
+    apiRequestDurationSeconds.observe(labels, durationMs / 1000);
+  }
+}
 
 // Singleton cookie jar manager for cookie file support
 let globalCookieJar: CookieJar | null = null;
@@ -188,6 +242,9 @@ function createClient(
       );
 
       if (response.status === ApiErrorResponseCode.IpBanned) {
+        recordApiRequest(baseURL, response.config.url, "error", timeUsed);
+        apiErrorsByCodeTotal.inc({ code: String(response.status) });
+        fatalExitsTotal.inc({ reason: "ip_ban" });
         const message =
           "CRITICAL ERROR: IP has been banned! Terminating process.";
         logger.error(`${message}致命错误：IP·被封禁！正在终止进程。`);
@@ -204,6 +261,8 @@ function createClient(
         response.data.code !== 62002 &&
         response.data.code !== 62004
       ) {
+        recordApiRequest(baseURL, response.config.url, "error", timeUsed);
+        apiErrorsByCodeTotal.inc({ code: String(response.data.code) });
         const message =
           `API Error:\n` +
           `Code: ${response.data.code}\n` +
@@ -220,6 +279,7 @@ function createClient(
         }
 
         if (response.data.code === ApiErrorCode.CookieExpired) {
+          fatalExitsTotal.inc({ reason: "cookie_expired" });
           logger.error(
             "CRITICAL ERROR: Cookie has expired! Authentication required. Terminating process.\n" +
               "致命错误：Cookie 已过期！请重新登录。正在终止进程。",
@@ -228,6 +288,7 @@ function createClient(
         }
 
         if (response.data.code === ApiErrorCode.RiskControlFailed) {
+          fatalExitsTotal.inc({ reason: "risk_control" });
           logger.error(
             "CRITICAL ERROR: Risk control failed! Terminating process.\n" +
               "致命错误：风控失败！正在终止进程。",
@@ -246,16 +307,35 @@ function createClient(
         persistJar();
       }
 
+      recordApiRequest(baseURL, response.config.url, "success", timeUsed);
       return response;
     },
     async (error) => {
+      const errorConfig = error.config as RequestConfig | undefined;
+      const startTime = errorConfig?.metadata?.startTime ?? Date.now();
+      const durationMs = Date.now() - startTime;
+      const status = error.response?.status;
+
+      if (status === ApiErrorResponseCode.IpBanned) {
+        recordApiRequest(baseURL, errorConfig?.url, "error", durationMs);
+        apiErrorsByCodeTotal.inc({ code: String(status) });
+        fatalExitsTotal.inc({ reason: "ip_ban" });
+        const message =
+          "CRITICAL ERROR: IP has been banned! Terminating process.";
+        logger.error(`${message}致命错误：IP·被封禁！正在终止进程。`);
+        await notifyWarning(message);
+        process.exit(2);
+      }
+
       if (!error.response || error.response.status === 524) {
+        recordApiRequest(baseURL, errorConfig?.url, "retry", durationMs);
         return retryDelay(
           () => client(error.config),
           config.application.apiRetryTimes,
           config.application.apiWaitTime,
         );
       }
+      recordApiRequest(baseURL, errorConfig?.url, "error", durationMs);
       return Promise.reject({
         message: error.message,
         code: error.response?.status,

@@ -3,6 +3,13 @@ import { generateBiliTicket } from "../api/signatures/biliTicket";
 import { config } from "../config";
 import type { AccountContext } from "../core/account";
 import { Database } from "../database";
+import {
+  dynamicsSeenTotal,
+  fetchCycleDurationSeconds,
+  fetchCyclesTotal,
+  lastSuccessfulFetchTimestampSeconds,
+  videosProcessedTotal,
+} from "../metrics/registry";
 import type { BiliDynamicCard, VideoData } from "../types";
 import { sleep } from "../utils/datetime";
 import { exportData } from "../utils/exporter/exporter";
@@ -38,11 +45,18 @@ export class DynamicTracker {
     this.startFollowingSyncSchedule();
 
     while (this.isRunning) {
+      const uid = this.account.uid || "unknown";
+      const endFetchCycle = fetchCycleDurationSeconds.startTimer({ uid });
       try {
         await this.checkDynamics();
+        endFetchCycle();
+        fetchCyclesTotal.inc({ uid, result: "success" });
+        lastSuccessfulFetchTimestampSeconds.set({ uid }, Date.now() / 1000);
 
         await sleep(config.application.fetchInterval);
       } catch (error) {
+        endFetchCycle();
+        fetchCyclesTotal.inc({ uid, result: "error" });
         logger.error(`[uid=${this.account.uid}] Tracker error:`, error);
         if (error instanceof Error) {
           logger.error(error.stack);
@@ -115,6 +129,10 @@ export class DynamicTracker {
       logger.info(
         `[uid=${this.account.uid}] Got new dynamic page: type=${typeCode}, ${cards.length} cards`,
       );
+      dynamicsSeenTotal.inc(
+        { uid: this.account.uid || "unknown", type: String(typeCode) },
+        cards.length,
+      );
 
       // Save all dynamics to DB immediately (decouple storage from processing)
       await Promise.all(
@@ -133,6 +151,10 @@ export class DynamicTracker {
         const processedVideos = await this.processPage(cards);
 
         if (processedVideos.length > 0) {
+          videosProcessedTotal.inc(
+            { uid: this.account.uid || "unknown" },
+            processedVideos.length,
+          );
           await exportData(processedVideos);
           await notifyNewVideos(processedVideos);
         }

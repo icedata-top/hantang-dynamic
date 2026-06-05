@@ -66,6 +66,7 @@ The application is configured via `config.toml`. Key sections include:
 
 - **[bilibili]**: Authentication (UID, SessData or Cookie File).
 - **[database]**: PostgreSQL connection URL.
+- **[metrics]**: Optional Prometheus `/metrics` endpoint.
 - **[application]**: Execution settings (interval, concurrency, history).
 - **[processing]**: Filter rules and feature flags (recommendations).
 
@@ -78,6 +79,37 @@ file (e.g., exported from browser extensions like "Cookie-Editor"):
 [bilibili]
 uid = "12345678"
 cookie_file = "./.cookies.txt"  # Path to Netscape cookie file
+```
+
+### Prometheus Metrics
+
+Metrics are disabled by default. Enable the built-in Prometheus scrape endpoint
+with a `[metrics]` block or environment variables:
+
+```toml
+[metrics]
+enabled = true
+host = "127.0.0.1"
+port = 9469
+path = "/metrics"
+collect_default_metrics = true
+# auth_token = "change-me"
+```
+
+When `auth_token` is set, scrape requests must include
+`Authorization: Bearer <token>`. The endpoint exports process metrics plus
+application metrics with the `bili_tracker_` prefix for fetch cycles, Bilibili
+API latency and errors, rate limiter depth, PostgreSQL query and pool state,
+adaptive minute sampling, notifications, exports, and fatal exit reasons.
+
+Prometheus scrape example:
+
+```yaml
+scrape_configs:
+  - job_name: bili-tracker
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["127.0.0.1:9469"]
 ```
 
 ## Development

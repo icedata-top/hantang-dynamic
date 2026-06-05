@@ -45,6 +45,15 @@ retrospective_days = 30        # Days to look back during retrospective scan (de
 url = "postgresql://localhost:5432/hantang"  # PostgreSQL connection URL
 schema = "public"                            # PostgreSQL schema name (default: public)
 
+[metrics]
+# Prometheus metrics endpoint (disabled by default)
+enabled = false
+host = "127.0.0.1"                 # Use "0.0.0.0" when scraping from outside the container/host
+port = 9469
+path = "/metrics"
+collect_default_metrics = true
+# auth_token = "change-me"         # Requires Authorization: Bearer <token>
+
 [minute]
 # Adaptive minute collection with progressive gate-approach acceleration.
 # Handler uses dynamic sleep (wakes at next due time), no fixed tick interval.

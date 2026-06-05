@@ -1,5 +1,9 @@
 # Changelog
 
+## 5.1.0
+
+feat: add optional Prometheus metrics endpoint and instrumentation
+
 ## 5.0.7
 
 perf: floor minute sampling cadence and keep normal scheduling grid-aligned

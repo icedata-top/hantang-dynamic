@@ -1,4 +1,5 @@
 import { config } from "../../config";
+import { exportsTotal } from "../../metrics/registry";
 import type { VideoData } from "../../types";
 import { saveToMysql } from "./mysql";
 
@@ -15,6 +16,10 @@ export async function exportData(data: VideoData[]) {
     config.export.mysql.table
   ) {
     const mysqlResult = await saveToMysql(data);
+    exportsTotal.inc({
+      target: "mysql",
+      result: mysqlResult ? "success" : "error",
+    });
     results.push({ type: "mysql", success: mysqlResult });
   }
 

@@ -157,6 +157,7 @@ export async function sendHttpNotification(
   const delay = config.notifications.http.delay ?? 100;
 
   // Process endpoints sequentially with delay
+  const errors: Error[] = [];
   for (let i = 0; i < config.notifications.http.endpoints.length; i++) {
     const endpoint = config.notifications.http.endpoints[i];
 
@@ -167,11 +168,16 @@ export async function sendHttpNotification(
         `Failed to send HTTP notification to ${endpoint.url}:`,
         error,
       );
+      errors.push(error instanceof Error ? error : new Error(String(error)));
     }
 
     // Add delay between requests (except for the last one)
     if (i < config.notifications.http.endpoints.length - 1) {
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
+  }
+
+  if (errors.length > 0) {
+    throw errors[0];
   }
 }
