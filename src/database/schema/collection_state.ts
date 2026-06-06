@@ -53,7 +53,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     ADD COLUMN IF NOT EXISTS next_gate_value bigint
   `);
 
-  // Track when the view count last changed (= last observed B站 counter refresh).
+  // Track when the view count last changed (= last observed Bilibili counter refresh).
   // Used by advanceUnchangedMinuteVideos to predict the next refresh and
   // switch to 1-second polling right before it happens.
   await pool.query(`
@@ -61,7 +61,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     ADD COLUMN IF NOT EXISTS last_view_change_at timestamptz
   `);
 
-  // B站 view counters refresh roughly every 75 s (varies 60-90 s).
+  // Bilibili view counters refresh roughly every 75 s (varies 60-90 s).
   // Polling faster than that just retrieves stale values, so the effective
   // base interval is floored to 75 s.  Only affects priority = 1
   // (60 s → 75 s); priority ≥ 2 (120 s) already exceeds the floor.
@@ -553,9 +553,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     $$ LANGUAGE sql STABLE
   `);
 
-  // ── Queue-free minute collection ──────────────────────────────────
-  // Replaces the enqueue→claim→ack/fail cycle on video_collection_queue.
-  // Single consumer + reactive gate triggers make the queue unnecessary.
+  // ── Minute collection scheduling ──────────────────────────────────
 
   // Select videos due for minute sampling.
   // Returns (aid, last_view, near_gate, due_at) — the handler uses near_gate
@@ -586,7 +584,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       RETURN QUERY
       SELECT s.aid, s.last_view,
         -- A video is "near gate" (time-critical) when its scheduled interval
-        -- is shorter than the B站 counter refresh period (~75 s).  Polling
+        -- is shorter than the Bilibili counter refresh period (~75 s).  Polling
         -- faster than 75 s means the system is actively trying to pin-point
         -- a gate crossing — those samples deserve immediate batch flush.
         --
@@ -640,11 +638,11 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     $$ LANGUAGE plpgsql
   `);
 
-  // For samples where view count didn't change (B站 ~75s refresh window).
+  // For samples where view count didn't change (Bilibili ~75s refresh window).
   // Three scheduling phases:
   //   1. Normal: maintain current interval
   //   2. Pre-burst: jump to predicted burst window start
-  //   3. Burst: 1-second polling to catch exact B站 refresh second
+  //   3. Burst: 1-second polling to catch exact Bilibili refresh second
   await pool.query(`
     CREATE OR REPLACE FUNCTION fn_advance_unchanged_minute_videos(
       p_aids bigint[],
@@ -665,10 +663,18 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
             AS maintain_secs,
           s.last_view_change_at + interval '55 seconds'
             AS burst_start,
+          -- A video is "near gate" only when the next gate is reachable
+          -- within roughly the next 2 Bilibili refresh cycles (~150 s of view
+          -- growth).  The old check (next_gate_value > last_view) was true
+          -- for virtually every video, causing all of them to enter 1-second
+          -- burst polling for ~65 s out of every ~75 s refresh cycle.
           (s.next_gate_value IS NOT NULL
             AND s.last_view IS NOT NULL
-            AND s.next_gate_value > s.last_view)
-            AS near_gate
+            AND s.next_gate_value > s.last_view
+            AND COALESCE(s.latest_daily_delta, 0) > 0
+            AND (s.next_gate_value - s.last_view)
+                <= s.latest_daily_delta::numeric * 150 / 86400
+          ) AS near_gate
         FROM video_collection_state s
         WHERE s.aid = ANY(p_aids)
           AND s.priority > 0
@@ -676,9 +682,9 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       )
       UPDATE video_collection_state s
       SET next_minute_due_at = CASE
-            -- Phase 3: In burst window (55-120s since last B站 refresh).
+            -- Phase 3: In burst window (55-120s since last Bilibili refresh).
             -- 1-second polling to capture the exact refresh second.
-            -- B站 refresh varies ~60-90s; cap at 120s to handle outliers.
+            -- Bilibili refresh varies ~60-90s; cap at 120s to handle outliers.
             WHEN d.near_gate
              AND d.secs_since_change >= 55
              AND d.secs_since_change < 120
@@ -742,15 +748,40 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
              AND l.latest_view >= s.next_gate_value
             THEN s.next_gate_value
           END AS crossed_gate,
-          -- Priority: only burst modifies this (near-gate does NOT touch priority)
+          -- Bidirectional adaptive priority from observed growth rate.
+          -- If the per-sample delta falls outside [targetDeltaLower, targetDeltaUpper],
+          -- the current priority doesn't match reality.  Compute the correct
+          -- priority from the implied daily rate (delta / sample_secs * 86400).
+          --   delta > upper → sampling too slowly → least(current, calc)
+          --   delta < lower → sampling too densely → greatest(current, calc)
+          -- This replaces the old burst mechanism (delta >= 500 → priority=1)
+          -- which was both too aggressive (slammed to 1) and too blunt (didn't
+          -- account for sample interval length).
           CASE
             WHEN s.priority = -1 THEN -1
             WHEN p.previous_view IS NOT NULL
-             AND l.latest_view - p.previous_view >= ${config.minute.minuteBurstDeltaThreshold}
-            THEN CASE
-              WHEN s.priority > 0 THEN least(s.priority, ${config.minute.minuteBurstPriority})
-              ELSE ${config.minute.minuteBurstPriority}
-            END
+             AND p.previous_time IS NOT NULL
+             AND extract(epoch from l."time" - p.previous_time) > 0
+             AND l.latest_view - p.previous_view > ${config.minute.targetDeltaUpper}
+            THEN least(
+              CASE WHEN s.priority > 0 THEN s.priority ELSE ${config.minute.maxPositivePriority} END,
+              fn_video_collection_priority(
+                ((l.latest_view - p.previous_view)::numeric
+                 / extract(epoch from l."time" - p.previous_time) * 86400)::bigint
+              )
+            )
+            WHEN p.previous_view IS NOT NULL
+             AND p.previous_time IS NOT NULL
+             AND extract(epoch from l."time" - p.previous_time) > 0
+             AND l.latest_view - p.previous_view < ${config.minute.targetDeltaLower}
+             AND s.priority > 0
+            THEN greatest(
+              s.priority,
+              fn_video_collection_priority(
+                ((l.latest_view - p.previous_view)::numeric
+                 / extract(epoch from l."time" - p.previous_time) * 86400)::bigint
+              )
+            )
             ELSE s.priority
           END AS next_priority,
           fn_video_collection_next_gate_value(l.latest_view) AS new_next_gate

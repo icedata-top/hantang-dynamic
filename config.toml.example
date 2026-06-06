@@ -71,8 +71,6 @@ bootstrap_label_content_types = ["vocaloid", "maybe_vocaloid"]
 bootstrap_label_origin = "rule"
 bootstrap_label_writers = ["classification_apply", "classification_trigger"]
 bootstrap_tid_v2_allowlist = [2022, 2061]
-minute_burst_delta_threshold = 500
-minute_burst_priority = 1
 processed_backfill_new_video_age_days = 7
 collection_business_timezone = "Asia/Shanghai"
 

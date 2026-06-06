@@ -26,8 +26,6 @@ export const minuteSchema = z.object({
   bootstrapTidV2Allowlist: z
     .array(z.coerce.number().int())
     .default([2022, 2061]),
-  minuteBurstDeltaThreshold: z.coerce.number().int().positive().default(500),
-  minuteBurstPriority: z.coerce.number().int().positive().default(1),
   processedBackfillNewVideoAgeDays: z.coerce
     .number()
     .int()
@@ -113,16 +111,6 @@ export function createMinuteConfig(
       ["minute", "bootstrap_tid_v2_allowlist"],
       "MINUTE_BOOTSTRAP_TID_V2_ALLOWLIST",
       [2022, 2061],
-    ),
-    minuteBurstDeltaThreshold: getConfigValue(
-      ["minute", "minute_burst_delta_threshold"],
-      "MINUTE_BURST_DELTA_THRESHOLD",
-      500,
-    ),
-    minuteBurstPriority: getConfigValue(
-      ["minute", "minute_burst_priority"],
-      "MINUTE_BURST_PRIORITY",
-      1,
     ),
     processedBackfillNewVideoAgeDays: getConfigValue(
       ["minute", "processed_backfill_new_video_age_days"],
