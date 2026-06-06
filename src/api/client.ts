@@ -93,6 +93,19 @@ function recordApiRequest(
   }
 }
 
+function apiCodeLabel(data: unknown): string | null {
+  if (!data || typeof data !== "object" || !("code" in data)) {
+    return null;
+  }
+
+  const code = (data as { code?: unknown }).code;
+  if (typeof code !== "number" && typeof code !== "string") {
+    return null;
+  }
+
+  return String(code);
+}
+
 // Singleton cookie jar manager for cookie file support
 let globalCookieJar: CookieJar | null = null;
 let cookieFilePath: string | null = null;
@@ -252,6 +265,11 @@ function createClient(
         process.exit(2);
       }
 
+      const logicalApiCode = apiCodeLabel(response.data);
+      if (logicalApiCode && logicalApiCode !== String(ApiErrorCode.Success)) {
+        apiErrorsByCodeTotal.inc({ code: logicalApiCode });
+      }
+
       // Handle non-success response codes
       if (
         response.data.code !== ApiErrorCode.Success &&
@@ -262,7 +280,6 @@ function createClient(
         response.data.code !== 62004
       ) {
         recordApiRequest(baseURL, response.config.url, "error", timeUsed);
-        apiErrorsByCodeTotal.inc({ code: String(response.data.code) });
         const message =
           `API Error:\n` +
           `Code: ${response.data.code}\n` +
