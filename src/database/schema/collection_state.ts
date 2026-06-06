@@ -585,17 +585,21 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
 
       RETURN QUERY
       SELECT s.aid, s.last_view,
-        -- A video is "near gate" (time-critical) when its actual scheduled
-        -- interval has been compressed below its normal priority-based
-        -- interval (priority × 60 s).  Gate-proximity acceleration and
-        -- burst-mode are the only code paths that shorten the interval
-        -- below that baseline, so this test is equivalent to "the system
-        -- is actively accelerating this video toward a gate crossing."
-        -- First-ever samples (last_minute_success_at IS NULL) have no
-        -- acceleration history and are never time-critical.
+        -- A video is "near gate" (time-critical) when its scheduled interval
+        -- is shorter than the B站 counter refresh period (~75 s).  Polling
+        -- faster than 75 s means the system is actively trying to pin-point
+        -- a gate crossing — those samples deserve immediate batch flush.
+        --
+        -- The original condition used the video's own priority interval as
+        -- the threshold, which made sense for priority = 1 (75 s) but was
+        -- far too broad for higher priorities (e.g. priority = 30 → 1800 s
+        -- threshold), causing progressive acceleration to dominate batches.
+        -- A fixed 74 s ceiling (< 75 s floor from fn_video_collection_interval_secs)
+        -- ensures only sub-refresh-cycle polling triggers immediate flush,
+        -- regardless of the video's normal priority.
         (s.last_minute_success_at IS NOT NULL
           AND extract(epoch from s.next_minute_due_at - s.last_minute_success_at)
-              BETWEEN 0 AND fn_video_collection_interval_secs(s.priority) - 1
+              BETWEEN 0 AND 74
         ) AS near_gate,
         s.next_minute_due_at AS due_at
       FROM video_collection_state s
