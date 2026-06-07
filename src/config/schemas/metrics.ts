@@ -7,11 +7,8 @@ const configBoolean = z.preprocess((value) => {
 
 export const metricsSchema = z.object({
   enabled: configBoolean.default(false),
-  host: z.string().default("127.0.0.1"),
-  port: z.coerce.number().int().positive().default(9469),
   path: z.string().startsWith("/").default("/metrics"),
   collectDefaultMetrics: configBoolean.default(true),
-  authToken: z.string().optional(),
 });
 
 export type MetricsConfig = z.infer<typeof metricsSchema>;
@@ -27,18 +24,11 @@ export function createMetricsConfig(
 ): MetricsConfig {
   return metricsSchema.parse({
     enabled: getConfigValue(["metrics", "enabled"], "METRICS_ENABLED", false),
-    host: getConfigValue(["metrics", "host"], "METRICS_HOST", "127.0.0.1"),
-    port: getConfigValue(["metrics", "port"], "METRICS_PORT", 9469),
     path: getConfigValue(["metrics", "path"], "METRICS_PATH", "/metrics"),
     collectDefaultMetrics: getConfigValue(
       ["metrics", "collect_default_metrics"],
       "METRICS_COLLECT_DEFAULT",
       true,
-    ),
-    authToken: getConfigValue(
-      ["metrics", "auth_token"],
-      "METRICS_AUTH_TOKEN",
-      undefined,
     ),
   });
 }

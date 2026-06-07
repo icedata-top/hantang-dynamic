@@ -13,12 +13,16 @@ import {
   createMinuteConfig,
   createNotificationsConfig,
   createProcessingConfig,
+  createRepairConfig,
+  createServerConfig,
   databaseSchema,
   exportSchema,
   metricsSchema,
   minuteSchema,
   notificationsSchema,
   processingSchema,
+  repairSchema,
+  serverSchema,
 } from "./schemas";
 
 let tomlData: unknown = {};
@@ -80,6 +84,8 @@ const configSchema = z.object({
   processing: processingSchema,
   export: exportSchema,
   metrics: metricsSchema,
+  repair: repairSchema,
+  server: serverSchema,
   notifications: notificationsSchema,
 });
 
@@ -91,5 +97,7 @@ export const config = configSchema.parse({
   processing: createProcessingConfig(getConfigValue),
   export: createExportConfig(getConfigValue),
   metrics: createMetricsConfig(getConfigValue),
+  repair: createRepairConfig(getConfigValue),
+  server: createServerConfig(getConfigValue),
   notifications: createNotificationsConfig(getConfigValue),
 });

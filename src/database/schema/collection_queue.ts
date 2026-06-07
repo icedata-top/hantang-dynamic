@@ -13,12 +13,24 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
   await pool.query(`DROP TABLE IF EXISTS video_collection_queue CASCADE`);
 
   // ── Drop legacy queue-only functions ─────────────────────────────
-  await pool.query(`DROP FUNCTION IF EXISTS fn_advance_abandoned_minute_collection_state(timestamptz)`);
-  await pool.query(`DROP FUNCTION IF EXISTS fn_enqueue_video_collection_tasks(timestamptz, integer)`);
-  await pool.query(`DROP FUNCTION IF EXISTS fn_enqueue_video_collection_gate_tasks(timestamptz, interval, numeric, bigint, integer, text)`);
-  await pool.query(`DROP FUNCTION IF EXISTS fn_claim_video_collection_tasks(timestamptz, integer, interval)`);
-  await pool.query(`DROP FUNCTION IF EXISTS fn_ack_video_collection_tasks(bigint[], timestamptz)`);
-  await pool.query(`DROP FUNCTION IF EXISTS fn_fail_video_collection_tasks(bigint[], timestamptz)`);
+  await pool.query(
+    `DROP FUNCTION IF EXISTS fn_advance_abandoned_minute_collection_state(timestamptz)`,
+  );
+  await pool.query(
+    `DROP FUNCTION IF EXISTS fn_enqueue_video_collection_tasks(timestamptz, integer)`,
+  );
+  await pool.query(
+    `DROP FUNCTION IF EXISTS fn_enqueue_video_collection_gate_tasks(timestamptz, interval, numeric, bigint, integer, text)`,
+  );
+  await pool.query(
+    `DROP FUNCTION IF EXISTS fn_claim_video_collection_tasks(timestamptz, integer, interval)`,
+  );
+  await pool.query(
+    `DROP FUNCTION IF EXISTS fn_ack_video_collection_tasks(bigint[], timestamptz)`,
+  );
+  await pool.query(
+    `DROP FUNCTION IF EXISTS fn_fail_video_collection_tasks(bigint[], timestamptz)`,
+  );
 
   // ── Gate crossing records (still used by triggers) ───────────────
   await pool.query(`
