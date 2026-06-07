@@ -186,9 +186,9 @@ export const subtitleLastTickTimestampSeconds = new Gauge({
   registers: [metricsRegistry],
 });
 
-export const subtitleLastCompletedJobTimestampSeconds = new Gauge({
-  name: `${PREFIX}subtitle_last_completed_job_timestamp_seconds`,
-  help: "Unix timestamp of the last completed subtitle job.",
+export const subtitleLastTerminalJobTimestampSeconds = new Gauge({
+  name: `${PREFIX}subtitle_last_terminal_job_timestamp_seconds`,
+  help: "Unix timestamp of the last subtitle job that reached a terminal state.",
   registers: [metricsRegistry],
 });
 

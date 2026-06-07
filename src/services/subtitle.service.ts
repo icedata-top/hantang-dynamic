@@ -11,7 +11,7 @@ import {
   subtitleActiveJobs,
   subtitleJobDurationSeconds,
   subtitleJobsTotal,
-  subtitleLastCompletedJobTimestampSeconds,
+  subtitleLastTerminalJobTimestampSeconds,
   subtitleLastTickTimestampSeconds,
   subtitleServiceRunning,
   subtitleStateRows,
@@ -139,7 +139,7 @@ export class SubtitleService {
       if (job.isDeleted || !job.bvid) {
         await this.db.updateSubtitleState(job.aid, "skipped");
         subtitleJobsTotal.inc({ outcome: "skipped" });
-        subtitleLastCompletedJobTimestampSeconds.set(Date.now() / 1000);
+        subtitleLastTerminalJobTimestampSeconds.set(Date.now() / 1000);
         return "skipped";
       }
 
@@ -154,7 +154,7 @@ export class SubtitleService {
       if (!view) {
         await this.db.updateSubtitleState(job.aid, "skipped");
         subtitleJobsTotal.inc({ outcome: "skipped" });
-        subtitleLastCompletedJobTimestampSeconds.set(Date.now() / 1000);
+        subtitleLastTerminalJobTimestampSeconds.set(Date.now() / 1000);
         return "skipped";
       }
 
@@ -218,7 +218,7 @@ export class SubtitleService {
           : "no_subtitle";
       await this.db.updateSubtitleState(job.aid, nextState);
       subtitleJobsTotal.inc({ outcome: nextState });
-      subtitleLastCompletedJobTimestampSeconds.set(Date.now() / 1000);
+      subtitleLastTerminalJobTimestampSeconds.set(Date.now() / 1000);
       return nextState;
     } catch (error) {
       const message = getErrorMessage(error);
@@ -227,7 +227,7 @@ export class SubtitleService {
         failure.state === "skipped" ? "skipped_after_retry" : "failed";
       subtitleJobsTotal.inc({ outcome });
       if (outcome === "skipped_after_retry") {
-        subtitleLastCompletedJobTimestampSeconds.set(Date.now() / 1000);
+        subtitleLastTerminalJobTimestampSeconds.set(Date.now() / 1000);
       }
       logger.error(
         `Subtitle job failed for aid=${job.aid} failure_count=${failure.failureCount}: ${message}`,
