@@ -384,7 +384,8 @@ function buildRepairBvidListQuery(filter: RepairVideoFilter): BvidListQuery {
     }
 
     if (definition.kind === "array") {
-      return buildArrayClause(columnSql, [value], definition, "&&");
+      const arrayValues = Array.isArray(value) ? value : [value];
+      return buildArrayClause(columnSql, arrayValues, definition, "&&");
     }
 
     throw new Error(`${definition.apiName}.contains is not supported`);

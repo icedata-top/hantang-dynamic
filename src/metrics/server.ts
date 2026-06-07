@@ -240,6 +240,9 @@ function readBvidArrayField(
   if (!Array.isArray(value)) {
     throw new Error(`${key} must be an array`);
   }
+  if (value.length === 0) {
+    throw new Error(`${key} cannot be empty`);
+  }
 
   if (value.length > config.repair.maxBvids) {
     throw new Error(
@@ -254,6 +257,9 @@ function readArrayField(body: Record<string, unknown>, key: string): unknown[] {
   const value = body[key];
   if (!Array.isArray(value)) {
     throw new Error(`${key} must be an array`);
+  }
+  if (value.length === 0) {
+    throw new Error(`${key} cannot be empty`);
   }
   return value;
 }
@@ -321,6 +327,9 @@ function readColumnFilterValue(
       case "in":
         if (!Array.isArray(operatorValue)) {
           throw new Error(`${fieldName}.${operator} must be an array`);
+        }
+        if (operatorValue.length === 0) {
+          throw new Error(`${fieldName}.${operator} cannot be empty`);
         }
         normalized[operator] = operatorValue;
         break;
