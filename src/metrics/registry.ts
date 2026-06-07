@@ -153,6 +153,45 @@ export const subtitleJobsTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+export const subtitleTicksTotal = new Counter({
+  name: `${PREFIX}subtitle_ticks_total`,
+  help: "Total subtitle service ticks by outcome.",
+  labelNames: ["outcome"] as const,
+  registers: [metricsRegistry],
+});
+
+export const subtitleServiceRunning = new Gauge({
+  name: `${PREFIX}subtitle_service_running`,
+  help: "Whether the subtitle service loop is running.",
+  labelNames: ["uid"] as const,
+  registers: [metricsRegistry],
+});
+
+export const subtitleActiveJobs = new Gauge({
+  name: `${PREFIX}subtitle_active_jobs`,
+  help: "Current subtitle jobs in progress.",
+  registers: [metricsRegistry],
+});
+
+export const subtitleStateRows = new Gauge({
+  name: `${PREFIX}subtitle_state_rows`,
+  help: "Current video_collection_state rows by subtitle_state.",
+  labelNames: ["state"] as const,
+  registers: [metricsRegistry],
+});
+
+export const subtitleLastTickTimestampSeconds = new Gauge({
+  name: `${PREFIX}subtitle_last_tick_timestamp_seconds`,
+  help: "Unix timestamp of the last subtitle service tick.",
+  registers: [metricsRegistry],
+});
+
+export const subtitleLastCompletedJobTimestampSeconds = new Gauge({
+  name: `${PREFIX}subtitle_last_completed_job_timestamp_seconds`,
+  help: "Unix timestamp of the last completed subtitle job.",
+  registers: [metricsRegistry],
+});
+
 export const subtitleTracksTotal = new Counter({
   name: `${PREFIX}subtitle_tracks_total`,
   help: "Total subtitle tracks stored by kind.",
@@ -164,6 +203,21 @@ export const subtitleJobDurationSeconds = new Histogram({
   name: `${PREFIX}subtitle_job_duration_seconds`,
   help: "Subtitle collection job duration in seconds.",
   buckets: [0.5, 1, 2, 5, 10, 30, 60, 120],
+  registers: [metricsRegistry],
+});
+
+export const subtitleApiRequestsTotal = new Counter({
+  name: `${PREFIX}subtitle_api_requests_total`,
+  help: "Total subtitle API requests by endpoint and result.",
+  labelNames: ["endpoint", "result"] as const,
+  registers: [metricsRegistry],
+});
+
+export const subtitleApiRequestDurationSeconds = new Histogram({
+  name: `${PREFIX}subtitle_api_request_duration_seconds`,
+  help: "Subtitle API request duration in seconds.",
+  labelNames: ["endpoint"] as const,
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30],
   registers: [metricsRegistry],
 });
 

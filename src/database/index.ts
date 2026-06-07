@@ -82,10 +82,12 @@ import { getStats } from "./stats.js";
 import {
   aidHasManualSubtitle,
   cidHasManualSubtitle,
+  getSubtitleStateCounts,
   getSubtitlesByAid,
   getSubtitlesByCid,
   recordSubtitleFailure,
   type SubtitleJob,
+  type SubtitleStateMetric,
   selectNextSubtitleJob,
   type UpsertSubtitleInput,
   updateSubtitleState,
@@ -319,6 +321,12 @@ export class Database {
 
   public async selectNextSubtitleJob(): Promise<SubtitleJob | null> {
     return selectNextSubtitleJob(this.ensurePool());
+  }
+
+  public async getSubtitleStateCounts(): Promise<
+    Partial<Record<SubtitleStateMetric, number>>
+  > {
+    return getSubtitleStateCounts(this.ensurePool());
   }
 
   public async updateSubtitleState(

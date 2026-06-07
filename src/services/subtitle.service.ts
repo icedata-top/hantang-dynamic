@@ -8,8 +8,14 @@ import type { AccountContext } from "../core/account";
 import { Database } from "../database";
 import type { UpsertSubtitleInput } from "../database/subtitles.js";
 import {
+  subtitleActiveJobs,
   subtitleJobDurationSeconds,
   subtitleJobsTotal,
+  subtitleLastCompletedJobTimestampSeconds,
+  subtitleLastTickTimestampSeconds,
+  subtitleServiceRunning,
+  subtitleStateRows,
+  subtitleTicksTotal,
   subtitleTracksTotal,
 } from "../metrics/registry";
 import {
@@ -18,6 +24,16 @@ import {
   isManualSubtitle,
 } from "../types/bilibili/subtitle.js";
 import { logger } from "../utils/logger";
+
+const SUBTITLE_STATE_METRIC_LABELS = [
+  "not_eligible",
+  "pending",
+  "has_manual",
+  "ai_only",
+  "no_subtitle",
+  "skipped",
+  "unknown",
+] as const;
 
 function cancellableSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -64,6 +80,7 @@ export class SubtitleService {
     if (this.loopPromise) return;
     this.isRunning = true;
     this.abortController = new AbortController();
+    subtitleServiceRunning.set({ uid: this.account.uid || "unknown" }, 1);
     this.loopPromise = this.loop(this.abortController.signal);
     logger.info(
       `Subtitle service started (interval=${config.subtitle.fetchIntervalMs}ms, uid=${this.account.uid || "unknown"})`,
@@ -73,6 +90,8 @@ export class SubtitleService {
   async stop(): Promise<void> {
     this.isRunning = false;
     this.abortController?.abort();
+    subtitleServiceRunning.set({ uid: this.account.uid || "unknown" }, 0);
+    subtitleActiveJobs.set(0);
     logger.info("Subtitle service stopping");
     if (this.loopPromise) {
       await this.loopPromise;
@@ -84,8 +103,11 @@ export class SubtitleService {
   private async loop(signal: AbortSignal): Promise<void> {
     while (this.isRunning) {
       try {
-        await this.processOne();
+        subtitleLastTickTimestampSeconds.set(Date.now() / 1000);
+        const outcome = await this.processOne();
+        subtitleTicksTotal.inc({ outcome });
       } catch (error) {
+        subtitleTicksTotal.inc({ outcome: "error" });
         logger.error("Subtitle service loop error:", error);
       }
 
@@ -95,16 +117,30 @@ export class SubtitleService {
     this.loopPromise = null;
   }
 
-  private async processOne(): Promise<void> {
+  private async sampleStateMetrics(): Promise<void> {
+    try {
+      const counts = await this.db.getSubtitleStateCounts();
+      for (const state of SUBTITLE_STATE_METRIC_LABELS) {
+        subtitleStateRows.set({ state }, counts[state] ?? 0);
+      }
+    } catch (error) {
+      logger.warn("Failed to sample subtitle state metrics:", error);
+    }
+  }
+
+  private async processOne(): Promise<string> {
+    await this.sampleStateMetrics();
     const job = await this.db.selectNextSubtitleJob();
-    if (!job) return;
+    if (!job) return "no_job";
 
     const endJob = subtitleJobDurationSeconds.startTimer();
+    subtitleActiveJobs.set(1);
     try {
       if (job.isDeleted || !job.bvid) {
         await this.db.updateSubtitleState(job.aid, "skipped");
         subtitleJobsTotal.inc({ outcome: "skipped" });
-        return;
+        subtitleLastCompletedJobTimestampSeconds.set(Date.now() / 1000);
+        return "skipped";
       }
 
       logger.info(
@@ -118,7 +154,8 @@ export class SubtitleService {
       if (!view) {
         await this.db.updateSubtitleState(job.aid, "skipped");
         subtitleJobsTotal.inc({ outcome: "skipped" });
-        return;
+        subtitleLastCompletedJobTimestampSeconds.set(Date.now() / 1000);
+        return "skipped";
       }
 
       const bvid = view.bvid || job.bvid;
@@ -181,16 +218,23 @@ export class SubtitleService {
           : "no_subtitle";
       await this.db.updateSubtitleState(job.aid, nextState);
       subtitleJobsTotal.inc({ outcome: nextState });
+      subtitleLastCompletedJobTimestampSeconds.set(Date.now() / 1000);
+      return nextState;
     } catch (error) {
       const message = getErrorMessage(error);
       const failure = await this.db.recordSubtitleFailure(job.aid, message);
-      subtitleJobsTotal.inc({
-        outcome: failure.state === "skipped" ? "skipped_after_retry" : "failed",
-      });
+      const outcome =
+        failure.state === "skipped" ? "skipped_after_retry" : "failed";
+      subtitleJobsTotal.inc({ outcome });
+      if (outcome === "skipped_after_retry") {
+        subtitleLastCompletedJobTimestampSeconds.set(Date.now() / 1000);
+      }
       logger.error(
         `Subtitle job failed for aid=${job.aid} failure_count=${failure.failureCount}: ${message}`,
       );
+      return outcome;
     } finally {
+      subtitleActiveJobs.set(0);
       endJob();
     }
   }
