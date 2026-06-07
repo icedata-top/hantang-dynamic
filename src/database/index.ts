@@ -90,6 +90,7 @@ import {
   type SubtitleStateMetric,
   selectNextSubtitleJob,
   type UpsertSubtitleInput,
+  type UpsertSubtitleResult,
   updateSubtitleState,
   upsertSubtitlesBatch,
 } from "./subtitles.js";
@@ -350,7 +351,7 @@ export class Database {
 
   public async upsertSubtitlesBatch(
     inputs: UpsertSubtitleInput[],
-  ): Promise<number> {
+  ): Promise<UpsertSubtitleResult> {
     return upsertSubtitlesBatch(this.ensurePool(), inputs);
   }
 

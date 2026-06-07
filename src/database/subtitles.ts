@@ -27,6 +27,13 @@ export interface UpsertSubtitleInput {
   style: BiliSubtitleStyle | null;
 }
 
+export interface UpsertSubtitleResult {
+  affectedCount: number;
+  insertedCount: number;
+  insertedManualCount: number;
+  insertedAiCount: number;
+}
+
 function mapSubtitleRow(row: Record<string, unknown>): VideoSubtitleRow {
   return {
     aid: BigInt(row.aid as string | number),
@@ -62,36 +69,70 @@ function subtitleInputParams(input: UpsertSubtitleInput): unknown[] {
 }
 
 const UPSERT_SUBTITLE_SQL = `
-  INSERT INTO video_subtitles (
-    aid, cid, lan, lan_doc, subtitle_type, ai_type, ai_status,
-    body, plain_text, line_count, style, fetched_at, updated_at
-  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), now())
-  ON CONFLICT (aid, cid, lan) DO UPDATE SET
-    lan_doc       = EXCLUDED.lan_doc,
-    subtitle_type = EXCLUDED.subtitle_type,
-    ai_type       = EXCLUDED.ai_type,
-    ai_status     = EXCLUDED.ai_status,
-    body          = EXCLUDED.body,
-    plain_text    = EXCLUDED.plain_text,
-    line_count    = EXCLUDED.line_count,
-    style         = EXCLUDED.style,
-    updated_at    = now()
+  WITH inserted AS (
+    INSERT INTO video_subtitles (
+      aid, cid, lan, lan_doc, subtitle_type, ai_type, ai_status,
+      body, plain_text, line_count, style, fetched_at, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), now())
+    ON CONFLICT (aid, cid, lan) DO NOTHING
+    RETURNING true AS inserted
+  ),
+  updated AS (
+    UPDATE video_subtitles
+    SET lan_doc       = $4,
+        subtitle_type = $5,
+        ai_type       = $6,
+        ai_status     = $7,
+        body          = $8,
+        plain_text    = $9,
+        line_count    = $10,
+        style         = $11,
+        updated_at    = now()
+    WHERE aid = $1
+      AND cid = $2
+      AND lan = $3
+      AND NOT EXISTS (SELECT 1 FROM inserted)
+    RETURNING false AS inserted
+  )
+  SELECT inserted FROM inserted
+  UNION ALL
+  SELECT inserted FROM updated
 `;
 
 export async function upsertSubtitlesBatch(
   pool: Pool,
   inputs: UpsertSubtitleInput[],
-): Promise<number> {
-  if (inputs.length === 0) return 0;
+): Promise<UpsertSubtitleResult> {
+  const result: UpsertSubtitleResult = {
+    affectedCount: 0,
+    insertedCount: 0,
+    insertedManualCount: 0,
+    insertedAiCount: 0,
+  };
+  if (inputs.length === 0) return result;
 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     for (const input of inputs) {
-      await client.query(UPSERT_SUBTITLE_SQL, subtitleInputParams(input));
+      const queryResult = await client.query<{ inserted: boolean }>(
+        UPSERT_SUBTITLE_SQL,
+        subtitleInputParams(input),
+      );
+      if (queryResult.rows.length > 0) {
+        result.affectedCount += queryResult.rows.length;
+      }
+      if (queryResult.rows[0]?.inserted === true) {
+        result.insertedCount += 1;
+        if (input.aiType === 0) {
+          result.insertedManualCount += 1;
+        } else if (input.aiType !== null && input.aiType > 0) {
+          result.insertedAiCount += 1;
+        }
+      }
     }
     await client.query("COMMIT");
-    return inputs.length;
+    return result;
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

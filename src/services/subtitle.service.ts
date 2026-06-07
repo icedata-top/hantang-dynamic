@@ -42,7 +42,8 @@ type SubtitleTickOutcome =
   | "ai_only"
   | "no_subtitle"
   | "failed"
-  | "skipped_after_retry";
+  | "skipped_after_retry"
+  | "error";
 
 function cancellableSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -114,9 +115,9 @@ export class SubtitleService {
       try {
         subtitleLastTickTimestampSeconds.set(Date.now() / 1000);
         const outcome = await this.processOne();
-        subtitleTicksTotal.inc({ outcome });
+        this.recordTick(outcome);
       } catch (error) {
-        subtitleTicksTotal.inc({ outcome: "error" });
+        this.recordTick("error");
         logger.error("Subtitle service loop error:", error);
       }
 
@@ -124,6 +125,10 @@ export class SubtitleService {
     }
 
     this.loopPromise = null;
+  }
+
+  private recordTick(outcome: SubtitleTickOutcome): void {
+    subtitleTicksTotal.inc({ outcome });
   }
 
   private async sampleStateMetrics(): Promise<void> {
@@ -206,18 +211,14 @@ export class SubtitleService {
         }
       }
 
-      const storedCount = await this.db.upsertSubtitlesBatch(subtitles);
-      if (storedCount > 0) {
-        subtitleTracksTotal.inc({ kind: "total" }, storedCount);
+      const storedResult = await this.db.upsertSubtitlesBatch(subtitles);
+      if (storedResult.insertedCount > 0) {
+        subtitleTracksTotal.inc({ kind: "total" }, storedResult.insertedCount);
         subtitleTracksTotal.inc(
           { kind: "manual" },
-          subtitles.filter((item) => item.aiType === 0).length,
+          storedResult.insertedManualCount,
         );
-        subtitleTracksTotal.inc(
-          { kind: "ai" },
-          subtitles.filter((item) => item.aiType !== null && item.aiType > 0)
-            .length,
-        );
+        subtitleTracksTotal.inc({ kind: "ai" }, storedResult.insertedAiCount);
       }
 
       const nextState = anyManual
