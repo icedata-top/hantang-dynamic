@@ -35,6 +35,15 @@ const SUBTITLE_STATE_METRIC_LABELS = [
   "unknown",
 ] as const;
 
+type SubtitleTickOutcome =
+  | "no_job"
+  | "skipped"
+  | "has_manual"
+  | "ai_only"
+  | "no_subtitle"
+  | "failed"
+  | "skipped_after_retry";
+
 function cancellableSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     if (signal.aborted) return resolve();
@@ -128,7 +137,7 @@ export class SubtitleService {
     }
   }
 
-  private async processOne(): Promise<string> {
+  private async processOne(): Promise<SubtitleTickOutcome> {
     await this.sampleStateMetrics();
     const job = await this.db.selectNextSubtitleJob();
     if (!job) return "no_job";

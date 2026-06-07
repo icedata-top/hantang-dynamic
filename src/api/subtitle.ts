@@ -92,11 +92,12 @@ export async function fetchPlayerSubtitleTracks(
   bvid: string,
   cid: bigint,
 ): Promise<BiliSubtitleTrackInfo[]> {
-  const endRequest = subtitleApiRequestDurationSeconds.startTimer({
-    endpoint: "player_wbi_v2",
-  });
+  const query = await buildSignedQuery({ bvid, cid: cid.toString() });
+  let endRequest: (() => number) | null = null;
   try {
-    const query = await buildSignedQuery({ bvid, cid: cid.toString() });
+    endRequest = subtitleApiRequestDurationSeconds.startTimer({
+      endpoint: "player_wbi_v2",
+    });
     const response = await client.get<BiliPlayerWbiV2Response>(
       `/wbi/v2?${query}`,
       {
@@ -122,7 +123,7 @@ export async function fetchPlayerSubtitleTracks(
     });
     throw error;
   } finally {
-    endRequest();
+    endRequest?.();
   }
 }
 
