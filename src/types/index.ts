@@ -12,6 +12,9 @@ export type { BiliVideoDetailResponse, VideoTagResponse } from "./api/video";
 export type { BiliDynamicCard } from "./bilibili/dynamic";
 // Bilibili video types
 export type {
+  BiliVideoBatchDetailItemResponse,
+  BiliVideoBatchDetailResponse,
+  BiliVideoDetailDataForProcessing,
   BiliVideoFullDetailResponse,
   RecommendedVideo,
 } from "./bilibili/video";

@@ -1,5 +1,9 @@
 import { config } from "../config";
-import type { BiliVideoFullDetailResponse } from "../types";
+import type {
+  BiliVideoBatchDetailItemResponse,
+  BiliVideoBatchDetailResponse,
+  BiliVideoFullDetailResponse,
+} from "../types";
 import { logger } from "../utils/logger";
 import {
   type RequestConfig,
@@ -114,4 +118,29 @@ export const fetchVideoFullDetail = async (params: {
     }
     throw new Error(`API Error: Fetch video full detail failed (${fullUrl})`);
   }
+};
+
+export const fetchVideoFullDetailBatch = async (
+  ids: string[],
+  concurrency?: number,
+): Promise<BiliVideoBatchDetailItemResponse[]> => {
+  if (!config.bilibili.apiProxyUrl) {
+    throw new Error("Video detail batch requires bilibili.apiProxyUrl");
+  }
+
+  const endpoint = "/view/detail/batch";
+  const response = await webInterfaceClient.post<BiliVideoBatchDetailResponse>(
+    endpoint,
+    {
+      concurrency,
+      ids,
+    },
+    { metadata: { silent: true } } as RequestConfig,
+  );
+
+  if (response.data.code !== 0) {
+    throw new Error(`API Error: batch code ${response.data.code}`);
+  }
+
+  return response.data.data;
 };
