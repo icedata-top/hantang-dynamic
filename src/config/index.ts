@@ -13,6 +13,8 @@ import {
   createMinuteConfig,
   createNotificationsConfig,
   createProcessingConfig,
+  createRepairConfig,
+  createServerConfig,
   createSubtitleConfig,
   databaseSchema,
   exportSchema,
@@ -20,6 +22,8 @@ import {
   minuteSchema,
   notificationsSchema,
   processingSchema,
+  repairSchema,
+  serverSchema,
   subtitleSchema,
 } from "./schemas";
 
@@ -82,6 +86,8 @@ const configSchema = z.object({
   processing: processingSchema,
   export: exportSchema,
   metrics: metricsSchema,
+  repair: repairSchema,
+  server: serverSchema,
   subtitle: subtitleSchema,
   notifications: notificationsSchema,
 });
@@ -94,6 +100,8 @@ export const config = configSchema.parse({
   processing: createProcessingConfig(getConfigValue),
   export: createExportConfig(getConfigValue),
   metrics: createMetricsConfig(getConfigValue),
+  repair: createRepairConfig(getConfigValue),
+  server: createServerConfig(getConfigValue),
   subtitle: createSubtitleConfig(getConfigValue),
   notifications: createNotificationsConfig(getConfigValue),
 });

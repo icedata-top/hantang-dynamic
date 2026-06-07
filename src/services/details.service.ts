@@ -1,7 +1,12 @@
 import { getDynamic } from "../api/dynamic";
 import { fetchVideoFullDetail } from "../api/video";
 import { Database } from "../database";
-import type { BiliDynamicCard, RecommendedVideo, VideoData } from "../types";
+import type {
+  BiliDynamicCard,
+  BiliVideoDetailDataForProcessing,
+  RecommendedVideo,
+  VideoData,
+} from "../types";
 import type { DynamicData } from "../types/models/database";
 import { sharedApiRateLimiter } from "../utils/apiRateLimiter";
 import { filterVideo } from "../utils/filter";
@@ -98,15 +103,15 @@ export class DetailsService {
 
       // 3. Fetch details (with concurrency limiting)
       const release = await this.rateLimiter.acquire();
-      let videoData: VideoData;
-      let relatedVideos: RecommendedVideo[];
+      let detailData: BiliVideoDetailDataForProcessing;
       try {
-        ({ videoData, relatedVideos } = await this.fetchVideoDetailsWithRelated(
-          bvid || aid || 0,
-        ));
+        detailData = await this.fetchVideoDetails(bvid || aid || 0);
       } finally {
         release();
       }
+
+      const { videoData, relatedVideos } =
+        await this.processVideoDetailResponse(detailData);
 
       // Re-check cache using the true BVID from response (useful if we started with AID)
       if (!bvid && videoData.bvid) {
@@ -119,54 +124,11 @@ export class DetailsService {
         }
       }
 
-      // 4. Filter video
-      const filtered = await filterVideo(videoData);
-
-      // 5. Mark as processed in DB
-      await this.db.markVideoProcessed(videoData, filtered !== null);
-
-      if (!filtered) {
-        return { video: null, relatedVideos: [] };
-      }
-
-      // 6. Convert related videos to dynamics for recursive processing
-      const relatedDynamics = processRelated
-        ? this.convertRelatedToDynamics(relatedVideos)
-        : [];
-
-      return { video: filtered, relatedVideos: relatedDynamics };
+      return await this.processResolvedVideoData(videoData, relatedVideos, {
+        processRelated,
+      });
     } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message.startsWith("VIDEO_DELETED:")
-      ) {
-        const bvidFromError = error.message.split(":")[1] || String(id);
-        logger.debug(
-          `Video ${bvidFromError} has been deleted, marking as processed`,
-        );
-        await this.db.markVideoDeleted(bvidFromError);
-        return { video: null, relatedVideos: [] };
-      }
-
-      if (
-        error instanceof Error &&
-        error.message.startsWith("VIDEO_UNAVAILABLE:")
-      ) {
-        const parts = error.message.split(":");
-        const bvidFromError = parts[1] || String(id);
-        const apiCode = Number(parts[2]);
-        const apiMessage = parts.slice(3).join(":") || "";
-        logger.debug(
-          `Video ${bvidFromError} unavailable (code ${apiCode}: ${apiMessage}), marking as deleted`,
-        );
-        await this.db.markVideoDeleted(bvidFromError, {
-          api_code: apiCode,
-          api_message: apiMessage,
-        });
-        return { video: null, relatedVideos: [] };
-      }
-
-      throw error;
+      return await this.handleVideoProcessingError(id, error);
     }
   }
 
@@ -233,22 +195,16 @@ export class DetailsService {
     return "";
   }
 
-  private async fetchVideoDetailsWithRelated(id: string | number): Promise<{
+  async processVideoDetailResponse(
+    detailData: BiliVideoDetailDataForProcessing,
+  ): Promise<{
     videoData: VideoData;
     relatedVideos: RecommendedVideo[];
   }> {
-    const params = typeof id === "number" ? { aid: id } : { bvid: id };
+    const view = detailData.View;
+    const relatedVideos = detailData.Related || [];
 
-    const fullDetail = await fetchVideoFullDetail(params);
-
-    if (!fullDetail) {
-      throw new Error(`VIDEO_DELETED:${id}`);
-    }
-
-    const view = fullDetail.data.View;
-    const relatedVideos = fullDetail.data.Related || [];
-
-    const tagString = fullDetail.data.Tags.map((t) => t.tag_name).join(";");
+    const tagString = detailData.Tags.map((t) => t.tag_name).join(";");
 
     const videoData: VideoData = {
       aid: view.aid,
@@ -262,8 +218,8 @@ export class DetailsService {
       dynamic: view.dynamic || undefined,
       pic: view.pic,
       tag: tagString,
-      tag_new: fullDetail.data.Tags?.map((t) => t.tag_name),
-      participle: fullDetail.data.participle,
+      tag_new: detailData.Tags?.map((t) => t.tag_name),
+      participle: detailData.participle,
       pubdate: view.pubdate,
       ctime: view.ctime,
       is_deleted: false,
@@ -283,7 +239,7 @@ export class DetailsService {
     };
 
     // Store the video owner (may or may not be someone we follow directly)
-    const cardInfo = fullDetail.data.Card.card;
+    const cardInfo = detailData.Card.card;
     await this.storeUser({
       mid: cardInfo.mid,
       name: cardInfo.name,
@@ -305,6 +261,125 @@ export class DetailsService {
     }
 
     return { videoData, relatedVideos };
+  }
+
+  async processFetchedVideoDetail(
+    id: string | number,
+    detailData: BiliVideoDetailDataForProcessing,
+    options: {
+      processRelated?: boolean;
+    } = {},
+  ): Promise<{
+    video: VideoData | null;
+    relatedVideos: BiliDynamicCard[];
+  }> {
+    const { processRelated = true } = options;
+
+    try {
+      const { videoData, relatedVideos } =
+        await this.processVideoDetailResponse(detailData);
+
+      return await this.processResolvedVideoData(videoData, relatedVideos, {
+        processRelated,
+      });
+    } catch (error) {
+      return await this.handleVideoProcessingError(id, error);
+    }
+  }
+
+  async processVideoApiCode(
+    id: string | number,
+    code: number,
+    message: string,
+  ): Promise<{ video: null; relatedVideos: [] }> {
+    if (code === 404 || code === -404) {
+      return await this.handleVideoProcessingError(
+        id,
+        new Error(`VIDEO_DELETED:${id}`),
+      );
+    }
+
+    if ([62002, 62004, 62012].includes(code)) {
+      return await this.handleVideoProcessingError(
+        id,
+        new Error(`VIDEO_UNAVAILABLE:${id}:${code}:${message}`),
+      );
+    }
+
+    throw new Error(`API Error: code ${code} (${message})`);
+  }
+
+  private async processResolvedVideoData(
+    videoData: VideoData,
+    relatedVideos: RecommendedVideo[],
+    options: {
+      processRelated: boolean;
+    },
+  ): Promise<{
+    video: VideoData | null;
+    relatedVideos: BiliDynamicCard[];
+  }> {
+    const filtered = await filterVideo(videoData);
+
+    await this.db.markVideoProcessed(videoData, filtered !== null);
+
+    if (!filtered) {
+      return { video: null, relatedVideos: [] };
+    }
+
+    const relatedDynamics = options.processRelated
+      ? this.convertRelatedToDynamics(relatedVideos)
+      : [];
+
+    return { video: filtered, relatedVideos: relatedDynamics };
+  }
+
+  private async handleVideoProcessingError(
+    id: string | number,
+    error: unknown,
+  ): Promise<{ video: null; relatedVideos: [] }> {
+    if (error instanceof Error && error.message.startsWith("VIDEO_DELETED:")) {
+      const bvidFromError = error.message.split(":")[1] || String(id);
+      logger.debug(
+        `Video ${bvidFromError} has been deleted, marking as processed`,
+      );
+      await this.db.markVideoDeleted(bvidFromError);
+      return { video: null, relatedVideos: [] };
+    }
+
+    if (
+      error instanceof Error &&
+      error.message.startsWith("VIDEO_UNAVAILABLE:")
+    ) {
+      const parts = error.message.split(":");
+      const bvidFromError = parts[1] || String(id);
+      const apiCode = Number(parts[2]);
+      const apiMessage = parts.slice(3).join(":") || "";
+      logger.debug(
+        `Video ${bvidFromError} unavailable (code ${apiCode}: ${apiMessage}), marking as deleted`,
+      );
+      await this.db.markVideoDeleted(bvidFromError, {
+        api_code: apiCode,
+        api_message: apiMessage,
+      });
+      return { video: null, relatedVideos: [] };
+    }
+
+    throw error;
+  }
+
+  private async fetchVideoDetails(
+    id: string | number,
+  ): Promise<BiliVideoDetailDataForProcessing> {
+    const params = typeof id === "number" ? { aid: id } : { bvid: id };
+
+    const fullDetail = await fetchVideoFullDetail(params);
+
+    if (!fullDetail) {
+      throw new Error(`VIDEO_DELETED:${id}`);
+    }
+
+    return fullDetail.data;
   }
 
   /**

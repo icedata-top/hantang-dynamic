@@ -22,6 +22,9 @@ export type {
 } from "./bilibili/subtitle";
 // Bilibili video types
 export type {
+  BiliVideoBatchDetailItemResponse,
+  BiliVideoBatchDetailResponse,
+  BiliVideoDetailDataForProcessing,
   BiliVideoFullDetailResponse,
   RecommendedVideo,
 } from "./bilibili/video";

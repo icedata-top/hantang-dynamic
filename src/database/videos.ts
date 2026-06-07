@@ -2,6 +2,12 @@ import type { Pool } from "pg";
 import type { VideoSnapshot } from "../types/models/database.js";
 import type { VideoData } from "../types/models/video.js";
 
+export interface BvidListQuery {
+  where?: string;
+  params?: unknown[];
+  limit?: number;
+}
+
 /**
  * Check if a video has been processed
  */
@@ -191,15 +197,24 @@ export async function markVideoDeleted(
  */
 export async function getBvidList(
   pool: Pool,
-  where?: string,
+  query: string | BvidListQuery = {},
 ): Promise<string[]> {
+  const normalizedQuery = typeof query === "string" ? { where: query } : query;
   let sql = "SELECT bvid FROM processed_videos";
-  if (where) {
-    sql += ` WHERE ${where}`;
+  if (normalizedQuery.where) {
+    sql += ` WHERE ${normalizedQuery.where}`;
   }
   sql += " ORDER BY created_at DESC";
+  if (normalizedQuery.limit !== undefined) {
+    sql += ` LIMIT $${(normalizedQuery.params ?? []).length + 1}`;
+  }
 
-  const result = await pool.query(sql);
+  const params =
+    normalizedQuery.limit !== undefined
+      ? [...(normalizedQuery.params ?? []), normalizedQuery.limit]
+      : (normalizedQuery.params ?? []);
+
+  const result = await pool.query(sql, params);
   return result.rows.map((row) => row.bvid as string);
 }
 

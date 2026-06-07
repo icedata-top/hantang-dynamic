@@ -27,6 +27,8 @@ import type {
 import type { VideoData } from "../types/models/video.js";
 import { logger } from "../utils/logger.js";
 
+export type { BvidListQuery } from "./videos.js";
+
 function quotePostgresIdentifier(identifier: string): string {
   return `"${identifier.replace(/"/g, '""')}"`;
 }
@@ -100,6 +102,7 @@ import {
 import { getDailyCollectionCandidates } from "./videoDaily.js";
 import { insertVideoMinuteSamples } from "./videoMinute.js";
 import {
+  type BvidListQuery,
   getAllProcessedIds,
   getBvidList,
   getProcessedVideos,
@@ -298,8 +301,8 @@ export class Database {
   /**
    * Get list of bvids only (lightweight, for batch processing)
    */
-  public async getBvidList(where?: string): Promise<string[]> {
-    return getBvidList(this.ensurePool(), where);
+  public async getBvidList(query?: string | BvidListQuery): Promise<string[]> {
+    return getBvidList(this.ensurePool(), query);
   }
 
   /**
