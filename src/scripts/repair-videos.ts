@@ -1,9 +1,12 @@
+import { fetchVideoFullDetailBatch } from "../api/video.js";
 import { config } from "../config/index.js";
 import { type BvidListQuery, Database } from "../database/index.js";
 import { DetailsService } from "../services/details.service.js";
+import type { BiliVideoBatchDetailItemResponse } from "../types/index.js";
 import { logger } from "../utils/logger.js";
 
 const POOL_SIZE = config.application.concurrencyLimit || 20;
+const VIDEO_DETAIL_BATCH_SIZE = 50;
 
 type RepairFilterColumn =
   | "aid"
@@ -106,6 +109,55 @@ async function processVideo(
   }
 }
 
+async function processBatchItem(
+  detailsService: DetailsService,
+  bvid: string,
+  item: BiliVideoBatchDetailItemResponse | undefined,
+  index: number,
+  total: number,
+): Promise<{ success: boolean; skipped: boolean }> {
+  try {
+    if (!item) {
+      throw new Error("Missing batch item response");
+    }
+
+    if (item.code !== 0) {
+      await detailsService.processVideoApiCode(bvid, item.code, item.message);
+      return { success: false, skipped: true };
+    }
+
+    if (!item.data) {
+      throw new Error("Batch item response missing data");
+    }
+
+    const { video } = await detailsService.processFetchedVideoDetail(
+      bvid,
+      item.data,
+      {
+        processRelated: false,
+      },
+    );
+
+    if (video) {
+      logger.info(
+        `[${index}/${total}] ${bvid}: aid=${BigInt(video.aid)}, user_id=${BigInt(
+          video.user_id,
+        )}`,
+      );
+      return { success: true, skipped: false };
+    }
+
+    return { success: false, skipped: true };
+  } catch (error) {
+    const errorMsg =
+      error instanceof Error
+        ? error.message
+        : JSON.stringify(error) || String(error);
+    logger.error(`[${index}/${total}] Error processing ${bvid}: ${errorMsg}`);
+    return { success: false, skipped: false };
+  }
+}
+
 /**
  * Worker pool implementation: maintains a fixed number of concurrent tasks.
  * When one task completes, the next task from the queue is started.
@@ -131,6 +183,70 @@ async function runWithPool<T, R>(
 
   await Promise.all(workers);
   return results;
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+async function processVideoBatch(
+  detailsService: DetailsService,
+  bvids: string[],
+  offset: number,
+  total: number,
+): Promise<Array<{ success: boolean; skipped: boolean }>> {
+  const items = await fetchVideoFullDetailBatch(bvids, bvids.length);
+  const itemById = new Map(items.map((item) => [item.id, item]));
+
+  return runWithPool(bvids, POOL_SIZE, async (bvid, index) =>
+    processBatchItem(
+      detailsService,
+      bvid,
+      itemById.get(bvid),
+      offset + index + 1,
+      total,
+    ),
+  );
+}
+
+async function runWithBatchProxy(
+  detailsService: DetailsService,
+  bvids: string[],
+): Promise<Array<{ success: boolean; skipped: boolean }> | null> {
+  if (!config.bilibili.apiProxyUrl) {
+    return null;
+  }
+
+  logger.info(
+    `Using proxy video detail batch endpoint with batch size ${VIDEO_DETAIL_BATCH_SIZE}`,
+  );
+
+  const results: Array<{ success: boolean; skipped: boolean }> = [];
+  const chunks = chunkArray(bvids, VIDEO_DETAIL_BATCH_SIZE);
+
+  try {
+    for (const [chunkIndex, chunk] of chunks.entries()) {
+      results.push(
+        ...(await processVideoBatch(
+          detailsService,
+          chunk,
+          chunkIndex * VIDEO_DETAIL_BATCH_SIZE,
+          bvids.length,
+        )),
+      );
+    }
+    return results;
+  } catch (error) {
+    logger.warn(
+      "Video detail batch request failed; falling back to single-video repair",
+      error,
+    );
+    return null;
+  }
 }
 
 export async function runRepairVideos(
@@ -182,9 +298,11 @@ export async function runRepairVideosWithDatabase(
   let errorCount = 0;
   let skippedCount = 0;
 
-  const results = await runWithPool(bvids, POOL_SIZE, async (bvid, index) => {
-    return processVideo(detailsService, bvid, index + 1, bvids.length);
-  });
+  const results =
+    (await runWithBatchProxy(detailsService, bvids)) ??
+    (await runWithPool(bvids, POOL_SIZE, async (bvid, index) => {
+      return processVideo(detailsService, bvid, index + 1, bvids.length);
+    }));
 
   for (const result of results) {
     if (result.success) successCount++;
