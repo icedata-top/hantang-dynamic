@@ -9,3 +9,5 @@ export {
   notificationsSchema,
 } from "./notifications";
 export { createProcessingConfig, processingSchema } from "./processing";
+export { createRepairConfig, repairSchema } from "./repair";
+export { createServerConfig, serverSchema } from "./server";
