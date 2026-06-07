@@ -139,7 +139,9 @@ export const fetchVideoFullDetailBatch = async (
   );
 
   if (response.data.code !== 0) {
-    throw new Error(`API Error: batch code ${response.data.code}`);
+    throw new Error(
+      `API Error: batch code ${response.data.code}: ${response.data.message}`,
+    );
   }
 
   return response.data.data;

@@ -202,15 +202,13 @@ async function processVideoBatch(
   const items = await fetchVideoFullDetailBatch(bvids, bvids.length);
   const itemById = new Map(items.map((item) => [item.id, item]));
 
-  return Promise.all(
-    bvids.map((bvid, index) =>
-      processBatchItem(
-        detailsService,
-        bvid,
-        itemById.get(bvid),
-        offset + index + 1,
-        total,
-      ),
+  return runWithPool(bvids, POOL_SIZE, async (bvid, index) =>
+    processBatchItem(
+      detailsService,
+      bvid,
+      itemById.get(bvid),
+      offset + index + 1,
+      total,
     ),
   );
 }
