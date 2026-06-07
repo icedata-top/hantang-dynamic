@@ -10,6 +10,16 @@ export type {
 export type { BiliVideoDetailResponse, VideoTagResponse } from "./api/video";
 // Bilibili dynamic types
 export type { BiliDynamicCard } from "./bilibili/dynamic";
+export type {
+  BiliPlayerSubtitleResponse,
+  BiliPlayerWbiV2Response,
+  BiliSubtitleJson,
+  BiliSubtitleLine,
+  BiliSubtitleStyle,
+  BiliSubtitleTrackInfo,
+  SubtitleState,
+  VideoSubtitleRow,
+} from "./bilibili/subtitle";
 // Bilibili video types
 export type {
   BiliVideoFullDetailResponse,

@@ -16,6 +16,7 @@ import { initVideoDailyLatestSchema } from "./video_daily_latest.js";
 import { initVideoHistorySchema } from "./video_history.js";
 import { initVideoMinuteSchema } from "./video_minute.js";
 import { initVideoStaticSchema } from "./video_static.js";
+import { initVideoSubtitlesSchema } from "./video_subtitles.js";
 import { initVideosSchema } from "./videos.js";
 
 export async function initializeSchema(
@@ -50,6 +51,8 @@ export async function initializeSchema(
     initCronVideoStatic(pool, schema),
     initCronUserStats(pool, schema),
   ]);
+
+  await initVideoSubtitlesSchema(pool);
 
   logger.info("Database schema initialized");
 }

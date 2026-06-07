@@ -9,3 +9,4 @@ export {
   notificationsSchema,
 } from "./notifications";
 export { createProcessingConfig, processingSchema } from "./processing";
+export { createSubtitleConfig, subtitleSchema } from "./subtitle";

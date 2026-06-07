@@ -146,6 +146,27 @@ export const minuteBatchDurationSeconds = new Histogram({
   registers: [metricsRegistry],
 });
 
+export const subtitleJobsTotal = new Counter({
+  name: `${PREFIX}subtitle_jobs_total`,
+  help: "Total subtitle collection jobs by outcome.",
+  labelNames: ["outcome"] as const,
+  registers: [metricsRegistry],
+});
+
+export const subtitleTracksTotal = new Counter({
+  name: `${PREFIX}subtitle_tracks_total`,
+  help: "Total subtitle tracks stored by kind.",
+  labelNames: ["kind"] as const,
+  registers: [metricsRegistry],
+});
+
+export const subtitleJobDurationSeconds = new Histogram({
+  name: `${PREFIX}subtitle_job_duration_seconds`,
+  help: "Subtitle collection job duration in seconds.",
+  buckets: [0.5, 1, 2, 5, 10, 30, 60, 120],
+  registers: [metricsRegistry],
+});
+
 export const notificationsTotal = new Counter({
   name: `${PREFIX}notifications_total`,
   help: "Total notification attempts by channel and result.",

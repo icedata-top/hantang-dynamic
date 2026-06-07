@@ -4,6 +4,7 @@ import { Database } from "./database";
 import { initializeBuildInfo } from "./metrics/registry";
 import { startMetricsServer, stopMetricsServer } from "./metrics/server";
 import { MinuteHandler } from "./services/minute/minuteHandler";
+import { SubtitleService } from "./services/subtitle.service";
 import { DynamicTracker } from "./services/tracker";
 import { logger } from "./utils/logger";
 import { APP_VERSION } from "./version";
@@ -25,7 +26,12 @@ async function runTracker() {
 
   const trackers = accounts.map((account) => new DynamicTracker(account));
   const minuteHandler = config.minute.enabled ? new MinuteHandler() : null;
+  const subtitleService =
+    config.subtitle.enabled && accounts.length > 0
+      ? new SubtitleService(accounts[0])
+      : null;
   minuteHandler?.start();
+  subtitleService?.start();
 
   // Graceful shutdown
   const shutdown = async () => {
@@ -34,6 +40,7 @@ async function runTracker() {
       tracker.stop();
     }
     if (minuteHandler) await minuteHandler.stop();
+    if (subtitleService) await subtitleService.stop();
     await stopMetricsServer();
     try {
       await Database.getInstance().close();

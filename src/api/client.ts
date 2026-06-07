@@ -410,6 +410,30 @@ export function createAccountDynamicClient(
   });
 }
 
+export function createAccountWebInterfaceClient(
+  cookieJar: CookieJar,
+  accountCookieFilePath: string,
+  stateManager: StateManager,
+): AxiosInstance {
+  return createClient("https://api.bilibili.com/x/web-interface", {
+    cookieJar,
+    cookieFilePath: accountCookieFilePath,
+    stateManager,
+  });
+}
+
+export function createAccountPlayerClient(
+  cookieJar: CookieJar,
+  accountCookieFilePath: string,
+  stateManager: StateManager,
+): AxiosInstance {
+  return createClient("https://api.bilibili.com/x/player", {
+    cookieJar,
+    cookieFilePath: accountCookieFilePath,
+    stateManager,
+  });
+}
+
 export const dynamicClient = createClient(
   "https://api.vc.bilibili.com/dynamic_svr/v1/dynamic_svr",
 );
@@ -431,6 +455,10 @@ export const webInterfaceClient = createClient(
 // Direct client without proxy for fallback
 export const webInterfaceDirectClient = createClient(
   "https://api.bilibili.com/x/web-interface",
+);
+
+export const playerDirectClient = createClient(
+  "https://api.bilibili.com/x/player",
 );
 
 export const medialistClient = createClient(

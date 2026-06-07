@@ -13,12 +13,14 @@ import {
   createMinuteConfig,
   createNotificationsConfig,
   createProcessingConfig,
+  createSubtitleConfig,
   databaseSchema,
   exportSchema,
   metricsSchema,
   minuteSchema,
   notificationsSchema,
   processingSchema,
+  subtitleSchema,
 } from "./schemas";
 
 let tomlData: unknown = {};
@@ -80,6 +82,7 @@ const configSchema = z.object({
   processing: processingSchema,
   export: exportSchema,
   metrics: metricsSchema,
+  subtitle: subtitleSchema,
   notifications: notificationsSchema,
 });
 
@@ -91,5 +94,6 @@ export const config = configSchema.parse({
   processing: createProcessingConfig(getConfigValue),
   export: createExportConfig(getConfigValue),
   metrics: createMetricsConfig(getConfigValue),
+  subtitle: createSubtitleConfig(getConfigValue),
   notifications: createNotificationsConfig(getConfigValue),
 });

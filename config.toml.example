@@ -74,6 +74,13 @@ bootstrap_tid_v2_allowlist = [2022, 2061]
 processed_backfill_new_video_age_days = 7
 collection_business_timezone = "Asia/Shanghai"
 
+[subtitle]
+# Subtitle collection is global, single-consumer, and direct-to-Bilibili with session cookies.
+enabled = false
+view_threshold = 10000
+fetch_interval_ms = 60000
+max_retries = 3
+
 [processing]
 [processing.features]
 # Feature toggles
