@@ -6,6 +6,10 @@ import {
   dbQueryErrorsTotal,
 } from "../metrics/registry.js";
 import type {
+  SubtitleState,
+  VideoSubtitleRow,
+} from "../types/bilibili/subtitle.js";
+import type {
   DatabaseStats,
   DiscoveredUserData,
   DynamicData,
@@ -75,6 +79,21 @@ import {
 } from "./recommendations.js";
 import { initializeSchema } from "./schema/index.js";
 import { getStats } from "./stats.js";
+import {
+  cidHasAiSubtitle,
+  cidHasManualSubtitle,
+  getSubtitleStateCounts,
+  getSubtitlesByAid,
+  getSubtitlesByCid,
+  recordSubtitleFailure,
+  type SubtitleJob,
+  type SubtitleStateMetric,
+  selectNextSubtitleJob,
+  type UpsertSubtitleInput,
+  type UpsertSubtitleResult,
+  updateSubtitleState,
+  upsertSubtitlesBatch,
+} from "./subtitles.js";
 import {
   addDiscoveredUser,
   getTopDiscoveredUsers,
@@ -297,6 +316,65 @@ export class Database {
     limit?: number,
   ): Promise<VideoSnapshot[]> {
     return getVideoHistory(this.ensurePool(), bvid, limit);
+  }
+
+  // ===== Subtitle Operations =====
+
+  public async selectNextSubtitleJob(): Promise<SubtitleJob | null> {
+    return selectNextSubtitleJob(this.ensurePool());
+  }
+
+  public async getSubtitleStateCounts(): Promise<
+    Partial<Record<SubtitleStateMetric, number>>
+  > {
+    return getSubtitleStateCounts(this.ensurePool());
+  }
+
+  public async updateSubtitleState(
+    aid: bigint,
+    state: SubtitleState,
+  ): Promise<void> {
+    return updateSubtitleState(this.ensurePool(), aid, state);
+  }
+
+  public async recordSubtitleFailure(
+    aid: bigint,
+    errorMessage: string,
+  ): Promise<{ state: SubtitleState | null; failureCount: number }> {
+    return recordSubtitleFailure(
+      this.ensurePool(),
+      aid,
+      errorMessage,
+      config.subtitle.maxRetries,
+    );
+  }
+
+  public async upsertSubtitlesBatch(
+    inputs: UpsertSubtitleInput[],
+  ): Promise<UpsertSubtitleResult> {
+    return upsertSubtitlesBatch(this.ensurePool(), inputs);
+  }
+
+  public async getSubtitlesByAid(aid: bigint): Promise<VideoSubtitleRow[]> {
+    return getSubtitlesByAid(this.ensurePool(), aid);
+  }
+
+  public async getSubtitlesByCid(
+    aid: bigint,
+    cid: bigint,
+  ): Promise<VideoSubtitleRow[]> {
+    return getSubtitlesByCid(this.ensurePool(), aid, cid);
+  }
+
+  public async cidHasManualSubtitle(
+    aid: bigint,
+    cid: bigint,
+  ): Promise<boolean> {
+    return cidHasManualSubtitle(this.ensurePool(), aid, cid);
+  }
+
+  public async cidHasAiSubtitle(aid: bigint, cid: bigint): Promise<boolean> {
+    return cidHasAiSubtitle(this.ensurePool(), aid, cid);
   }
 
   // ===== Dynamic Operations =====

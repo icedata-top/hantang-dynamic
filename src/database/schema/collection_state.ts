@@ -61,6 +61,83 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     ADD COLUMN IF NOT EXISTS last_view_change_at timestamptz
   `);
 
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD COLUMN IF NOT EXISTS subtitle_state varchar(20) DEFAULT NULL
+  `);
+
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD COLUMN IF NOT EXISTS subtitle_failure_count integer NOT NULL DEFAULT 0
+  `);
+
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD COLUMN IF NOT EXISTS last_subtitle_error_at timestamptz
+  `);
+
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD COLUMN IF NOT EXISTS subtitle_last_error text
+  `);
+
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    DROP CONSTRAINT IF EXISTS chk_subtitle_state
+  `);
+
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD CONSTRAINT chk_subtitle_state
+      CHECK (
+        subtitle_state IS NULL
+        OR subtitle_state IN (
+          'pending', 'has_manual', 'partial_manual', 'ai_only',
+          'no_subtitle', 'skipped'
+        )
+      )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_video_collection_subtitle_pending
+    ON video_collection_state(last_view DESC)
+    WHERE subtitle_state = 'pending'
+  `);
+
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_is_subtitle_gate(
+      p_gate bigint
+    ) RETURNS boolean AS $$
+      SELECT CASE
+        WHEN p_gate IS NULL THEN false
+        WHEN p_gate = 10000 THEN true
+        WHEN p_gate < 1000000 AND p_gate % 100000 = 0 THEN true
+        WHEN p_gate >= 1000000 AND p_gate % 1000000 = 0 THEN true
+        ELSE false
+      END
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE
+  `);
+
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_next_subtitle_state(
+      p_current_state text,
+      p_last_view bigint,
+      p_crossed_gate bigint DEFAULT NULL
+    ) RETURNS text AS $$
+      SELECT CASE
+        WHEN p_current_state IN ('has_manual', 'skipped') THEN p_current_state
+        WHEN fn_is_subtitle_gate(p_crossed_gate)
+          AND (
+            p_current_state IS NULL
+            OR p_current_state IN ('partial_manual', 'ai_only', 'no_subtitle')
+          )
+        THEN 'pending'
+        WHEN p_current_state IS NULL AND COALESCE(p_last_view, 0) >= ${config.subtitle.viewThreshold} THEN 'pending'
+        ELSE p_current_state
+      END
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE
+  `);
+
   // Bilibili view counters refresh roughly every 75 s (varies 60-90 s).
   // Polling faster than that just retrieves stale values, so the effective
   // base interval is floored to 75 s.  Only affects priority = 1
@@ -281,7 +358,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       INSERT INTO video_collection_state (
         aid, latest_daily_delta, weekly_avg_daily_delta, daily_delta_source,
         priority, next_minute_due_at, last_daily_record_date, last_view,
-        next_gate_value, updated_at
+        next_gate_value, subtitle_state, updated_at
       )
       SELECT
         c.aid, c.latest_daily_delta, c.weekly_avg_daily_delta, c.daily_delta_source,
@@ -292,6 +369,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         v_today,
         c.last_view,
         c.next_gate_value,
+        fn_next_subtitle_state(NULL, c.last_view, c.crossed_gate),
         p_now
       FROM calculated c
       ON CONFLICT (aid) DO UPDATE SET
@@ -329,6 +407,15 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           THEN EXCLUDED.next_gate_value
           ELSE video_collection_state.next_gate_value
         END,
+        subtitle_state         = fn_next_subtitle_state(
+          video_collection_state.subtitle_state,
+          COALESCE(greatest(EXCLUDED.last_view, video_collection_state.last_view), EXCLUDED.last_view, video_collection_state.last_view),
+          (
+            SELECT c.crossed_gate
+            FROM calculated c
+            WHERE c.aid = EXCLUDED.aid
+          )
+        ),
         updated_at             = p_now;
 
       GET DIAGNOSTICS changed_count = ROW_COUNT;
@@ -466,6 +553,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         priority,
         bootstrap_until,
         next_minute_due_at,
+        subtitle_state,
         updated_at
       )
       VALUES (
@@ -480,6 +568,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           WHEN is_new_video THEN fn_video_collection_next_due_at(p_aid, p_bootstrap_priority, p_now)
           ELSE NULL
         END,
+        NULL,
         p_now
       )
       ON CONFLICT (aid) DO UPDATE SET
@@ -495,6 +584,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         END,
         bootstrap_until = COALESCE(video_collection_state.bootstrap_until, EXCLUDED.bootstrap_until),
         next_minute_due_at = COALESCE(video_collection_state.next_minute_due_at, EXCLUDED.next_minute_due_at),
+        subtitle_state = video_collection_state.subtitle_state,
         updated_at = p_now;
 
       RETURN CASE WHEN is_new_video THEN 'upserted_bootstrap' ELSE 'upserted_backfill_daily_only' END;
@@ -832,6 +922,11 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
             ELSE fn_video_collection_next_due_at(s.aid, c.next_priority, c."time" + interval '1 second')
           END,
           next_gate_value = c.new_next_gate,
+          subtitle_state = fn_next_subtitle_state(
+            s.subtitle_state,
+            c.latest_view,
+            c.crossed_gate
+          ),
           updated_at = now()
       FROM computed c
       WHERE s.aid = c.aid;

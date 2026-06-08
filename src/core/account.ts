@@ -2,7 +2,11 @@ import type { AxiosInstance } from "axios";
 import type { CookieJar } from "tough-cookie";
 import {
   createAccountDynamicClient,
+  createAccountPlayerClient,
+  createAccountWebInterfaceClient,
   dynamicClient as globalDynamicClient,
+  playerDirectClient as globalPlayerClient,
+  webInterfaceDirectClient as globalWebInterfaceClient,
 } from "../api/client";
 import { config } from "../config";
 import {
@@ -24,6 +28,10 @@ export interface AccountContext {
   stateManager: StateManager;
   /** Authenticated dynamic API client for this account */
   dynamicClient: AxiosInstance;
+  /** Authenticated direct web-interface client for this account */
+  webInterfaceClient: AxiosInstance;
+  /** Authenticated direct player client for this account */
+  playerClient: AxiosInstance;
 }
 
 let _accounts: AccountContext[] | null = null;
@@ -67,6 +75,16 @@ export function loadAccounts(): AccountContext[] {
         filePath,
         stateManager,
       );
+      const webInterfaceClient = createAccountWebInterfaceClient(
+        jar,
+        filePath,
+        stateManager,
+      );
+      const playerClient = createAccountPlayerClient(
+        jar,
+        filePath,
+        stateManager,
+      );
 
       logger.info(`Loaded account uid=${uid} from ${filePath}`);
       return {
@@ -75,6 +93,8 @@ export function loadAccounts(): AccountContext[] {
         cookieFilePath: filePath,
         stateManager,
         dynamicClient: client,
+        webInterfaceClient,
+        playerClient,
       };
     });
   } else {
@@ -87,6 +107,8 @@ export function loadAccounts(): AccountContext[] {
         cookieFilePath: null,
         stateManager: new StateManager("./state.json"),
         dynamicClient: globalDynamicClient,
+        webInterfaceClient: globalWebInterfaceClient,
+        playerClient: globalPlayerClient,
       },
     ];
   }
