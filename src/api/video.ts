@@ -28,6 +28,21 @@ function isNotFoundError(error: unknown): boolean {
   );
 }
 
+type VideoBatchResponse = {
+  data: BiliVideoBatchDetailResponse;
+};
+
+function isHtmlNotFoundError(error: unknown): boolean {
+  return (
+    isNotFoundError(error) &&
+    typeof error === "object" &&
+    error !== null &&
+    "data" in error &&
+    typeof error.data === "string" &&
+    error.data.toLowerCase().includes("<html")
+  );
+}
+
 /**
  * Validate response code from the video detail endpoint.
  * - code 0: return data as-is
@@ -129,16 +144,39 @@ export const fetchVideoFullDetailBatch = async (
   }
 
   const endpoint = "/view/detail/batch";
-  const response = await webInterfaceClient.post<BiliVideoBatchDetailResponse>(
-    endpoint,
-    {
-      concurrency,
-      ids,
-    },
-    { metadata: { silent: true } } as RequestConfig,
-  );
+  let response: VideoBatchResponse;
+  try {
+    response = await webInterfaceClient.post<BiliVideoBatchDetailResponse>(
+      endpoint,
+      {
+        concurrency,
+        ids,
+      },
+      { metadata: { silent: true } } as RequestConfig,
+    );
+  } catch (error) {
+    if (isHtmlNotFoundError(error)) {
+      logger.debug(
+        `Video detail batch returned HTML 404 for ${ids.length} id(s); treating batch items as deleted`,
+      );
+      return ids.map((id) => ({
+        id,
+        code: 404,
+        message: "HTTP 404",
+      }));
+    }
+    throw error;
+  }
 
   if (response.data.code !== 0) {
+    if (response.data.code === 404 || response.data.code === -404) {
+      return ids.map((id) => ({
+        id,
+        code: response.data.code,
+        message: response.data.message,
+      }));
+    }
+
     throw new Error(
       `API Error: batch code ${response.data.code}: ${response.data.message}`,
     );

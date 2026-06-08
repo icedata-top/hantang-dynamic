@@ -193,6 +193,10 @@ function chunkArray<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 async function processVideoBatch(
   detailsService: DetailsService,
   bvids: string[],
@@ -228,25 +232,48 @@ async function runWithBatchProxy(
   const results: Array<{ success: boolean; skipped: boolean }> = [];
   const chunks = chunkArray(bvids, VIDEO_DETAIL_BATCH_SIZE);
 
-  try {
-    for (const [chunkIndex, chunk] of chunks.entries()) {
+  for (const [chunkIndex, chunk] of chunks.entries()) {
+    const offset = chunkIndex * VIDEO_DETAIL_BATCH_SIZE;
+    try {
       results.push(
         ...(await processVideoBatch(
           detailsService,
           chunk,
-          chunkIndex * VIDEO_DETAIL_BATCH_SIZE,
+          offset,
           bvids.length,
         )),
       );
+    } catch (error) {
+      logger.warn(
+        `Video detail batch request failed for chunk ${chunkIndex + 1}/${chunks.length}; falling back to single-video repair for this chunk`,
+        summarizeBatchError(error),
+      );
+      results.push(
+        ...(await runWithPool(chunk, POOL_SIZE, async (bvid, index) =>
+          processVideo(detailsService, bvid, offset + index + 1, bvids.length),
+        )),
+      );
     }
-    return results;
-  } catch (error) {
-    logger.warn(
-      "Video detail batch request failed; falling back to single-video repair",
-      error,
-    );
-    return null;
   }
+
+  return results;
+}
+
+function summarizeBatchError(error: unknown): unknown {
+  if (!isRecord(error)) return error;
+
+  const code = "code" in error ? error.code : undefined;
+  const message = "message" in error ? error.message : undefined;
+  const data = "data" in error ? error.data : undefined;
+
+  return {
+    code,
+    data:
+      typeof data === "string"
+        ? `${data.slice(0, 200)}${data.length > 200 ? "..." : ""}`
+        : data,
+    message,
+  };
 }
 
 export async function runRepairVideos(
