@@ -80,7 +80,7 @@ import {
 import { initializeSchema } from "./schema/index.js";
 import { getStats } from "./stats.js";
 import {
-  aidHasManualSubtitle,
+  cidHasAiSubtitle,
   cidHasManualSubtitle,
   getSubtitleStateCounts,
   getSubtitlesByAid,
@@ -373,8 +373,8 @@ export class Database {
     return cidHasManualSubtitle(this.ensurePool(), aid, cid);
   }
 
-  public async aidHasManualSubtitle(aid: bigint): Promise<boolean> {
-    return aidHasManualSubtitle(this.ensurePool(), aid);
+  public async cidHasAiSubtitle(aid: bigint, cid: bigint): Promise<boolean> {
+    return cidHasAiSubtitle(this.ensurePool(), aid, cid);
   }
 
   // ===== Dynamic Operations =====

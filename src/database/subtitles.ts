@@ -286,17 +286,18 @@ export async function cidHasManualSubtitle(
   return result.rows[0]?.found === true;
 }
 
-export async function aidHasManualSubtitle(
+export async function cidHasAiSubtitle(
   pool: Pool,
   aid: bigint,
+  cid: bigint,
 ): Promise<boolean> {
   const result = await pool.query<{ found: boolean }>(
     `SELECT EXISTS(
        SELECT 1
        FROM video_subtitles
-       WHERE aid = $1 AND ai_type = 0
+       WHERE aid = $1 AND cid = $2 AND ai_type > 0
      ) AS found`,
-    [aid.toString()],
+    [aid.toString(), cid.toString()],
   );
   return result.rows[0]?.found === true;
 }

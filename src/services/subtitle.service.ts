@@ -173,13 +173,17 @@ export class SubtitleService {
       }
 
       const bvid = view.bvid || job.bvid;
-      let anyManual = await this.db.aidHasManualSubtitle(job.aid);
+      let allPagesHaveManual = view.pages.length > 0;
       let anyAi = false;
       const subtitles: UpsertSubtitleInput[] = [];
 
       for (const page of view.pages) {
-        if (await this.db.cidHasManualSubtitle(job.aid, page.cid)) {
-          anyManual = true;
+        let pageHasManual = await this.db.cidHasManualSubtitle(
+          job.aid,
+          page.cid,
+        );
+        anyAi = anyAi || (await this.db.cidHasAiSubtitle(job.aid, page.cid));
+        if (pageHasManual) {
           continue;
         }
 
@@ -188,13 +192,11 @@ export class SubtitleService {
           bvid,
           page.cid,
         );
-        if (tracks.length === 0) continue;
-
         for (const track of tracks) {
           if (!track.subtitle_url) continue;
 
           const subtitleJson = await fetchSubtitleJson(track.subtitle_url);
-          if (isManualSubtitle(track)) anyManual = true;
+          if (isManualSubtitle(track)) pageHasManual = true;
           if (isAiSubtitle(track)) anyAi = true;
 
           subtitles.push({
@@ -209,6 +211,7 @@ export class SubtitleService {
             style: getSubtitleStyle(subtitleJson),
           });
         }
+        if (!pageHasManual) allPagesHaveManual = false;
       }
 
       const storedResult = await this.db.upsertSubtitlesBatch(subtitles);
@@ -221,7 +224,7 @@ export class SubtitleService {
         subtitleTracksTotal.inc({ kind: "ai" }, storedResult.insertedAiCount);
       }
 
-      const nextState = anyManual
+      const nextState = allPagesHaveManual
         ? "has_manual"
         : anyAi
           ? "ai_only"
