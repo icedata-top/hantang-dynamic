@@ -43,6 +43,16 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_video_collection_state_bootstrap_expire
+    ON video_collection_state(bootstrap_until, aid)
+    WHERE priority > 0
+      AND daily_delta_source = 'bootstrap'
+      AND bootstrap_until IS NOT NULL
+      AND latest_daily_delta IS NULL
+      AND weekly_avg_daily_delta IS NULL
+  `);
+
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_video_collection_state_daily
     ON video_collection_state(priority, last_daily_record_date, aid)
   `);

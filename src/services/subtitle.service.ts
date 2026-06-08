@@ -24,6 +24,8 @@ import {
 } from "../types/bilibili/subtitle.js";
 import { logger } from "../utils/logger";
 
+const NO_JOB_IDLE_SLEEP_MS = 10 * 60 * 1000;
+
 type SubtitleTickOutcome =
   | "no_job"
   | "skipped"
@@ -102,16 +104,23 @@ export class SubtitleService {
 
   private async loop(signal: AbortSignal): Promise<void> {
     while (this.isRunning) {
+      let sleepMs = config.subtitle.fetchIntervalMs;
       try {
         subtitleLastTickTimestampSeconds.set(Date.now() / 1000);
         const outcome = await this.processOne();
         this.recordTick(outcome);
+        if (outcome === "no_job") {
+          sleepMs = Math.max(
+            config.subtitle.fetchIntervalMs,
+            NO_JOB_IDLE_SLEEP_MS,
+          );
+        }
       } catch (error) {
         this.recordTick("error");
         logger.error("Subtitle service loop error:", error);
       }
 
-      await cancellableSleep(config.subtitle.fetchIntervalMs, signal);
+      await cancellableSleep(sleepMs, signal);
     }
 
     this.loopPromise = null;
