@@ -121,7 +121,7 @@ async function processVideo(
     });
 
     if (video) {
-      logger.info(
+      logger.debug(
         `[${index}/${total}] ${bvid}: aid=${BigInt(video.aid)}, user_id=${BigInt(
           video.user_id,
         )}`,
@@ -174,7 +174,7 @@ async function processBatchItem(
     );
 
     if (video) {
-      logger.info(
+      logger.debug(
         `[${index}/${total}] ${bvid}: aid=${BigInt(video.aid)}, user_id=${BigInt(
           video.user_id,
         )}`,
