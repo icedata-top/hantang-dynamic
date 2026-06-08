@@ -14,7 +14,6 @@ import {
   subtitleLastTerminalJobTimestampSeconds,
   subtitleLastTickTimestampSeconds,
   subtitleServiceRunning,
-  subtitleStateRows,
   subtitleTicksTotal,
   subtitleTracksTotal,
 } from "../metrics/registry";
@@ -24,17 +23,6 @@ import {
   isManualSubtitle,
 } from "../types/bilibili/subtitle.js";
 import { logger } from "../utils/logger";
-
-const SUBTITLE_STATE_METRIC_LABELS = [
-  "not_eligible",
-  "pending",
-  "has_manual",
-  "partial_manual",
-  "ai_only",
-  "no_subtitle",
-  "skipped",
-  "unknown",
-] as const;
 
 type SubtitleTickOutcome =
   | "no_job"
@@ -133,19 +121,7 @@ export class SubtitleService {
     subtitleTicksTotal.inc({ outcome });
   }
 
-  private async sampleStateMetrics(): Promise<void> {
-    try {
-      const counts = await this.db.getSubtitleStateCounts();
-      for (const state of SUBTITLE_STATE_METRIC_LABELS) {
-        subtitleStateRows.set({ state }, counts[state] ?? 0);
-      }
-    } catch (error) {
-      logger.warn("Failed to sample subtitle state metrics:", error);
-    }
-  }
-
   private async processOne(): Promise<SubtitleTickOutcome> {
-    await this.sampleStateMetrics();
     const job = await this.db.selectNextSubtitleJob();
     if (!job) return "no_job";
 

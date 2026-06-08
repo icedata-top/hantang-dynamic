@@ -67,9 +67,9 @@ export interface VideoSubtitleRow {
 }
 
 export function isManualSubtitle(track: BiliSubtitleTrackInfo): boolean {
-  return track.ai_type === 0;
+  return track.type === 0;
 }
 
 export function isAiSubtitle(track: BiliSubtitleTrackInfo): boolean {
-  return track.ai_type > 0;
+  return track.type === 1;
 }

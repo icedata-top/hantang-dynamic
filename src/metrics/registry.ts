@@ -173,13 +173,6 @@ export const subtitleActiveJobs = new Gauge({
   registers: [metricsRegistry],
 });
 
-export const subtitleStateRows = new Gauge({
-  name: `${PREFIX}subtitle_state_rows`,
-  help: "Current video_collection_state rows by subtitle_state.",
-  labelNames: ["state"] as const,
-  registers: [metricsRegistry],
-});
-
 export const subtitleLastTickTimestampSeconds = new Gauge({
   name: `${PREFIX}subtitle_last_tick_timestamp_seconds`,
   help: "Unix timestamp of the last subtitle service tick.",

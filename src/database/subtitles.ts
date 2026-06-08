@@ -13,8 +13,6 @@ export interface SubtitleJob {
   isDeleted: boolean;
 }
 
-export type SubtitleStateMetric = SubtitleState | "not_eligible" | "unknown";
-
 export interface UpsertSubtitleInput {
   aid: bigint;
   cid: bigint;
@@ -124,9 +122,9 @@ export async function upsertSubtitlesBatch(
       }
       if (queryResult.rows[0]?.inserted === true) {
         result.insertedCount += 1;
-        if (input.aiType === 0) {
+        if (input.subtitleType === 0) {
           result.insertedManualCount += 1;
-        } else if (input.aiType !== null && input.aiType > 0) {
+        } else if (input.subtitleType === 1) {
           result.insertedAiCount += 1;
         }
       }
@@ -217,31 +215,6 @@ export async function selectNextSubtitleJob(
   };
 }
 
-export async function getSubtitleStateCounts(
-  pool: Pool,
-): Promise<Partial<Record<SubtitleStateMetric, number>>> {
-  const result = await pool.query<{ state: string; count: string }>(
-    `SELECT CASE
-              WHEN subtitle_state IS NULL THEN 'not_eligible'
-              WHEN subtitle_state IN (
-                'pending', 'has_manual', 'partial_manual', 'ai_only',
-                'no_subtitle', 'skipped'
-              ) THEN subtitle_state
-              ELSE 'unknown'
-            END AS state,
-            count(*)::text AS count
-     FROM video_collection_state
-     GROUP BY state`,
-  );
-
-  const counts: Partial<Record<SubtitleStateMetric, number>> = {};
-  for (const row of result.rows) {
-    const state = row.state as SubtitleStateMetric;
-    counts[state] = (counts[state] ?? 0) + Number(row.count);
-  }
-  return counts;
-}
-
 export async function getSubtitlesByAid(
   pool: Pool,
   aid: bigint,
@@ -280,7 +253,7 @@ export async function cidHasManualSubtitle(
     `SELECT EXISTS(
        SELECT 1
        FROM video_subtitles
-       WHERE aid = $1 AND cid = $2 AND ai_type = 0
+       WHERE aid = $1 AND cid = $2 AND subtitle_type = 0
      ) AS found`,
     [aid.toString(), cid.toString()],
   );
@@ -296,7 +269,7 @@ export async function cidHasAiSubtitle(
     `SELECT EXISTS(
        SELECT 1
        FROM video_subtitles
-       WHERE aid = $1 AND cid = $2 AND ai_type > 0
+       WHERE aid = $1 AND cid = $2 AND subtitle_type = 1
      ) AS found`,
     [aid.toString(), cid.toString()],
   );
