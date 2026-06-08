@@ -65,14 +65,21 @@ export class DetailsService {
   async processVideoById(
     id: string | number,
     options: {
+      processRecommendations?: boolean;
       processRelated?: boolean;
+      storeOwner?: boolean;
       skipCacheCheck?: boolean;
     } = {},
   ): Promise<{
     video: VideoData | null;
     relatedVideos: BiliDynamicCard[];
   }> {
-    const { processRelated = true, skipCacheCheck = false } = options;
+    const {
+      processRecommendations = true,
+      processRelated = true,
+      storeOwner = true,
+      skipCacheCheck = false,
+    } = options;
 
     try {
       let bvid: string | undefined;
@@ -111,7 +118,7 @@ export class DetailsService {
       }
 
       const { videoData, relatedVideos } =
-        await this.processVideoDetailResponse(detailData);
+        await this.processVideoDetailResponse(detailData, { storeOwner });
 
       // Re-check cache using the true BVID from response (useful if we started with AID)
       if (!bvid && videoData.bvid) {
@@ -125,6 +132,7 @@ export class DetailsService {
       }
 
       return await this.processResolvedVideoData(videoData, relatedVideos, {
+        processRecommendations,
         processRelated,
       });
     } catch (error) {
@@ -197,10 +205,14 @@ export class DetailsService {
 
   async processVideoDetailResponse(
     detailData: BiliVideoDetailDataForProcessing,
+    options: {
+      storeOwner?: boolean;
+    } = {},
   ): Promise<{
     videoData: VideoData;
     relatedVideos: RecommendedVideo[];
   }> {
+    const { storeOwner = true } = options;
     const view = detailData.View;
     const relatedVideos = detailData.Related || [];
 
@@ -238,26 +250,19 @@ export class DetailsService {
       },
     };
 
-    // Store the video owner (may or may not be someone we follow directly)
-    const cardInfo = detailData.Card.card;
-    await this.storeUser({
-      mid: cardInfo.mid,
-      name: cardInfo.name,
-      face: cardInfo.face,
-      fans: cardInfo.fans,
-      sign: cardInfo.sign || undefined,
-      level: cardInfo.level_info?.current_level,
-      officialRole: cardInfo.Official?.type,
-      officialTitle: cardInfo.Official?.title || undefined,
-    });
-
-    if (relatedVideos.length > 0) {
-      const recommendations = relatedVideos.map((v, index) => ({
-        videoAid: v.aid,
-        recommendedByAid: view.aid,
-        order: index,
-      }));
-      await this.db.trackRecommendationsBatch(recommendations);
+    if (storeOwner) {
+      // Store the video owner (may or may not be someone we follow directly)
+      const cardInfo = detailData.Card.card;
+      await this.storeUser({
+        mid: cardInfo.mid,
+        name: cardInfo.name,
+        face: cardInfo.face,
+        fans: cardInfo.fans,
+        sign: cardInfo.sign || undefined,
+        level: cardInfo.level_info?.current_level,
+        officialRole: cardInfo.Official?.type,
+        officialTitle: cardInfo.Official?.title || undefined,
+      });
     }
 
     return { videoData, relatedVideos };
@@ -267,19 +272,26 @@ export class DetailsService {
     id: string | number,
     detailData: BiliVideoDetailDataForProcessing,
     options: {
+      processRecommendations?: boolean;
       processRelated?: boolean;
+      storeOwner?: boolean;
     } = {},
   ): Promise<{
     video: VideoData | null;
     relatedVideos: BiliDynamicCard[];
   }> {
-    const { processRelated = true } = options;
+    const {
+      processRecommendations = true,
+      processRelated = true,
+      storeOwner = true,
+    } = options;
 
     try {
       const { videoData, relatedVideos } =
-        await this.processVideoDetailResponse(detailData);
+        await this.processVideoDetailResponse(detailData, { storeOwner });
 
       return await this.processResolvedVideoData(videoData, relatedVideos, {
+        processRecommendations,
         processRelated,
       });
     } catch (error) {
@@ -313,6 +325,7 @@ export class DetailsService {
     videoData: VideoData,
     relatedVideos: RecommendedVideo[],
     options: {
+      processRecommendations: boolean;
       processRelated: boolean;
     },
   ): Promise<{
@@ -320,6 +333,15 @@ export class DetailsService {
     relatedVideos: BiliDynamicCard[];
   }> {
     const filtered = await filterVideo(videoData);
+
+    if (options.processRecommendations && relatedVideos.length > 0) {
+      const recommendations = relatedVideos.map((v, index) => ({
+        videoAid: v.aid,
+        recommendedByAid: videoData.aid,
+        order: index,
+      }));
+      await this.db.trackRecommendationsBatch(recommendations);
+    }
 
     await this.db.markVideoProcessed(videoData, filtered !== null);
 

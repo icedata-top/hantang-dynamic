@@ -64,6 +64,7 @@ api_enabled = false
 path = "/repair"
 status_path = "/repair/status"
 max_bvids = 1000
+batch_concurrency = 4
 
 [minute]
 # Adaptive minute collection with progressive gate-approach acceleration.

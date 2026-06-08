@@ -146,7 +146,12 @@ api_enabled = true
 path = "/repair"
 status_path = "/repair/status"
 max_bvids = 1000
+batch_concurrency = 4
 ```
+
+`batch_concurrency` controls how many repair detail batches are requested in
+parallel. Each batch still shares the configured application concurrency for
+post-fetch processing and database writes.
 
 Start a repair job for specific videos:
 

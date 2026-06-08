@@ -7,6 +7,9 @@ import { logger } from "../utils/logger.js";
 
 const POOL_SIZE = config.application.concurrencyLimit || 20;
 const VIDEO_DETAIL_BATCH_SIZE = 50;
+const VIDEO_DETAIL_BATCH_CONCURRENCY = config.repair.batchConcurrency;
+const PROGRESS_LOG_BATCH_INTERVAL = 10;
+const PROGRESS_LOG_TIME_INTERVAL_MS = 30_000;
 
 type RepairFilterColumn =
   | "aid"
@@ -65,6 +68,7 @@ interface RepairOptions {
   fixAids?: boolean;
   bvids?: string[];
   filter?: RepairVideoFilter;
+  onProgress?: (progress: RepairProgress) => void;
 }
 
 export interface RepairResult {
@@ -75,15 +79,44 @@ export interface RepairResult {
   aidMismatchesFixed: number;
 }
 
+export interface RepairProgress {
+  batchesProcessed: number;
+  batchesTotal: number;
+  elapsedSeconds: number;
+  errors: number;
+  estimatedRemainingSeconds?: number;
+  mode: "batch" | "single";
+  processed: number;
+  ratePerMinute: number;
+  skipped: number;
+  success: number;
+  total: number;
+  updatedAt: string;
+}
+
+interface ProcessResult {
+  success: boolean;
+  skipped: boolean;
+}
+
+interface RepairCounters {
+  errors: number;
+  processed: number;
+  skipped: number;
+  success: number;
+}
+
 async function processVideo(
   detailsService: DetailsService,
   bvid: string,
   index: number,
   total: number,
-): Promise<{ success: boolean; skipped: boolean }> {
+): Promise<ProcessResult> {
   try {
     const { video } = await detailsService.processVideoById(bvid, {
+      processRecommendations: false,
       processRelated: false,
+      storeOwner: false,
       skipCacheCheck: true,
     });
 
@@ -115,7 +148,7 @@ async function processBatchItem(
   item: BiliVideoBatchDetailItemResponse | undefined,
   index: number,
   total: number,
-): Promise<{ success: boolean; skipped: boolean }> {
+): Promise<ProcessResult> {
   try {
     if (!item) {
       throw new Error("Missing batch item response");
@@ -134,7 +167,9 @@ async function processBatchItem(
       bvid,
       item.data,
       {
+        processRecommendations: false,
         processRelated: false,
+        storeOwner: false,
       },
     );
 
@@ -201,12 +236,13 @@ async function processVideoBatch(
   detailsService: DetailsService,
   bvids: string[],
   offset: number,
+  poolSize: number,
   total: number,
-): Promise<Array<{ success: boolean; skipped: boolean }>> {
+): Promise<ProcessResult[]> {
   const items = await fetchVideoFullDetailBatch(bvids, bvids.length);
   const itemById = new Map(items.map((item) => [item.id, item]));
 
-  return runWithPool(bvids, POOL_SIZE, async (bvid, index) =>
+  return runWithPool(bvids, poolSize, async (bvid, index) =>
     processBatchItem(
       detailsService,
       bvid,
@@ -220,43 +256,57 @@ async function processVideoBatch(
 async function runWithBatchProxy(
   detailsService: DetailsService,
   bvids: string[],
-): Promise<Array<{ success: boolean; skipped: boolean }> | null> {
+  reportProgress: (batchResults: ProcessResult[]) => void,
+): Promise<boolean> {
   if (!config.bilibili.apiProxyUrl) {
-    return null;
+    return false;
   }
 
   logger.info(
-    `Using proxy video detail batch endpoint with batch size ${VIDEO_DETAIL_BATCH_SIZE}`,
+    `Using proxy video detail batch endpoint with batch size ${VIDEO_DETAIL_BATCH_SIZE}, batch concurrency ${VIDEO_DETAIL_BATCH_CONCURRENCY}`,
   );
 
-  const results: Array<{ success: boolean; skipped: boolean }> = [];
   const chunks = chunkArray(bvids, VIDEO_DETAIL_BATCH_SIZE);
+  const perBatchPoolSize = Math.max(
+    1,
+    Math.ceil(POOL_SIZE / VIDEO_DETAIL_BATCH_CONCURRENCY),
+  );
 
-  for (const [chunkIndex, chunk] of chunks.entries()) {
-    const offset = chunkIndex * VIDEO_DETAIL_BATCH_SIZE;
-    try {
-      results.push(
-        ...(await processVideoBatch(
-          detailsService,
-          chunk,
-          offset,
-          bvids.length,
-        )),
-      );
-    } catch (error) {
-      logger.warn(
-        `Video detail batch request failed for chunk ${chunkIndex + 1}/${chunks.length}; falling back to single-video repair for this chunk`,
-        summarizeBatchError(error),
-      );
-      results.push(
-        ...(await runWithPool(chunk, POOL_SIZE, async (bvid, index) =>
-          processVideo(detailsService, bvid, offset + index + 1, bvids.length),
-        )),
-      );
-    }
-  }
+  await runWithPool(
+    chunks,
+    VIDEO_DETAIL_BATCH_CONCURRENCY,
+    async (chunk, chunkIndex) => {
+      const offset = chunkIndex * VIDEO_DETAIL_BATCH_SIZE;
+      try {
+        reportProgress(
+          await processVideoBatch(
+            detailsService,
+            chunk,
+            offset,
+            perBatchPoolSize,
+            bvids.length,
+          ),
+        );
+      } catch (error) {
+        logger.warn(
+          `Video detail batch request failed for chunk ${chunkIndex + 1}/${chunks.length}; falling back to single-video repair for this chunk`,
+          summarizeBatchError(error),
+        );
+        reportProgress(
+          await runWithPool(chunk, perBatchPoolSize, async (bvid, index) =>
+            processVideo(
+              detailsService,
+              bvid,
+              offset + index + 1,
+              bvids.length,
+            ),
+          ),
+        );
+      }
+    },
+  );
 
-  return results;
+  return true;
 }
 
 function summarizeBatchError(error: unknown): unknown {
@@ -274,6 +324,70 @@ function summarizeBatchError(error: unknown): unknown {
         : data,
     message,
   };
+}
+
+function createProgressSnapshot(params: {
+  batchesProcessed: number;
+  batchesTotal: number;
+  counters: RepairCounters;
+  mode: "batch" | "single";
+  startedAtMs: number;
+  total: number;
+}): RepairProgress {
+  const elapsedMs = Math.max(Date.now() - params.startedAtMs, 1);
+  const elapsedSeconds = elapsedMs / 1000;
+  const ratePerMinute = (params.counters.processed / elapsedMs) * 60_000;
+  const remaining = params.total - params.counters.processed;
+  const estimatedRemainingSeconds =
+    ratePerMinute > 0 ? (remaining / ratePerMinute) * 60 : undefined;
+
+  return {
+    batchesProcessed: params.batchesProcessed,
+    batchesTotal: params.batchesTotal,
+    elapsedSeconds: Math.round(elapsedSeconds),
+    errors: params.counters.errors,
+    estimatedRemainingSeconds:
+      estimatedRemainingSeconds === undefined
+        ? undefined
+        : Math.round(estimatedRemainingSeconds),
+    mode: params.mode,
+    processed: params.counters.processed,
+    ratePerMinute: Math.round(ratePerMinute),
+    skipped: params.counters.skipped,
+    success: params.counters.success,
+    total: params.total,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function addResultsToCounters(
+  counters: RepairCounters,
+  results: ProcessResult[],
+): void {
+  for (const result of results) {
+    counters.processed++;
+    if (result.success) counters.success++;
+    else if (result.skipped) counters.skipped++;
+    else counters.errors++;
+  }
+}
+
+function logRepairProgress(progress: RepairProgress): void {
+  const percent =
+    progress.total > 0
+      ? ((progress.processed / progress.total) * 100).toFixed(2)
+      : "100.00";
+  const remaining =
+    progress.estimatedRemainingSeconds === undefined
+      ? "unknown"
+      : `${progress.estimatedRemainingSeconds}s`;
+
+  logger.info(
+    `Repair progress: ${progress.processed}/${progress.total} (${percent}%), ` +
+      `success=${progress.success}, skipped=${progress.skipped}, errors=${progress.errors}, ` +
+      `batches=${progress.batchesProcessed}/${progress.batchesTotal}, ` +
+      `rate=${progress.ratePerMinute}/min, eta=${remaining}`,
+  );
 }
 
 export async function runRepairVideos(
@@ -324,18 +438,75 @@ export async function runRepairVideosWithDatabase(
   let successCount = 0;
   let errorCount = 0;
   let skippedCount = 0;
+  const counters: RepairCounters = {
+    errors: 0,
+    processed: 0,
+    skipped: 0,
+    success: 0,
+  };
+  const startedAtMs = Date.now();
+  let batchesProcessed = 0;
+  let mode: RepairProgress["mode"] = config.bilibili.apiProxyUrl
+    ? "batch"
+    : "single";
+  const batchesTotal =
+    mode === "batch"
+      ? Math.ceil(bvids.length / VIDEO_DETAIL_BATCH_SIZE)
+      : Math.ceil(bvids.length / POOL_SIZE);
+  let lastProgressLogAtMs = 0;
 
-  const results =
-    (await runWithBatchProxy(detailsService, bvids)) ??
-    (await runWithPool(bvids, POOL_SIZE, async (bvid, index) => {
-      return processVideo(detailsService, bvid, index + 1, bvids.length);
-    }));
+  function reportProgress(results: ProcessResult[]): void {
+    addResultsToCounters(counters, results);
+    batchesProcessed++;
 
-  for (const result of results) {
-    if (result.success) successCount++;
-    else if (result.skipped) skippedCount++;
-    else errorCount++;
+    const progress = createProgressSnapshot({
+      batchesProcessed,
+      batchesTotal,
+      counters,
+      mode,
+      startedAtMs,
+      total: bvids.length,
+    });
+    options.onProgress?.(progress);
+
+    const now = Date.now();
+    if (
+      batchesProcessed === batchesTotal ||
+      batchesProcessed % PROGRESS_LOG_BATCH_INTERVAL === 0 ||
+      now - lastProgressLogAtMs >= PROGRESS_LOG_TIME_INTERVAL_MS
+    ) {
+      logRepairProgress(progress);
+      lastProgressLogAtMs = now;
+    }
   }
+
+  const usedBatchProxy = await runWithBatchProxy(
+    detailsService,
+    bvids,
+    reportProgress,
+  );
+
+  if (!usedBatchProxy) {
+    mode = "single";
+    const chunks = chunkArray(bvids, POOL_SIZE);
+    for (const [chunkIndex, chunk] of chunks.entries()) {
+      const offset = chunkIndex * POOL_SIZE;
+      reportProgress(
+        await runWithPool(chunk, POOL_SIZE, async (bvid, index) => {
+          return processVideo(
+            detailsService,
+            bvid,
+            offset + index + 1,
+            bvids.length,
+          );
+        }),
+      );
+    }
+  }
+
+  successCount = counters.success;
+  skippedCount = counters.skipped;
+  errorCount = counters.errors;
 
   logger.info("\n=== Repair Complete ===");
   logger.info(`Total: ${bvids.length}`);

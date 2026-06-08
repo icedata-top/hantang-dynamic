@@ -10,6 +10,7 @@ import { Database } from "../database";
 import {
   type RepairColumnFilterOperators,
   type RepairColumnFilterValue,
+  type RepairProgress,
   type RepairResult,
   type RepairVideoFilter,
   runRepairVideosWithDatabase,
@@ -89,6 +90,7 @@ interface RepairJobView {
     fixAids: boolean;
   };
   result?: RepairResult;
+  progress?: RepairProgress;
   error?: string;
 }
 
@@ -543,6 +545,9 @@ function runRepairJob(
           request.all || request.filter ? undefined : (request.bvids ?? []),
         filter: request.filter,
         fixAids: request.fixAids,
+        onProgress: (progress) => {
+          job.progress = progress;
+        },
       });
       job.status = "succeeded";
     } catch (error) {

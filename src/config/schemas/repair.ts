@@ -7,6 +7,7 @@ const configBoolean = z.preprocess((value) => {
 
 export const repairSchema = z.object({
   apiEnabled: configBoolean.default(false),
+  batchConcurrency: z.coerce.number().int().positive().max(64).default(4),
   path: z.string().startsWith("/").default("/repair"),
   statusPath: z.string().startsWith("/").default("/repair/status"),
   maxBvids: z.coerce.number().int().positive().max(10_000).default(1000),
@@ -28,6 +29,11 @@ export function createRepairConfig(
       ["repair", "api_enabled"],
       "REPAIR_API_ENABLED",
       false,
+    ),
+    batchConcurrency: getConfigValue(
+      ["repair", "batch_concurrency"],
+      "REPAIR_BATCH_CONCURRENCY",
+      4,
     ),
     path: getConfigValue(["repair", "path"], "REPAIR_PATH", "/repair"),
     statusPath: getConfigValue(
