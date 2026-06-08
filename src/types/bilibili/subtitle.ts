@@ -45,6 +45,7 @@ export interface BiliPlayerWbiV2Response {
 export type SubtitleState =
   | "pending"
   | "has_manual"
+  | "partial_manual"
   | "ai_only"
   | "no_subtitle"
   | "skipped";

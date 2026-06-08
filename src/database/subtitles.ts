@@ -224,7 +224,8 @@ export async function getSubtitleStateCounts(
     `SELECT CASE
               WHEN subtitle_state IS NULL THEN 'not_eligible'
               WHEN subtitle_state IN (
-                'pending', 'has_manual', 'ai_only', 'no_subtitle', 'skipped'
+                'pending', 'has_manual', 'partial_manual', 'ai_only',
+                'no_subtitle', 'skipped'
               ) THEN subtitle_state
               ELSE 'unknown'
             END AS state,

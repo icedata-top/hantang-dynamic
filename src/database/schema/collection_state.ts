@@ -82,18 +82,20 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
   `);
 
   await pool.query(`
-    DO $$ BEGIN
-      ALTER TABLE video_collection_state
-      ADD CONSTRAINT chk_subtitle_state
-        CHECK (
-          subtitle_state IS NULL
-          OR subtitle_state IN (
-            'pending', 'has_manual', 'ai_only', 'no_subtitle', 'skipped'
-          )
-        );
-    EXCEPTION
-      WHEN duplicate_object THEN NULL;
-    END $$
+    ALTER TABLE video_collection_state
+    DROP CONSTRAINT IF EXISTS chk_subtitle_state
+  `);
+
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD CONSTRAINT chk_subtitle_state
+      CHECK (
+        subtitle_state IS NULL
+        OR subtitle_state IN (
+          'pending', 'has_manual', 'partial_manual', 'ai_only',
+          'no_subtitle', 'skipped'
+        )
+      )
   `);
 
   await pool.query(`
@@ -125,7 +127,10 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       SELECT CASE
         WHEN p_current_state IN ('has_manual', 'skipped') THEN p_current_state
         WHEN fn_is_subtitle_gate(p_crossed_gate)
-          AND (p_current_state IS NULL OR p_current_state IN ('ai_only', 'no_subtitle'))
+          AND (
+            p_current_state IS NULL
+            OR p_current_state IN ('partial_manual', 'ai_only', 'no_subtitle')
+          )
         THEN 'pending'
         WHEN p_current_state IS NULL AND COALESCE(p_last_view, 0) >= ${config.subtitle.viewThreshold} THEN 'pending'
         ELSE p_current_state

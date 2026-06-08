@@ -29,6 +29,7 @@ const SUBTITLE_STATE_METRIC_LABELS = [
   "not_eligible",
   "pending",
   "has_manual",
+  "partial_manual",
   "ai_only",
   "no_subtitle",
   "skipped",
@@ -39,6 +40,7 @@ type SubtitleTickOutcome =
   | "no_job"
   | "skipped"
   | "has_manual"
+  | "partial_manual"
   | "ai_only"
   | "no_subtitle"
   | "failed"
@@ -174,6 +176,7 @@ export class SubtitleService {
 
       const bvid = view.bvid || job.bvid;
       let allPagesHaveManual = view.pages.length > 0;
+      let anyManual = false;
       let anyAi = false;
       const subtitles: UpsertSubtitleInput[] = [];
 
@@ -182,6 +185,7 @@ export class SubtitleService {
           job.aid,
           page.cid,
         );
+        anyManual = anyManual || pageHasManual;
         anyAi = anyAi || (await this.db.cidHasAiSubtitle(job.aid, page.cid));
         if (pageHasManual) {
           continue;
@@ -196,7 +200,10 @@ export class SubtitleService {
           if (!track.subtitle_url) continue;
 
           const subtitleJson = await fetchSubtitleJson(track.subtitle_url);
-          if (isManualSubtitle(track)) pageHasManual = true;
+          if (isManualSubtitle(track)) {
+            pageHasManual = true;
+            anyManual = true;
+          }
           if (isAiSubtitle(track)) anyAi = true;
 
           subtitles.push({
@@ -226,9 +233,11 @@ export class SubtitleService {
 
       const nextState = allPagesHaveManual
         ? "has_manual"
-        : anyAi
-          ? "ai_only"
-          : "no_subtitle";
+        : anyManual
+          ? "partial_manual"
+          : anyAi
+            ? "ai_only"
+            : "no_subtitle";
       await this.db.updateSubtitleState(job.aid, nextState);
       subtitleJobsTotal.inc({ outcome: nextState });
       subtitleLastTerminalJobTimestampSeconds.set(Date.now() / 1000);
