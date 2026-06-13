@@ -1,5 +1,28 @@
 # Changelog
 
+## 5.4.1
+
+Improves failure isolation for multi-account deployments. Auth failures from
+one Bilibili account now disable only that account's authenticated work, while
+cookie-independent minute collection and healthy accounts continue running.
+
+- Stops treating expired cookies, risk-control failures, and HTTP 416 responses
+  as process-wide fatal exits.
+- Sends a warning notification when an account cookie expires or hits
+  risk-control, so Telegram warning channels can surface the bad account.
+- Skips invalid cookie-file accounts at startup instead of aborting the whole
+  process.
+- Keeps minute sampling on cookie-free medialist clients, so minute collection
+  can continue even when every configured account cookie is invalid.
+- Runs account trackers independently and clears retrospective/following-sync
+  timers when an account is disabled.
+- Gives each account its own dynamic, detail, player, and relation clients to
+  avoid cross-account cookie leakage.
+- Lets subtitle collection rotate across configured accounts and disable only
+  accounts that fail authentication.
+- Preserves proxy fallback behavior: HTTP 416 is now handled as a request
+  failure, not a global shutdown signal.
+
 ## 5.4.0
 
 Repair mode is faster and easier to monitor. Proxy-backed repairs can request multiple detail batches in parallel, report live progress, and avoid unrelated recommendation or owner side effects while rewriting stored video records.
