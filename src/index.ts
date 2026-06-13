@@ -36,7 +36,7 @@ async function runTracker() {
   const trackers = accounts.map((account) => new DynamicTracker(account));
   const subtitleService =
     config.subtitle.enabled && accounts.length > 0
-      ? new SubtitleService(accounts[0])
+      ? new SubtitleService(accounts)
       : null;
   subtitleService?.start();
 

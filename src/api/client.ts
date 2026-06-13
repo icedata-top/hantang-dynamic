@@ -43,6 +43,7 @@ enum ApiErrorResponseCode {
 }
 
 const state = new StateManager();
+const notifiedAccountAuthFailures = new Set<string>();
 
 export class AccountAuthError extends Error {
   readonly code: number;
@@ -58,6 +59,17 @@ export class AccountAuthError extends Error {
 
 export function isAccountAuthError(error: unknown): error is AccountAuthError {
   return error instanceof AccountAuthError;
+}
+
+async function notifyAccountAuthFailureOnce(
+  accountLabel: string,
+  code: number,
+  message: string,
+): Promise<void> {
+  const key = `${accountLabel}:${code}`;
+  if (notifiedAccountAuthFailures.has(key)) return;
+  notifiedAccountAuthFailures.add(key);
+  await notifyWarning(message);
 }
 
 function hostLabel(baseURL: string | undefined): string {
@@ -310,11 +322,6 @@ function createClient(
             1000,
           )}`;
 
-        // We must await notify before exiting, otherwise the message might not be sent
-        if (!(response.config as RequestConfig).metadata?.silent) {
-          await notifyWarning(message);
-        }
-
         if (response.data.code === ApiErrorCode.CookieExpired) {
           if (skipCookie) {
             return Promise.reject(
@@ -323,6 +330,12 @@ function createClient(
           }
           logger.error(
             `[account=${accountLabel}] Cookie has expired; disabling this authenticated account.\n` +
+              `[account=${accountLabel}] Cookie 已过期，将停用该账号的鉴权任务。`,
+          );
+          await notifyAccountAuthFailureOnce(
+            accountLabel,
+            response.data.code,
+            `[account=${accountLabel}] Cookie has expired; authenticated account tasks will be disabled.\n` +
               `[account=${accountLabel}] Cookie 已过期，将停用该账号的鉴权任务。`,
           );
           throw new AccountAuthError(
@@ -342,11 +355,22 @@ function createClient(
             `[account=${accountLabel}] Risk control failed; disabling this authenticated account.\n` +
               `[account=${accountLabel}] 风控失败，将停用该账号的鉴权任务。`,
           );
+          await notifyAccountAuthFailureOnce(
+            accountLabel,
+            response.data.code,
+            `[account=${accountLabel}] Risk control failed; authenticated account tasks will be disabled.\n` +
+              `[account=${accountLabel}] 风控失败，将停用该账号的鉴权任务。`,
+          );
           throw new AccountAuthError(
             response.data.code,
             accountLabel,
             `Risk control failed for account ${accountLabel}`,
           );
+        }
+
+        // We must await notify before rejecting, otherwise the message might not be sent
+        if (!(response.config as RequestConfig).metadata?.silent) {
+          await notifyWarning(message);
         }
 
         return Promise.reject(

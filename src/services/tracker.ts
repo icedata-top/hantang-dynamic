@@ -31,6 +31,9 @@ export class DynamicTracker {
   private dynamicsService: DynamicsService;
   private detailsService: DetailsService;
   private db = Database.getInstance();
+  private retrospectiveTimer: ReturnType<typeof setInterval> | null = null;
+  private followingStartupTimer: ReturnType<typeof setTimeout> | null = null;
+  private followingTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(account: AccountContext) {
     this.account = account;
@@ -65,7 +68,7 @@ export class DynamicTracker {
           logger.error(
             `[uid=${this.account.uid}] Authenticated tracker disabled: ${error.message}`,
           );
-          this.isRunning = false;
+          this.stop();
           break;
         }
         logger.error(`[uid=${this.account.uid}] Tracker error:`, error);
@@ -80,6 +83,18 @@ export class DynamicTracker {
 
   stop() {
     this.isRunning = false;
+    if (this.retrospectiveTimer) {
+      clearInterval(this.retrospectiveTimer);
+      this.retrospectiveTimer = null;
+    }
+    if (this.followingStartupTimer) {
+      clearTimeout(this.followingStartupTimer);
+      this.followingStartupTimer = null;
+    }
+    if (this.followingTimer) {
+      clearInterval(this.followingTimer);
+      this.followingTimer = null;
+    }
   }
 
   private async initialize() {
@@ -256,6 +271,8 @@ export class DynamicTracker {
   }
 
   async runRetrospective() {
+    if (!this.isRunning) return;
+
     const retrospectiveDays = config.application.retrospectiveDays || 30;
     const minTimestamp = Date.now() / 1000 - retrospectiveDays * 86400;
 
@@ -296,10 +313,18 @@ export class DynamicTracker {
     const interval =
       config.application.retrospectiveInterval || 7 * 24 * 3600 * 1000;
 
-    setInterval(() => {
-      this.runRetrospective().catch((err) =>
-        logger.error("Retrospective error:", err),
-      );
+    this.retrospectiveTimer = setInterval(() => {
+      if (!this.isRunning) return;
+      this.runRetrospective().catch((err) => {
+        if (isAccountAuthError(err)) {
+          logger.error(
+            `[uid=${this.account.uid}] Retrospective auth failure; disabling tracker: ${err.message}`,
+          );
+          this.stop();
+          return;
+        }
+        logger.error("Retrospective error:", err);
+      });
     }, interval);
 
     logger.info(
@@ -311,6 +336,8 @@ export class DynamicTracker {
    * Sync followed_by / is_following by fetching this account's following list from Bilibili.
    */
   async syncFollowingStatus(): Promise<void> {
+    if (!this.isRunning) return;
+
     const uid = this.account.uid;
     if (!uid) {
       logger.warn(
@@ -333,6 +360,13 @@ export class DynamicTracker {
         `[uid=${uid}] Following status synced: ${followingIds.size} users marked as followed`,
       );
     } catch (error) {
+      if (isAccountAuthError(error)) {
+        logger.error(
+          `[uid=${uid}] Following sync auth failure; disabling tracker: ${error.message}`,
+        );
+        this.stop();
+        return;
+      }
       logger.error(`[uid=${uid}] Failed to sync following status:`, error);
     }
   }
@@ -344,7 +378,7 @@ export class DynamicTracker {
 
     if (elapsed >= intervalMs) {
       // Never synced, or overdue — delay 30s to avoid hitting API right at startup
-      setTimeout(
+      this.followingStartupTimer = setTimeout(
         () =>
           this.syncFollowingStatus().catch((err) =>
             logger.error("Following sync error:", err),
@@ -362,12 +396,11 @@ export class DynamicTracker {
       );
     }
 
-    setInterval(
-      () =>
-        this.syncFollowingStatus().catch((err) =>
-          logger.error("Following sync error:", err),
-        ),
-      intervalMs,
-    );
+    this.followingTimer = setInterval(() => {
+      if (!this.isRunning) return;
+      this.syncFollowingStatus().catch((err) =>
+        logger.error("Following sync error:", err),
+      );
+    }, intervalMs);
   }
 }
