@@ -11,7 +11,6 @@ import {
   apiErrorsByCodeTotal,
   apiRequestDurationSeconds,
   apiRequestsTotal,
-  fatalExitsTotal,
 } from "../metrics/registry";
 import {
   createCookieJarFromNetscape,
@@ -44,6 +43,22 @@ enum ApiErrorResponseCode {
 }
 
 const state = new StateManager();
+
+export class AccountAuthError extends Error {
+  readonly code: number;
+  readonly accountLabel: string;
+
+  constructor(code: number, accountLabel: string, message: string) {
+    super(message);
+    this.name = "AccountAuthError";
+    this.code = code;
+    this.accountLabel = accountLabel;
+  }
+}
+
+export function isAccountAuthError(error: unknown): error is AccountAuthError {
+  return error instanceof AccountAuthError;
+}
 
 function hostLabel(baseURL: string | undefined): string {
   if (!baseURL) return "unknown";
@@ -153,6 +168,8 @@ interface CreateClientOptions {
   cookieFilePath?: string;
   /** State manager to use for ticket renewal (defaults to shared global StateManager) */
   stateManager?: StateManager;
+  /** Human-readable account label for logging/account-scoped auth failures */
+  accountLabel?: string;
 }
 
 type CookieJarAxiosDefaults = AxiosInstance["defaults"] & {
@@ -171,6 +188,11 @@ function createClient(
   const skipCookie = options.skipCookie ?? false;
   const resolvedStateManager = options.stateManager ?? new StateManager();
   const ua = resolvedStateManager.lastUA;
+  const accountLabel =
+    options.accountLabel ??
+    options.cookieFilePath ??
+    config.bilibili.uid ??
+    "global";
 
   // Determine which jar to use: explicit > global > none
   const jar =
@@ -257,12 +279,10 @@ function createClient(
       if (response.status === ApiErrorResponseCode.IpBanned) {
         recordApiRequest(baseURL, response.config.url, "error", timeUsed);
         apiErrorsByCodeTotal.inc({ code: String(response.status) });
-        fatalExitsTotal.inc({ reason: "ip_ban" });
-        const message =
-          "CRITICAL ERROR: IP has been banned! Terminating process.";
-        logger.error(`${message}致命错误：IP·被封禁！正在终止进程。`);
-        await notifyWarning(message);
-        process.exit(2);
+        logger.warn(
+          `HTTP 416 from ${baseURL}${response.config.url}; request failed without stopping the process.`,
+        );
+        return Promise.reject(new Error("API Error: HTTP 416"));
       }
 
       const logicalApiCode = apiCodeLabel(response.data);
@@ -296,21 +316,37 @@ function createClient(
         }
 
         if (response.data.code === ApiErrorCode.CookieExpired) {
-          fatalExitsTotal.inc({ reason: "cookie_expired" });
+          if (skipCookie) {
+            return Promise.reject(
+              new Error(`API Error: code ${response.data.code}`),
+            );
+          }
           logger.error(
-            "CRITICAL ERROR: Cookie has expired! Authentication required. Terminating process.\n" +
-              "致命错误：Cookie 已过期！请重新登录。正在终止进程。",
+            `[account=${accountLabel}] Cookie has expired; disabling this authenticated account.\n` +
+              `[account=${accountLabel}] Cookie 已过期，将停用该账号的鉴权任务。`,
           );
-          process.exit(1);
+          throw new AccountAuthError(
+            response.data.code,
+            accountLabel,
+            `Cookie expired for account ${accountLabel}`,
+          );
         }
 
         if (response.data.code === ApiErrorCode.RiskControlFailed) {
-          fatalExitsTotal.inc({ reason: "risk_control" });
+          if (skipCookie) {
+            return Promise.reject(
+              new Error(`API Error: code ${response.data.code}`),
+            );
+          }
           logger.error(
-            "CRITICAL ERROR: Risk control failed! Terminating process.\n" +
-              "致命错误：风控失败！正在终止进程。",
+            `[account=${accountLabel}] Risk control failed; disabling this authenticated account.\n` +
+              `[account=${accountLabel}] 风控失败，将停用该账号的鉴权任务。`,
           );
-          process.exit(3);
+          throw new AccountAuthError(
+            response.data.code,
+            accountLabel,
+            `Risk control failed for account ${accountLabel}`,
+          );
         }
 
         return Promise.reject(
@@ -336,12 +372,14 @@ function createClient(
       if (status === ApiErrorResponseCode.IpBanned) {
         recordApiRequest(baseURL, errorConfig?.url, "error", durationMs);
         apiErrorsByCodeTotal.inc({ code: String(status) });
-        fatalExitsTotal.inc({ reason: "ip_ban" });
-        const message =
-          "CRITICAL ERROR: IP has been banned! Terminating process.";
-        logger.error(`${message}致命错误：IP·被封禁！正在终止进程。`);
-        await notifyWarning(message);
-        process.exit(2);
+        logger.warn(
+          `HTTP 416 from ${baseURL}${errorConfig?.url ?? ""}; request failed without stopping the process.`,
+        );
+        return Promise.reject({
+          message: error.message,
+          code: status,
+          data: error.response?.data,
+        });
       }
 
       if (!error.response || error.response.status === 524) {
@@ -402,8 +440,10 @@ export function createAccountDynamicClient(
   cookieJar: CookieJar,
   accountCookieFilePath: string,
   stateManager: StateManager,
+  accountLabel?: string,
 ): AxiosInstance {
   return createClient(baseURL, {
+    accountLabel,
     cookieJar,
     cookieFilePath: accountCookieFilePath,
     stateManager,
@@ -414,8 +454,10 @@ export function createAccountWebInterfaceClient(
   cookieJar: CookieJar,
   accountCookieFilePath: string,
   stateManager: StateManager,
+  accountLabel?: string,
 ): AxiosInstance {
   return createClient("https://api.bilibili.com/x/web-interface", {
+    accountLabel,
     cookieJar,
     cookieFilePath: accountCookieFilePath,
     stateManager,
@@ -426,8 +468,24 @@ export function createAccountPlayerClient(
   cookieJar: CookieJar,
   accountCookieFilePath: string,
   stateManager: StateManager,
+  accountLabel?: string,
 ): AxiosInstance {
   return createClient("https://api.bilibili.com/x/player", {
+    accountLabel,
+    cookieJar,
+    cookieFilePath: accountCookieFilePath,
+    stateManager,
+  });
+}
+
+export function createAccountRelationClient(
+  cookieJar: CookieJar,
+  accountCookieFilePath: string,
+  stateManager: StateManager,
+  accountLabel?: string,
+): AxiosInstance {
+  return createClient("https://api.bilibili.com/x/relation", {
+    accountLabel,
     cookieJar,
     cookieFilePath: accountCookieFilePath,
     stateManager,
@@ -465,11 +523,12 @@ export const medialistClient = createClient(
   config.bilibili.apiProxyUrl
     ? `${config.bilibili.apiProxyUrl}/medialist`
     : "https://api.bilibili.com/medialist",
-  !!config.bilibili.apiProxyUrl,
+  true,
 );
 
 export const medialistDirectClient = createClient(
   "https://api.bilibili.com/medialist",
+  true,
 );
 
 export const relationClient = createClient(

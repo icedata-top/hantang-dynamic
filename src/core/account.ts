@@ -3,9 +3,11 @@ import type { CookieJar } from "tough-cookie";
 import {
   createAccountDynamicClient,
   createAccountPlayerClient,
+  createAccountRelationClient,
   createAccountWebInterfaceClient,
   dynamicClient as globalDynamicClient,
   playerDirectClient as globalPlayerClient,
+  relationClient as globalRelationClient,
   webInterfaceDirectClient as globalWebInterfaceClient,
 } from "../api/client";
 import { config } from "../config";
@@ -32,9 +34,75 @@ export interface AccountContext {
   webInterfaceClient: AxiosInstance;
   /** Authenticated direct player client for this account */
   playerClient: AxiosInstance;
+  /** Authenticated relation client for this account */
+  relationClient: AxiosInstance;
 }
 
 let _accounts: AccountContext[] | null = null;
+
+function loadCookieFileAccount(filePath: string): AccountContext | null {
+  try {
+    const cookies = parseNetscapeCookieFile(filePath);
+    const jar = createCookieJarFromNetscape(cookies);
+
+    const uid =
+      getDedeUserIDFromCookieFile(filePath) ?? config.bilibili.uid ?? "";
+    if (!uid) {
+      throw new Error(
+        `Cannot determine uid for cookie file: ${filePath}. ` +
+          "No DedeUserID cookie found and no uid set in config.",
+      );
+    }
+
+    // Each account has its own state file to track position independently
+    const stateManager = new StateManager(`./state_${uid}.json`);
+    const accountLabel = `uid=${uid}`;
+
+    const client = createAccountDynamicClient(
+      "https://api.vc.bilibili.com/dynamic_svr/v1/dynamic_svr",
+      jar,
+      filePath,
+      stateManager,
+      accountLabel,
+    );
+    const webInterfaceClient = createAccountWebInterfaceClient(
+      jar,
+      filePath,
+      stateManager,
+      accountLabel,
+    );
+    const playerClient = createAccountPlayerClient(
+      jar,
+      filePath,
+      stateManager,
+      accountLabel,
+    );
+    const relationClient = createAccountRelationClient(
+      jar,
+      filePath,
+      stateManager,
+      accountLabel,
+    );
+
+    logger.info(`Loaded account uid=${uid} from ${filePath}`);
+    return {
+      uid,
+      cookieJar: jar,
+      cookieFilePath: filePath,
+      stateManager,
+      dynamicClient: client,
+      webInterfaceClient,
+      playerClient,
+      relationClient,
+    };
+  } catch (error) {
+    logger.error(
+      `Failed to load account from ${filePath}; skipping it.`,
+      error,
+    );
+    return null;
+  }
+}
 
 /**
  * Load all configured accounts.
@@ -53,50 +121,15 @@ export function loadAccounts(): AccountContext[] {
   const cookieFiles = config.bilibili.cookieFiles;
 
   if (cookieFiles.length > 0) {
-    _accounts = cookieFiles.map((filePath) => {
-      const cookies = parseNetscapeCookieFile(filePath);
-      const jar = createCookieJarFromNetscape(cookies);
+    _accounts = cookieFiles
+      .map((filePath) => loadCookieFileAccount(filePath))
+      .filter((account): account is AccountContext => account !== null);
 
-      const uid =
-        getDedeUserIDFromCookieFile(filePath) ?? config.bilibili.uid ?? "";
-      if (!uid) {
-        throw new Error(
-          `Cannot determine uid for cookie file: ${filePath}. ` +
-            "No DedeUserID cookie found and no uid set in config.",
-        );
-      }
-
-      // Each account has its own state file to track position independently
-      const stateManager = new StateManager(`./state_${uid}.json`);
-
-      const client = createAccountDynamicClient(
-        "https://api.vc.bilibili.com/dynamic_svr/v1/dynamic_svr",
-        jar,
-        filePath,
-        stateManager,
+    if (_accounts.length === 0) {
+      logger.warn(
+        "No valid cookie-file accounts were loaded; authenticated tracker tasks will not start.",
       );
-      const webInterfaceClient = createAccountWebInterfaceClient(
-        jar,
-        filePath,
-        stateManager,
-      );
-      const playerClient = createAccountPlayerClient(
-        jar,
-        filePath,
-        stateManager,
-      );
-
-      logger.info(`Loaded account uid=${uid} from ${filePath}`);
-      return {
-        uid,
-        cookieJar: jar,
-        cookieFilePath: filePath,
-        stateManager,
-        dynamicClient: client,
-        webInterfaceClient,
-        playerClient,
-      };
-    });
+    }
   } else {
     // Legacy: sessdata mode — single account using config uid and global client
     const uid = config.bilibili.uid ?? "";
@@ -109,6 +142,7 @@ export function loadAccounts(): AccountContext[] {
         dynamicClient: globalDynamicClient,
         webInterfaceClient: globalWebInterfaceClient,
         playerClient: globalPlayerClient,
+        relationClient: globalRelationClient,
       },
     ];
   }

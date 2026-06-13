@@ -1,3 +1,4 @@
+import { isAccountAuthError } from "../api/client";
 import { fetchFollowingList } from "../api/relation";
 import { generateBiliTicket } from "../api/signatures/biliTicket";
 import { config } from "../config";
@@ -28,12 +29,15 @@ export class DynamicTracker {
   private account: AccountContext;
   private isRunning = false;
   private dynamicsService: DynamicsService;
-  private detailsService = new DetailsService();
+  private detailsService: DetailsService;
   private db = Database.getInstance();
 
   constructor(account: AccountContext) {
     this.account = account;
     this.dynamicsService = new DynamicsService(account);
+    this.detailsService = new DetailsService({
+      webInterfaceClient: account.webInterfaceClient,
+    });
   }
 
   async start() {
@@ -57,6 +61,13 @@ export class DynamicTracker {
       } catch (error) {
         endFetchCycle();
         fetchCyclesTotal.inc({ uid, result: "error" });
+        if (isAccountAuthError(error)) {
+          logger.error(
+            `[uid=${this.account.uid}] Authenticated tracker disabled: ${error.message}`,
+          );
+          this.isRunning = false;
+          break;
+        }
         logger.error(`[uid=${this.account.uid}] Tracker error:`, error);
         if (error instanceof Error) {
           logger.error(error.stack);
@@ -182,7 +193,7 @@ export class DynamicTracker {
     const maxDepth = config.processing?.features?.maxRecommendationDepth ?? 1;
 
     // Process all dynamics concurrently
-    const processResults = await Promise.all(
+    const processResults = await Promise.allSettled(
       dynamics.map(async (dynamic) => {
         try {
           const { video, relatedVideos } =
@@ -202,6 +213,9 @@ export class DynamicTracker {
           }
           return null;
         } catch (error) {
+          if (isAccountAuthError(error)) {
+            throw error;
+          }
           logger.error(
             `Error processing dynamic ${dynamic.desc.dynamic_id}:`,
             error,
@@ -213,9 +227,17 @@ export class DynamicTracker {
 
     // Collect results
     for (const result of processResults) {
-      if (result) {
-        results.push(result.video);
-        relatedQueue.push(...result.relatedVideos);
+      if (result.status === "rejected") {
+        if (isAccountAuthError(result.reason)) {
+          throw result.reason;
+        }
+        logger.error("Error processing dynamic:", result.reason);
+        continue;
+      }
+
+      if (result.value) {
+        results.push(result.value.video);
+        relatedQueue.push(...result.value.relatedVideos);
       }
     }
 
@@ -299,7 +321,11 @@ export class DynamicTracker {
 
     logger.info(`[uid=${uid}] Syncing following status from Bilibili...`);
     try {
-      const followings = await fetchFollowingList(uid, true);
+      const followings = await fetchFollowingList(
+        uid,
+        true,
+        this.account.relationClient,
+      );
       const followingIds = new Set(followings.map((f) => f.mid.toString()));
       await this.db.syncFollowingStatus(uid, followingIds);
       this.account.stateManager.updateFollowingSync();

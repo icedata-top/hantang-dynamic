@@ -1,3 +1,4 @@
+import { isAccountAuthError } from "../api/client";
 import { getHistoryDynamic, getNewDynamic } from "../api/dynamic";
 import { config } from "../config";
 import type { AccountContext } from "../core/account";
@@ -125,6 +126,9 @@ export class DynamicsService {
             offset = historyResponse.data.next_offset;
           }
         } catch (error) {
+          if (isAccountAuthError(error)) {
+            throw error;
+          }
           logger.error(`Error fetching type ${typeCode} dynamics:`, error);
           // 遇到错误时停止当前类型的抓取
           break;

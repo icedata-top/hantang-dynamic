@@ -1,3 +1,5 @@
+import type { AxiosInstance } from "axios";
+import { isAccountAuthError } from "../api/client";
 import { getDynamic } from "../api/dynamic";
 import { fetchVideoFullDetail } from "../api/video";
 import { Database } from "../database";
@@ -16,10 +18,12 @@ import type { RateLimiter } from "../utils/rateLimiter";
 export class DetailsService {
   private rateLimiter: RateLimiter;
   private db: Database;
+  private webInterfaceClient?: AxiosInstance;
 
-  constructor() {
+  constructor(options: { webInterfaceClient?: AxiosInstance } = {}) {
     this.db = Database.getInstance();
     this.rateLimiter = sharedApiRateLimiter;
+    this.webInterfaceClient = options.webInterfaceClient;
   }
 
   /**
@@ -47,6 +51,9 @@ export class DetailsService {
 
       return await this.processVideoById(bvid, { processRelated });
     } catch (error) {
+      if (isAccountAuthError(error)) {
+        throw error;
+      }
       logger.error(
         `Error processing dynamic ${dynamic.desc.dynamic_id}:`,
         error,
@@ -136,6 +143,9 @@ export class DetailsService {
         processRelated,
       });
     } catch (error) {
+      if (isAccountAuthError(error)) {
+        throw error;
+      }
       return await this.handleVideoProcessingError(id, error);
     }
   }
@@ -395,7 +405,10 @@ export class DetailsService {
   ): Promise<BiliVideoDetailDataForProcessing> {
     const params = typeof id === "number" ? { aid: id } : { bvid: id };
 
-    const fullDetail = await fetchVideoFullDetail(params);
+    const fullDetail = await fetchVideoFullDetail(
+      params,
+      this.webInterfaceClient,
+    );
 
     if (!fullDetail) {
       throw new Error(`VIDEO_DELETED:${id}`);

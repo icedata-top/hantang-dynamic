@@ -1,3 +1,4 @@
+import type { AxiosInstance } from "axios";
 import { config } from "../config";
 import type {
   BiliVideoBatchDetailItemResponse,
@@ -6,6 +7,7 @@ import type {
 } from "../types";
 import { logger } from "../utils/logger";
 import {
+  isAccountAuthError,
   type RequestConfig,
   webInterfaceClient,
   webInterfaceDirectClient,
@@ -61,12 +63,16 @@ function checkResponseCode(
   throw new Error(`API Error: code ${data.code}`);
 }
 
-export const fetchVideoFullDetail = async (params: {
-  aid?: number;
-  bvid?: string;
-}): Promise<BiliVideoFullDetailResponse | null> => {
+export const fetchVideoFullDetail = async (
+  params: {
+    aid?: number;
+    bvid?: string;
+  },
+  clientOverride?: AxiosInstance,
+): Promise<BiliVideoFullDetailResponse | null> => {
   const endpoint = "/view/detail";
   const useProxy = !!config.bilibili.apiProxyUrl;
+  const directClient = clientOverride ?? webInterfaceDirectClient;
   const id = params.bvid || params.aid;
 
   // Try proxy first if configured
@@ -79,6 +85,9 @@ export const fetchVideoFullDetail = async (params: {
         });
       return checkResponseCode(response.data, id);
     } catch (proxyError) {
+      if (isAccountAuthError(proxyError)) {
+        throw proxyError;
+      }
       // VIDEO_UNAVAILABLE is definitive — don't retry on direct
       if (
         proxyError instanceof Error &&
@@ -101,16 +110,18 @@ export const fetchVideoFullDetail = async (params: {
 
   // Try direct API (either as fallback or primary if no proxy)
   try {
-    const response =
-      await webInterfaceDirectClient.get<BiliVideoFullDetailResponse>(
-        endpoint,
-        {
-          params,
-          ...({ metadata: { silent: true } } as RequestConfig),
-        },
-      );
+    const response = await directClient.get<BiliVideoFullDetailResponse>(
+      endpoint,
+      {
+        params,
+        ...({ metadata: { silent: true } } as RequestConfig),
+      },
+    );
     return checkResponseCode(response.data, id);
   } catch (error) {
+    if (isAccountAuthError(error)) {
+      throw error;
+    }
     // VIDEO_UNAVAILABLE propagates directly
     if (
       error instanceof Error &&
@@ -123,7 +134,7 @@ export const fetchVideoFullDetail = async (params: {
       return null;
     }
 
-    const baseUrl = webInterfaceDirectClient.defaults.baseURL || "";
+    const baseUrl = directClient.defaults.baseURL || "";
     const fullUrl = `${baseUrl}${endpoint}?bvid=${params.bvid || ""}&aid=${
       params.aid || ""
     }`;

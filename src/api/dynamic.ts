@@ -6,7 +6,11 @@ import type {
   BiliDynamicNewResponse,
 } from "../types";
 import { logger } from "../utils/logger";
-import { dynamicClient, dynamicDetailClient } from "./client";
+import {
+  dynamicClient,
+  dynamicDetailClient,
+  isAccountAuthError,
+} from "./client";
 
 const fetchDynamicsAPI = async (
   endpoint: string,
@@ -21,6 +25,9 @@ const fetchDynamicsAPI = async (
     });
     return response.data;
   } catch (error) {
+    if (isAccountAuthError(error)) {
+      throw error;
+    }
     logger.error("API Error:", error);
     if (error instanceof Error) {
       logger.error(error.stack);
@@ -42,6 +49,9 @@ const fetchDynamicAPI = async (
     );
     return response.data;
   } catch (error) {
+    if (isAccountAuthError(error)) {
+      throw error;
+    }
     if (isHttpNotFound(error)) {
       return null;
     }

@@ -9,6 +9,12 @@ import { DynamicTracker } from "./services/tracker";
 import { logger } from "./utils/logger";
 import { APP_VERSION } from "./version";
 
+function waitForShutdownSignal(): Promise<void> {
+  return new Promise(() => {
+    // Process lifetime is controlled by SIGINT/SIGTERM handlers.
+  });
+}
+
 async function runTracker() {
   logger.info("Starting Bilibili Video Tracker");
   logger.debug("Configuration:", config);
@@ -18,19 +24,20 @@ async function runTracker() {
   initializeBuildInfo(APP_VERSION);
   await startMetricsServer();
 
-  // Load all configured accounts (one per cookie file, or one legacy sessdata account)
+  const minuteHandler = config.minute.enabled ? new MinuteHandler() : null;
+  minuteHandler?.start();
+
+  // Load all configured accounts after starting cookie-independent tasks.
   const accounts = loadAccounts();
   logger.info(
     `Loaded ${accounts.length} account(s): ${accounts.map((a) => a.uid).join(", ")}`,
   );
 
   const trackers = accounts.map((account) => new DynamicTracker(account));
-  const minuteHandler = config.minute.enabled ? new MinuteHandler() : null;
   const subtitleService =
     config.subtitle.enabled && accounts.length > 0
       ? new SubtitleService(accounts[0])
       : null;
-  minuteHandler?.start();
   subtitleService?.start();
 
   // Graceful shutdown
@@ -55,8 +62,15 @@ async function runTracker() {
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  // Run all account trackers in parallel (each runs its own infinite loop)
-  await Promise.all(trackers.map((t) => t.start()));
+  // Run account trackers independently. Cookie/auth failures must not stop
+  // cookie-independent tasks such as the minute sampler.
+  for (const tracker of trackers) {
+    tracker.start().catch((error) => {
+      logger.error("Tracker task exited unexpectedly:", error);
+    });
+  }
+
+  await waitForShutdownSignal();
 }
 
 async function main() {
