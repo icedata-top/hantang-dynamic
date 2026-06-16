@@ -1,7 +1,13 @@
+import type { AxiosInstance } from "axios";
 import { config } from "../config";
 import { getRandomDelay, sleep } from "../utils/datetime";
 import { logger } from "../utils/logger";
-import { accountClient, relationClient, simulateBrowserVisit } from "./client";
+import {
+  accountClient,
+  isAccountAuthError,
+  relationClient,
+  simulateBrowserVisit,
+} from "./client";
 
 // User relationship operation types
 export enum UserRelationAction {
@@ -541,6 +547,7 @@ const processIndividually = async (
 export const fetchFollowingList = async (
   vmid: string,
   isSelf = false,
+  client: AxiosInstance = relationClient,
 ): Promise<Array<{ mid: bigint; uname: string }>> => {
   const results: Array<{ mid: bigint; uname: string }> = [];
   const ps = 50;
@@ -549,7 +556,7 @@ export const fetchFollowingList = async (
 
   try {
     while (pn <= maxPages) {
-      const response = await relationClient.get<{
+      const response = await client.get<{
         code: number;
         message: string;
         data: {
@@ -578,6 +585,9 @@ export const fetchFollowingList = async (
       pn++;
     }
   } catch (error) {
+    if (isAccountAuthError(error)) {
+      throw error;
+    }
     logger.error(`fetchFollowingList failed for vmid ${vmid}:`, error);
   }
 

@@ -1,5 +1,14 @@
 import { Pool } from "pg";
 import { config } from "../config/index.js";
+import {
+  dbPoolConnections,
+  dbQueryDurationSeconds,
+  dbQueryErrorsTotal,
+} from "../metrics/registry.js";
+import type {
+  SubtitleState,
+  VideoSubtitleRow,
+} from "../types/bilibili/subtitle.js";
 import type {
   DatabaseStats,
   DiscoveredUserData,
@@ -13,15 +22,53 @@ import type {
 import type {
   DailyCollectionCandidate,
   ProcessedVideoCollectionInput,
-  VideoCollectionTask,
   VideoMinuteSample,
 } from "../types/models/minute.js";
 import type { VideoData } from "../types/models/video.js";
 import { logger } from "../utils/logger.js";
 
+export type { BvidListQuery } from "./videos.js";
+
+function quotePostgresIdentifier(identifier: string): string {
+  return `"${identifier.replace(/"/g, '""')}"`;
+}
+
+function extractSqlText(query: unknown): string {
+  if (typeof query === "string") return query;
+  if (
+    query &&
+    typeof query === "object" &&
+    "text" in query &&
+    typeof query.text === "string"
+  ) {
+    return query.text;
+  }
+  return "";
+}
+
+function queryOperationLabel(query: unknown): string {
+  const sql = extractSqlText(query)
+    .replace(/--.*$/gm, " ")
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .trim()
+    .toLowerCase();
+
+  const keyword = sql.match(/^[a-z]+/)?.[0] ?? "unknown";
+  const tableMatch = sql.match(
+    /\b(?:from|into|update|join|table|index on)\s+("?[\w.]+"?)/,
+  );
+  const table = tableMatch?.[1]?.replace(/"/g, "") ?? "";
+
+  return table ? `${keyword} ${table}` : keyword;
+}
+
 // Import operation modules
 import {
+  advanceFailedMinuteVideos,
+  advanceUnchangedMinuteVideos,
+  getNextMinuteDueAt,
   refreshVideoCollectionStateFromDaily,
+  selectDueMinuteVideos,
   upsertCollectionStateFromProcessedVideo,
 } from "./collectionState.js";
 import { getCachedForwardBvid, saveDynamic } from "./dynamics.js";
@@ -33,12 +80,18 @@ import {
 import { initializeSchema } from "./schema/index.js";
 import { getStats } from "./stats.js";
 import {
-  ackVideoCollectionTasks,
-  claimVideoCollectionTasks,
-  enqueueVideoCollectionGateTasks,
-  enqueueVideoCollectionTasks,
-  failVideoCollectionTasks,
-} from "./taskQueue.js";
+  cidHasAiSubtitle,
+  cidHasManualSubtitle,
+  getSubtitlesByAid,
+  getSubtitlesByCid,
+  recordSubtitleFailure,
+  type SubtitleJob,
+  selectNextSubtitleJob,
+  type UpsertSubtitleInput,
+  type UpsertSubtitleResult,
+  updateSubtitleState,
+  upsertSubtitlesBatch,
+} from "./subtitles.js";
 import {
   addDiscoveredUser,
   getTopDiscoveredUsers,
@@ -48,11 +101,9 @@ import {
   updateUserStats,
 } from "./users.js";
 import { getDailyCollectionCandidates } from "./videoDaily.js";
+import { insertVideoMinuteSamples } from "./videoMinute.js";
 import {
-  insertVideoMinuteSamples,
-  insertVideoMinuteSamplesAndAck,
-} from "./videoMinute.js";
-import {
+  type BvidListQuery,
   getAllProcessedIds,
   getBvidList,
   getProcessedVideos,
@@ -70,6 +121,7 @@ import {
 export class Database {
   private static instance: Database | null = null;
   private pool: Pool | null = null;
+  private poolMetricsTimer: NodeJS.Timeout | null = null;
 
   private constructor() {}
 
@@ -102,19 +154,20 @@ export class Database {
     logger.info("Initializing PostgreSQL connection pool");
 
     try {
+      const schema = config.database.schema;
+
       // Create connection pool
       this.pool = new Pool({
         connectionString: url,
         max: config.application.concurrencyLimit || 20,
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 10000,
+        // Startup options run before pg exposes the client to pool queries.
+        // A pool "connect" hook cannot be awaited and can race the first query.
+        options: `-c search_path=${quotePostgresIdentifier(schema)}`,
       });
-
-      // Set search_path on every new connection
-      const schema = config.database.schema;
-      this.pool.on("connect", (client) => {
-        client.query(`SET search_path TO "${schema}"`);
-      });
+      this.wrapPoolQuery(this.pool);
+      this.startPoolMetricsSampler(this.pool);
 
       // Test connection
       const client = await this.pool.connect();
@@ -139,6 +192,55 @@ export class Database {
       throw new Error("Database not initialized");
     }
     return this.pool;
+  }
+
+  private wrapPoolQuery(pool: Pool): void {
+    const originalQuery = pool.query.bind(pool) as (
+      ...args: unknown[]
+    ) => unknown;
+
+    pool.query = ((...args: unknown[]): unknown => {
+      const callbackCandidate = args[args.length - 1];
+      if (typeof callbackCandidate === "function") {
+        return originalQuery(...args);
+      }
+
+      const operation = queryOperationLabel(args[0]);
+      const endQuery = dbQueryDurationSeconds.startTimer({ operation });
+
+      try {
+        const result = originalQuery(...args);
+        if (result && typeof (result as Promise<unknown>).then === "function") {
+          return (result as Promise<unknown>)
+            .catch((error) => {
+              dbQueryErrorsTotal.inc({ operation });
+              throw error;
+            })
+            .finally(() => {
+              endQuery();
+            });
+        }
+
+        endQuery();
+        return result;
+      } catch (error) {
+        dbQueryErrorsTotal.inc({ operation });
+        endQuery();
+        throw error;
+      }
+    }) as Pool["query"];
+  }
+
+  private startPoolMetricsSampler(pool: Pool): void {
+    const sample = () => {
+      dbPoolConnections.set({ state: "total" }, pool.totalCount);
+      dbPoolConnections.set({ state: "idle" }, pool.idleCount);
+      dbPoolConnections.set({ state: "waiting" }, pool.waitingCount);
+    };
+
+    sample();
+    this.poolMetricsTimer = setInterval(sample, 15_000);
+    this.poolMetricsTimer.unref();
   }
 
   // ===== Video Operations =====
@@ -200,8 +302,8 @@ export class Database {
   /**
    * Get list of bvids only (lightweight, for batch processing)
    */
-  public async getBvidList(where?: string): Promise<string[]> {
-    return getBvidList(this.ensurePool(), where);
+  public async getBvidList(query?: string | BvidListQuery): Promise<string[]> {
+    return getBvidList(this.ensurePool(), query);
   }
 
   /**
@@ -212,6 +314,59 @@ export class Database {
     limit?: number,
   ): Promise<VideoSnapshot[]> {
     return getVideoHistory(this.ensurePool(), bvid, limit);
+  }
+
+  // ===== Subtitle Operations =====
+
+  public async selectNextSubtitleJob(): Promise<SubtitleJob | null> {
+    return selectNextSubtitleJob(this.ensurePool());
+  }
+
+  public async updateSubtitleState(
+    aid: bigint,
+    state: SubtitleState,
+  ): Promise<void> {
+    return updateSubtitleState(this.ensurePool(), aid, state);
+  }
+
+  public async recordSubtitleFailure(
+    aid: bigint,
+    errorMessage: string,
+  ): Promise<{ state: SubtitleState | null; failureCount: number }> {
+    return recordSubtitleFailure(
+      this.ensurePool(),
+      aid,
+      errorMessage,
+      config.subtitle.maxRetries,
+    );
+  }
+
+  public async upsertSubtitlesBatch(
+    inputs: UpsertSubtitleInput[],
+  ): Promise<UpsertSubtitleResult> {
+    return upsertSubtitlesBatch(this.ensurePool(), inputs);
+  }
+
+  public async getSubtitlesByAid(aid: bigint): Promise<VideoSubtitleRow[]> {
+    return getSubtitlesByAid(this.ensurePool(), aid);
+  }
+
+  public async getSubtitlesByCid(
+    aid: bigint,
+    cid: bigint,
+  ): Promise<VideoSubtitleRow[]> {
+    return getSubtitlesByCid(this.ensurePool(), aid, cid);
+  }
+
+  public async cidHasManualSubtitle(
+    aid: bigint,
+    cid: bigint,
+  ): Promise<boolean> {
+    return cidHasManualSubtitle(this.ensurePool(), aid, cid);
+  }
+
+  public async cidHasAiSubtitle(aid: bigint, cid: bigint): Promise<boolean> {
+    return cidHasAiSubtitle(this.ensurePool(), aid, cid);
   }
 
   // ===== Dynamic Operations =====
@@ -364,50 +519,33 @@ export class Database {
     );
   }
 
-  public async enqueueVideoCollectionTasks(
-    now?: Date,
-    maxAttempts?: number,
-  ): Promise<number> {
-    return enqueueVideoCollectionTasks(this.ensurePool(), now, maxAttempts);
+  // ===== Queue-free minute collection =====
+
+  public async getNextMinuteDueAt(): Promise<Date | null> {
+    return getNextMinuteDueAt(this.ensurePool());
   }
 
-  public async enqueueVideoCollectionGateTasks(
-    now?: Date,
-    options?: {
-      gateLeadTimeMinutes?: number;
-      gateMinLeadRatio?: number;
-      gateMaxLeadViews?: number;
-      maxAttempts?: number;
-    },
-  ): Promise<number> {
-    return enqueueVideoCollectionGateTasks(this.ensurePool(), now, options);
-  }
-
-  public async claimVideoCollectionTasks(
+  public async selectDueMinuteVideos(
     limit?: number,
-    lockDurationSeconds?: number,
     now?: Date,
-  ): Promise<VideoCollectionTask[]> {
-    return claimVideoCollectionTasks(
-      this.ensurePool(),
-      limit,
-      lockDurationSeconds,
-      now,
-    );
+  ): Promise<
+    { aid: bigint; lastView: bigint | null; nearGate: boolean; dueAt: Date }[]
+  > {
+    return selectDueMinuteVideos(this.ensurePool(), limit, now);
   }
 
-  public async ackVideoCollectionTasks(
-    taskIds: bigint[],
+  public async advanceUnchangedMinuteVideos(
+    aids: bigint[],
     now?: Date,
   ): Promise<number> {
-    return ackVideoCollectionTasks(this.ensurePool(), taskIds, now);
+    return advanceUnchangedMinuteVideos(this.ensurePool(), aids, now);
   }
 
-  public async failVideoCollectionTasks(
-    taskIds: bigint[],
+  public async advanceFailedMinuteVideos(
+    aids: bigint[],
     now?: Date,
   ): Promise<number> {
-    return failVideoCollectionTasks(this.ensurePool(), taskIds, now);
+    return advanceFailedMinuteVideos(this.ensurePool(), aids, now);
   }
 
   public async insertVideoMinuteSamples(
@@ -416,25 +554,16 @@ export class Database {
     return insertVideoMinuteSamples(this.ensurePool(), samples);
   }
 
-  public async insertVideoMinuteSamplesAndAck(
-    samples: VideoMinuteSample[],
-    taskIds: bigint[],
-    now?: Date,
-  ): Promise<{ inserted: number; acked: number }> {
-    return insertVideoMinuteSamplesAndAck(
-      this.ensurePool(),
-      samples,
-      taskIds,
-      now,
-    );
-  }
-
   // ===== Connection Management =====
 
   /**
    * Close the database connection pool
    */
   public async close(): Promise<void> {
+    if (this.poolMetricsTimer) {
+      clearInterval(this.poolMetricsTimer);
+      this.poolMetricsTimer = null;
+    }
     if (this.pool) {
       await this.pool.end();
       this.pool = null;

@@ -15,6 +15,10 @@ export async function initCronVideoStatic(
     // ignore: job didn't exist yet or pg_cron not available
   }
   try {
+    // Changed detection compares on aid (PK) + title + priority only.
+    // Previous version also compared v.bvid = m.bvid, but the INSERT
+    // stores av2bv(aid) which may differ from MySQL's bvid encoding,
+    // causing every row to be considered "changed" (200k writes/hour).
     await pool.query(`
       SELECT cron.schedule(
         'sync_video_static_from_mysql',
@@ -27,7 +31,6 @@ export async function initCronVideoStatic(
           WHERE NOT EXISTS (
             SELECT 1 FROM "${schema}".video_static v
             WHERE v.aid      = m.aid
-              AND v.bvid     = m.bvid
               AND v.title    = m.title
               AND v.priority IS NOT DISTINCT FROM m.priority
           )

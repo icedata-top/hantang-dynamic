@@ -1,5 +1,6 @@
 *.toml
 node_modules/*
+.pnpm-store/
 *.env
 *.csv
 *.state

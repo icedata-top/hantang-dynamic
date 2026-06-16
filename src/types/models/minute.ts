@@ -1,5 +1,3 @@
-export type VideoCollectionTaskType = "minute" | "gate";
-
 export interface VideoMinuteSample {
   aid: bigint;
   time: Date;
@@ -10,18 +8,6 @@ export interface VideoMinuteSample {
   reply?: number | null;
   share?: number | null;
   like?: number | null;
-}
-
-export interface VideoCollectionTask {
-  id: bigint;
-  aid: bigint;
-  taskType: VideoCollectionTaskType;
-  dedupeKey: string;
-  dueAt: Date;
-  lockedUntil: Date | null;
-  attemptCount: number;
-  gateValue: bigint | null;
-  gateReason: string | null;
 }
 
 export interface DailyCollectionCandidate {

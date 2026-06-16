@@ -1,9 +1,19 @@
 import { config } from "./config";
 import { loadAccounts } from "./core/account";
 import { Database } from "./database";
+import { initializeBuildInfo } from "./metrics/registry";
+import { startMetricsServer, stopMetricsServer } from "./metrics/server";
 import { MinuteHandler } from "./services/minute/minuteHandler";
+import { SubtitleService } from "./services/subtitle.service";
 import { DynamicTracker } from "./services/tracker";
 import { logger } from "./utils/logger";
+import { APP_VERSION } from "./version";
+
+function waitForShutdownSignal(): Promise<void> {
+  return new Promise(() => {
+    // Process lifetime is controlled by SIGINT/SIGTERM handlers.
+  });
+}
 
 async function runTracker() {
   logger.info("Starting Bilibili Video Tracker");
@@ -11,16 +21,24 @@ async function runTracker() {
 
   // Initialize Database
   await Database.getInstance().init();
+  initializeBuildInfo(APP_VERSION);
+  await startMetricsServer();
 
-  // Load all configured accounts (one per cookie file, or one legacy sessdata account)
+  const minuteHandler = config.minute.enabled ? new MinuteHandler() : null;
+  minuteHandler?.start();
+
+  // Load all configured accounts after starting cookie-independent tasks.
   const accounts = loadAccounts();
   logger.info(
     `Loaded ${accounts.length} account(s): ${accounts.map((a) => a.uid).join(", ")}`,
   );
 
   const trackers = accounts.map((account) => new DynamicTracker(account));
-  const minuteHandler = config.minute.enabled ? new MinuteHandler() : null;
-  minuteHandler?.start();
+  const subtitleService =
+    config.subtitle.enabled && accounts.length > 0
+      ? new SubtitleService(accounts)
+      : null;
+  subtitleService?.start();
 
   // Graceful shutdown
   const shutdown = async () => {
@@ -28,7 +46,9 @@ async function runTracker() {
     for (const tracker of trackers) {
       tracker.stop();
     }
-    minuteHandler?.stop();
+    if (minuteHandler) await minuteHandler.stop();
+    if (subtitleService) await subtitleService.stop();
+    await stopMetricsServer();
     try {
       await Database.getInstance().close();
       logger.info("Database connection closed");
@@ -42,8 +62,15 @@ async function runTracker() {
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  // Run all account trackers in parallel (each runs its own infinite loop)
-  await Promise.all(trackers.map((t) => t.start()));
+  // Run account trackers independently. Cookie/auth failures must not stop
+  // cookie-independent tasks such as the minute sampler.
+  for (const tracker of trackers) {
+    tracker.start().catch((error) => {
+      logger.error("Tracker task exited unexpectedly:", error);
+    });
+  }
+
+  await waitForShutdownSignal();
 }
 
 async function main() {
@@ -89,6 +116,13 @@ async function main() {
 }
 
 main().catch(async (error) => {
+  try {
+    const { fatalExitsTotal } = await import("./metrics/registry");
+    fatalExitsTotal.inc({ reason: "fatal_error" });
+  } catch (metricsError) {
+    logger.error("Failed to record fatal exit metric:", metricsError);
+  }
+
   const message = `Fatal Error: ${error}\n${
     error instanceof Error ? error.stack : ""
   }`;

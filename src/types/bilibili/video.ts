@@ -194,6 +194,110 @@ export interface RecommendedVideo {
   tname: string;
 }
 
+export interface BiliVideoDetailDataForProcessing {
+  View: {
+    aid: bigint;
+    bvid: string;
+    cid: number;
+    copyright: number;
+    ctime: number;
+    desc: string;
+    dimension: BiliVideoDimension;
+    duration: number;
+    dynamic: string;
+    owner: BiliVideoOwner;
+    pic: string;
+    pubdate: number;
+    rights: BiliVideoRights;
+    state: number;
+    tid: number;
+    tid_v2?: number;
+    title: string;
+    videos: number;
+    mission_id?: number;
+    staff?: Array<{
+      mid: bigint;
+      title?: string;
+      name?: string;
+      face?: string;
+      follower?: number;
+    }>;
+    ugc_season?: {
+      id: number;
+      title?: string;
+      mid?: number;
+      intro?: string;
+      ep_count?: number;
+    };
+    argue_info?: {
+      argue_msg: string;
+      argue_type: number;
+      argue_link: string;
+    };
+    honor_reply?: {
+      honor?: Array<{
+        aid?: number;
+        type: number;
+        desc: string;
+        weekly_recommend_num: number;
+      }>;
+    };
+  };
+  Card: {
+    card: {
+      mid: string;
+      name: string;
+      face: string;
+      fans: number;
+      attention?: number;
+      sign: string;
+      level_info?: {
+        current_level?: number;
+      };
+      Official?: {
+        role?: number;
+        title: string;
+        desc?: string;
+        type: number;
+      };
+      official_verify?: {
+        type: number;
+        desc: string;
+      };
+    };
+    following?: boolean;
+    archive_count?: number;
+    article_count?: number;
+    follower?: number;
+  };
+  Tags: Array<{
+    tag_id?: number;
+    tag_name: string;
+    cover?: string;
+    likes?: number;
+    hates?: number;
+    attribute?: number;
+    is_activity?: number;
+    uri?: string;
+    tag_type?: string;
+  }>;
+  Related?: RecommendedVideo[];
+  participle?: string[];
+}
+
+export interface BiliVideoBatchDetailItemResponse {
+  id: string;
+  code: number;
+  message: string;
+  data?: BiliVideoDetailDataForProcessing;
+}
+
+export interface BiliVideoBatchDetailResponse {
+  code: number;
+  message: string;
+  data: BiliVideoBatchDetailItemResponse[];
+}
+
 /**
  * Full video detail response including related videos
  */
@@ -201,7 +305,7 @@ export interface BiliVideoFullDetailResponse {
   code: number;
   message: string;
   ttl: number;
-  data: {
+  data: BiliVideoDetailDataForProcessing & {
     View: {
       aid: bigint;
       bvid: string;

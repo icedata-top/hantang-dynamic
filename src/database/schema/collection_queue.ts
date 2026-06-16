@@ -1,52 +1,38 @@
 import type { Pool } from "pg";
 import { logger } from "../../utils/logger.js";
 
+/**
+ * Gate-crossing tables and helper functions.
+ *
+ * The video_collection_queue table that used to live here has been removed —
+ * queue-free scheduling via video_collection_state + fn_select_due_minute_videos
+ * replaced it entirely.
+ */
 export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS video_collection_queue (
-      id bigserial PRIMARY KEY,
-      aid bigint NOT NULL,
-      task_type text NOT NULL,
-      dedupe_key text NOT NULL,
-      due_at timestamptz NOT NULL,
-      status text NOT NULL DEFAULT 'pending',
-      locked_until timestamptz,
-      attempt_count integer NOT NULL DEFAULT 0,
-      max_attempts integer NOT NULL DEFAULT 5,
-      gate_value bigint,
-      gate_reason text,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      updated_at timestamptz NOT NULL DEFAULT now(),
-      CONSTRAINT chk_video_collection_queue_task_type
-        CHECK (task_type IN ('minute', 'gate')),
-      CONSTRAINT chk_video_collection_queue_status
-        CHECK (status IN ('pending', 'leased', 'completed', 'abandoned'))
-    )
-  `);
+  // ── Drop legacy queue table and its indexes ──────────────────────
+  await pool.query(`DROP TABLE IF EXISTS video_collection_queue CASCADE`);
 
-  await pool.query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_video_collection_queue_active_dedupe
-    ON video_collection_queue(dedupe_key)
-    WHERE status IN ('pending', 'leased')
-  `);
+  // ── Drop legacy queue-only functions ─────────────────────────────
+  await pool.query(
+    `DROP FUNCTION IF EXISTS fn_advance_abandoned_minute_collection_state(timestamptz)`,
+  );
+  await pool.query(
+    `DROP FUNCTION IF EXISTS fn_enqueue_video_collection_tasks(timestamptz, integer)`,
+  );
+  await pool.query(
+    `DROP FUNCTION IF EXISTS fn_enqueue_video_collection_gate_tasks(timestamptz, interval, numeric, bigint, integer, text)`,
+  );
+  await pool.query(
+    `DROP FUNCTION IF EXISTS fn_claim_video_collection_tasks(timestamptz, integer, interval)`,
+  );
+  await pool.query(
+    `DROP FUNCTION IF EXISTS fn_ack_video_collection_tasks(bigint[], timestamptz)`,
+  );
+  await pool.query(
+    `DROP FUNCTION IF EXISTS fn_fail_video_collection_tasks(bigint[], timestamptz)`,
+  );
 
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_video_collection_queue_claim
-    ON video_collection_queue(status, task_type, due_at, locked_until, id)
-  `);
-
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_video_collection_queue_abandoned_dedupe
-    ON video_collection_queue(dedupe_key)
-    WHERE status = 'abandoned'
-  `);
-
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_video_collection_queue_cleanup
-    ON video_collection_queue(updated_at)
-    WHERE status IN ('completed', 'abandoned')
-  `);
-
+  // ── Gate crossing records (still used by triggers) ───────────────
   await pool.query(`
     CREATE TABLE IF NOT EXISTS video_collection_gate_crossings (
       id bigserial PRIMARY KEY,
@@ -55,20 +41,31 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
       previous_view bigint,
       current_view bigint,
       crossed_at timestamptz NOT NULL DEFAULT now(),
-      source_task_id bigint REFERENCES video_collection_queue(id),
       created_at timestamptz NOT NULL DEFAULT now(),
       CONSTRAINT uq_video_collection_gate_crossing UNIQUE (aid, gate_value)
     )
   `);
 
+  // Drop legacy FK to the now-removed queue table
+  await pool.query(`
+    ALTER TABLE video_collection_gate_crossings
+    DROP CONSTRAINT IF EXISTS video_collection_gate_crossings_source_task_id_fkey
+  `);
+  await pool.query(`
+    ALTER TABLE video_collection_gate_crossings
+    DROP COLUMN IF EXISTS source_task_id
+  `);
+
+  // ── Gate value helper functions ──────────────────────────────────
   await pool.query(`
     CREATE OR REPLACE FUNCTION fn_video_collection_exact_gate_value(
       p_view bigint
     ) RETURNS bigint AS $$
       SELECT CASE
         WHEN p_view IS NULL OR p_view <= 0 THEN NULL
-        WHEN p_view < 10000 AND p_view % 1000 = 0 THEN p_view
-        WHEN p_view >= 10000 AND p_view % 10000 = 0 THEN p_view
+        WHEN p_view < 10000  AND p_view % 1000   = 0 THEN p_view
+        WHEN p_view < 100000 AND p_view % 10000  = 0 THEN p_view
+        WHEN p_view >= 100000 AND p_view % 100000 = 0 THEN p_view
         ELSE NULL
       END
     $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE
@@ -80,8 +77,9 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
     ) RETURNS bigint AS $$
       SELECT CASE
         WHEN p_view IS NULL OR p_view < 0 THEN NULL
-        WHEN p_view < 10000 THEN ((p_view / 1000) + 1) * 1000
-        ELSE ((p_view / 10000) + 1) * 10000
+        WHEN p_view < 10000  THEN ((p_view / 1000)   + 1) * 1000
+        WHEN p_view < 100000 THEN ((p_view / 10000)  + 1) * 10000
+        ELSE                      ((p_view / 100000) + 1) * 100000
       END
     $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE
   `);
@@ -99,8 +97,11 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
           THEN NULL
         ELSE (
           SELECT max(v) FROM (VALUES
-            (CASE WHEN p_current_view >= 10000
-              THEN (p_current_view / 10000) * 10000
+            (CASE WHEN p_current_view >= 100000
+              THEN (p_current_view / 100000) * 100000
+            END),
+            (CASE WHEN least(p_current_view, 99999) >= 10000
+              THEN (least(p_current_view, 99999) / 10000) * 10000
             END),
             (CASE WHEN least(p_current_view, 9999) >= 1000
               THEN (least(p_current_view, 9999) / 1000) * 1000
@@ -113,484 +114,5 @@ export async function initCollectionQueueSchema(pool: Pool): Promise<void> {
     $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE
   `);
 
-  await pool.query(`
-    CREATE OR REPLACE FUNCTION fn_advance_abandoned_minute_collection_state(
-      p_now timestamptz DEFAULT now()
-    ) RETURNS integer AS $$
-    DECLARE
-      advanced_count integer;
-    BEGIN
-      UPDATE video_collection_state s
-      SET next_minute_due_at = fn_video_collection_next_due_at(
-            s.aid,
-            s.priority,
-            greatest(
-              p_now + interval '1 second',
-              q.due_at + make_interval(mins => s.priority)
-            )
-          ),
-          updated_at = p_now
-      FROM video_collection_queue q
-      WHERE q.aid = s.aid
-        AND q.task_type = 'minute'
-        AND q.status = 'abandoned'
-        AND q.due_at <= p_now
-        AND s.priority > 0
-        AND s.next_minute_due_at IS NOT NULL
-        AND s.next_minute_due_at <= q.due_at;
-
-      GET DIAGNOSTICS advanced_count = ROW_COUNT;
-      RETURN advanced_count;
-    END;
-    $$ LANGUAGE plpgsql
-  `);
-
-  await pool.query(`
-    CREATE OR REPLACE FUNCTION fn_enqueue_video_collection_tasks(
-      p_now timestamptz DEFAULT now(),
-      p_max_attempts integer DEFAULT 5
-    ) RETURNS integer AS $$
-    DECLARE
-      inserted_count integer;
-    BEGIN
-      DELETE FROM video_collection_queue
-      WHERE status IN ('completed', 'abandoned')
-        AND updated_at < p_now - interval '3 days';
-
-      WITH expired_bootstrap AS (
-        UPDATE video_collection_state
-        SET priority = 0,
-            next_minute_due_at = NULL,
-            updated_at = p_now
-        WHERE priority > 0
-          AND daily_delta_source = 'bootstrap'
-          AND bootstrap_until IS NOT NULL
-          AND bootstrap_until <= p_now
-          AND latest_daily_delta IS NULL
-          AND weekly_avg_daily_delta IS NULL
-        RETURNING aid
-      )
-      UPDATE video_collection_queue q
-      SET status = 'abandoned',
-          locked_until = NULL,
-          updated_at = p_now
-      FROM expired_bootstrap eb
-      WHERE q.aid = eb.aid
-        AND q.task_type = 'minute'
-        AND q.status IN ('pending', 'leased');
-
-      UPDATE video_collection_queue
-      SET status = 'abandoned',
-          updated_at = p_now
-      WHERE status = 'leased'
-        AND locked_until <= p_now
-        AND attempt_count >= max_attempts;
-
-      PERFORM fn_advance_abandoned_minute_collection_state(p_now);
-
-      WITH minute_candidates AS (
-        SELECT
-          s.aid,
-          s.next_minute_due_at,
-          concat('minute:', s.aid, ':', extract(epoch FROM s.next_minute_due_at)::bigint) AS dedupe_key
-        FROM video_collection_state s
-        WHERE s.priority > 0
-          AND s.next_minute_due_at IS NOT NULL
-          AND s.next_minute_due_at <= p_now
-      )
-      INSERT INTO video_collection_queue (
-        aid,
-        task_type,
-        dedupe_key,
-        due_at,
-        max_attempts,
-        updated_at
-      )
-      SELECT
-        mc.aid,
-        'minute',
-        mc.dedupe_key,
-        mc.next_minute_due_at,
-        p_max_attempts,
-        p_now
-      FROM minute_candidates mc
-      WHERE NOT EXISTS (
-        SELECT 1
-        FROM video_collection_queue q
-        WHERE q.dedupe_key = mc.dedupe_key
-          AND q.status IN ('pending', 'leased')
-      )
-      ON CONFLICT DO NOTHING;
-
-      GET DIAGNOSTICS inserted_count = ROW_COUNT;
-      RETURN inserted_count;
-    END;
-    $$ LANGUAGE plpgsql
-  `);
-
-  await pool.query(`
-    CREATE OR REPLACE FUNCTION fn_enqueue_video_collection_gate_tasks(
-      p_now timestamptz DEFAULT now(),
-      p_gate_lead_time interval DEFAULT interval '30 minutes',
-      p_gate_min_lead_ratio numeric DEFAULT 0.10,
-      p_gate_max_lead_views bigint DEFAULT 500,
-      p_max_attempts integer DEFAULT 5
-    ) RETURNS integer AS $$
-    DECLARE
-      inserted_count integer;
-    BEGIN
-      WITH active_state AS (
-        SELECT aid, priority, next_minute_due_at
-        FROM video_collection_state
-        WHERE priority <> -1
-      ),
-      paired AS (
-        SELECT
-          state.aid,
-          max(samples.sample_time) FILTER (WHERE samples.rn = 1) AS current_sample_time,
-          max(samples.view_count) FILTER (WHERE samples.rn = 1) AS current_view,
-          max(samples.sample_time) FILTER (WHERE samples.rn = 2) AS previous_sample_time,
-          max(samples.view_count) FILTER (WHERE samples.rn = 2) AS previous_view,
-          state.priority,
-          state.next_minute_due_at
-        FROM active_state state
-        LEFT JOIN LATERAL (
-          SELECT
-            ranked_samples.sample_time,
-            ranked_samples.view_count,
-            ranked_samples.rn
-          FROM (
-            SELECT
-              candidate_samples.sample_time,
-              candidate_samples.view_count,
-              row_number() OVER (ORDER BY candidate_samples.sample_time DESC) AS rn
-            FROM (
-              SELECT
-                vdl.updated_at AS sample_time,
-                vdl."view"::bigint AS view_count
-              FROM video_daily_latest vdl
-              WHERE vdl.aid = state.aid
-                AND vdl."view" IS NOT NULL
-              UNION ALL
-              SELECT
-                recent_daily.record_date::timestamptz AS sample_time,
-                recent_daily."view"::bigint AS view_count
-              FROM (
-                SELECT vd.record_date, vd."view"
-                FROM video_daily vd
-                WHERE vd.aid = state.aid
-                  AND vd."view" IS NOT NULL
-                ORDER BY vd.record_date DESC
-                LIMIT 2
-              ) recent_daily
-              UNION ALL
-              SELECT
-                recent_minute."time" AS sample_time,
-                recent_minute."view"::bigint AS view_count
-              FROM (
-                SELECT vm."time", vm."view"
-                FROM video_minute vm
-                WHERE vm.aid = state.aid
-                  AND vm."view" IS NOT NULL
-                ORDER BY vm."time" DESC
-                LIMIT 2
-              ) recent_minute
-            ) candidate_samples
-          ) ranked_samples
-          WHERE ranked_samples.rn <= 2
-        ) samples ON true
-        GROUP BY state.aid, state.priority, state.next_minute_due_at
-      ),
-      candidates AS (
-        SELECT
-          p.*,
-          fn_video_collection_exact_gate_value(p.current_view) AS exact_gate,
-          fn_video_collection_crossed_gate_value(p.previous_view, p.current_view) AS crossed_gate,
-          fn_video_collection_next_gate_value(p.current_view) AS next_gate,
-          p.current_view - p.previous_view AS recent_delta,
-          extract(epoch FROM (p.current_sample_time - p.previous_sample_time)) AS recent_seconds
-        FROM paired p
-      ),
-      selected AS (
-        SELECT
-          c.aid,
-          CASE
-            WHEN c.exact_gate IS NOT NULL THEN c.exact_gate
-            WHEN c.crossed_gate IS NOT NULL THEN c.crossed_gate
-            WHEN c.next_gate IS NOT NULL
-             AND c.recent_delta > 0
-             AND c.recent_seconds > 0
-             AND c.priority > 0
-             AND c.next_minute_due_at IS NOT NULL
-             AND c.current_view + (
-               c.recent_delta
-               * extract(epoch FROM (c.next_minute_due_at + p_gate_lead_time - c.current_sample_time))
-               / c.recent_seconds
-             ) >= c.next_gate THEN c.next_gate
-            WHEN c.next_gate IS NOT NULL
-             AND c.recent_delta > 0
-             AND c.next_gate - c.current_view <= least(
-               ceil(c.next_gate * p_gate_min_lead_ratio)::bigint,
-               p_gate_max_lead_views
-             ) THEN c.next_gate
-            ELSE NULL
-          END AS gate_value,
-          CASE
-            WHEN c.exact_gate IS NOT NULL THEN 'view_threshold'
-            WHEN c.crossed_gate IS NOT NULL THEN 'crossed_threshold'
-            WHEN c.next_gate IS NOT NULL
-             AND c.recent_delta > 0
-             AND c.recent_seconds > 0
-             AND c.priority > 0
-             AND c.next_minute_due_at IS NOT NULL
-             AND c.current_view + (
-               c.recent_delta
-               * extract(epoch FROM (c.next_minute_due_at + p_gate_lead_time - c.current_sample_time))
-               / c.recent_seconds
-             ) >= c.next_gate THEN 'predicted_threshold'
-            ELSE 'near_threshold'
-          END AS gate_reason
-        FROM candidates c
-      )
-      INSERT INTO video_collection_queue (
-        aid,
-        task_type,
-        dedupe_key,
-        due_at,
-        max_attempts,
-        gate_value,
-        gate_reason,
-        updated_at
-      )
-      SELECT
-        s.aid,
-        'gate',
-        concat('gate:', s.aid, ':', s.gate_value),
-        p_now,
-        p_max_attempts,
-        s.gate_value,
-        s.gate_reason,
-        p_now
-      FROM selected s
-      WHERE s.gate_value IS NOT NULL
-        AND NOT EXISTS (
-          SELECT 1
-          FROM video_collection_gate_crossings c
-          WHERE c.aid = s.aid
-            AND c.gate_value = s.gate_value
-        )
-        AND NOT EXISTS (
-          SELECT 1
-          FROM video_collection_queue q
-          WHERE q.dedupe_key = concat('gate:', s.aid, ':', s.gate_value)
-            AND q.status = 'abandoned'
-        )
-      ON CONFLICT DO NOTHING;
-
-      GET DIAGNOSTICS inserted_count = ROW_COUNT;
-      RETURN inserted_count;
-    END;
-    $$ LANGUAGE plpgsql
-  `);
-
-  await pool.query(`
-    CREATE OR REPLACE FUNCTION fn_claim_video_collection_tasks(
-      p_now timestamptz DEFAULT now(),
-      p_limit integer DEFAULT 50,
-      p_lock_duration interval DEFAULT interval '30 seconds'
-    ) RETURNS TABLE (
-      id bigint,
-      aid bigint,
-      task_type text,
-      dedupe_key text,
-      due_at timestamptz,
-      locked_until timestamptz,
-      attempt_count integer,
-      gate_value bigint,
-      gate_reason text
-    ) AS $$
-    BEGIN
-      UPDATE video_collection_queue
-      SET status = 'abandoned',
-          updated_at = p_now
-      WHERE status = 'leased'
-        AND locked_until <= p_now
-        AND attempt_count >= max_attempts;
-
-      PERFORM fn_advance_abandoned_minute_collection_state(p_now);
-
-      RETURN QUERY
-      WITH candidates AS (
-        SELECT q.id
-        FROM video_collection_queue q
-        WHERE q.due_at <= p_now
-          AND q.attempt_count < q.max_attempts
-          AND (
-            q.status = 'pending'
-            OR (q.status = 'leased' AND q.locked_until <= p_now)
-          )
-        ORDER BY
-          q.task_type ASC,
-          q.due_at ASC,
-          q.id ASC
-        LIMIT p_limit
-        FOR UPDATE SKIP LOCKED
-      ),
-      updated AS (
-        UPDATE video_collection_queue q
-        SET status = 'leased',
-            locked_until = p_now + p_lock_duration,
-            attempt_count = q.attempt_count + 1,
-            updated_at = p_now
-        FROM candidates c
-        WHERE q.id = c.id
-        RETURNING q.id, q.aid, q.task_type, q.dedupe_key, q.due_at,
-                  q.locked_until, q.attempt_count, q.gate_value, q.gate_reason
-      )
-      SELECT * FROM updated;
-    END;
-    $$ LANGUAGE plpgsql
-  `);
-
-  await pool.query(`
-    CREATE OR REPLACE FUNCTION fn_ack_video_collection_tasks(
-      p_task_ids bigint[],
-      p_now timestamptz DEFAULT now()
-    ) RETURNS integer AS $$
-    DECLARE
-      completed_count integer;
-    BEGIN
-      WITH leased AS (
-        SELECT q.id, q.aid, q.gate_value
-        FROM video_collection_queue q
-        WHERE q.id = ANY(p_task_ids)
-          AND q.status = 'leased'
-      ),
-      gate_leased AS (
-        SELECT *
-        FROM leased
-        WHERE gate_value IS NOT NULL
-      ),
-      sample_pairs AS (
-        SELECT
-          g.id,
-          g.aid,
-          g.gate_value,
-          latest."view"::bigint AS current_view,
-          previous."view"::bigint AS previous_view
-        FROM gate_leased g
-        LEFT JOIN LATERAL (
-          SELECT vm."view", vm."time"
-          FROM video_minute vm
-          WHERE vm.aid = g.aid
-          ORDER BY vm."time" DESC
-          LIMIT 1
-        ) latest ON true
-        LEFT JOIN LATERAL (
-          SELECT vm."view", vm."time"
-          FROM video_minute vm
-          WHERE vm.aid = g.aid
-            AND latest."time" IS NOT NULL
-            AND vm."time" < latest."time"
-          ORDER BY vm."time" DESC
-          LIMIT 1
-        ) previous ON true
-      ),
-      gate_outcome AS (
-        SELECT
-          sp.*,
-          COALESCE(sp.current_view >= sp.gate_value, false) AS crossed
-        FROM sample_pairs sp
-      ),
-      completed AS (
-        UPDATE video_collection_queue q
-        SET status = 'completed',
-            locked_until = NULL,
-            updated_at = p_now
-        FROM leased l
-        LEFT JOIN gate_outcome go ON go.id = l.id
-        WHERE q.id = l.id
-          AND (
-            l.gate_value IS NULL
-            OR go.crossed
-          )
-        RETURNING q.id, q.aid, q.gate_value
-      ),
-      deferred_gate AS (
-        UPDATE video_collection_queue q
-        SET status = 'pending',
-            due_at = p_now + make_interval(
-              mins => least(greatest(COALESCE(s.priority, 5), 1), 5)
-            ),
-            attempt_count = greatest(q.attempt_count - 1, 0),
-            locked_until = NULL,
-            updated_at = p_now
-        FROM gate_outcome go
-        LEFT JOIN video_collection_state s ON s.aid = go.aid
-        WHERE q.id = go.id
-          AND q.status = 'leased'
-          AND NOT go.crossed
-        RETURNING q.id
-      ),
-      inserted_crossings AS (
-        INSERT INTO video_collection_gate_crossings (
-          aid,
-          gate_value,
-          previous_view,
-          current_view,
-          crossed_at,
-          source_task_id
-        )
-        SELECT
-          go.aid,
-          go.gate_value,
-          go.previous_view,
-          go.current_view,
-          p_now,
-          go.id
-        FROM gate_outcome go
-        WHERE go.crossed
-        ON CONFLICT (aid, gate_value) DO NOTHING
-        RETURNING 1
-      )
-      SELECT count(*) INTO completed_count
-      FROM (
-        SELECT id FROM completed
-        UNION ALL
-        SELECT id FROM deferred_gate
-      ) processed;
-
-      RETURN completed_count;
-    END;
-    $$ LANGUAGE plpgsql
-  `);
-
-  await pool.query(`
-    CREATE OR REPLACE FUNCTION fn_fail_video_collection_tasks(
-      p_task_ids bigint[],
-      p_now timestamptz DEFAULT now()
-    ) RETURNS integer AS $$
-    DECLARE
-      failed_count integer;
-    BEGIN
-      UPDATE video_collection_queue q
-      SET status = CASE
-            WHEN q.attempt_count >= q.max_attempts THEN 'abandoned'
-            ELSE 'pending'
-          END,
-          locked_until = NULL,
-          updated_at = p_now
-      WHERE q.id = ANY(p_task_ids)
-        AND q.status = 'leased';
-
-      GET DIAGNOSTICS failed_count = ROW_COUNT;
-
-      PERFORM fn_advance_abandoned_minute_collection_state(p_now);
-
-      RETURN failed_count;
-    END;
-    $$ LANGUAGE plpgsql
-  `);
-
-  logger.info("video_collection_queue: schema ready");
+  logger.info("video_collection_gate_crossings: schema ready");
 }

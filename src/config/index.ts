@@ -9,14 +9,22 @@ import {
   createBilibiliConfig,
   createDatabaseConfig,
   createExportConfig,
+  createMetricsConfig,
   createMinuteConfig,
   createNotificationsConfig,
   createProcessingConfig,
+  createRepairConfig,
+  createServerConfig,
+  createSubtitleConfig,
   databaseSchema,
   exportSchema,
+  metricsSchema,
   minuteSchema,
   notificationsSchema,
   processingSchema,
+  repairSchema,
+  serverSchema,
+  subtitleSchema,
 } from "./schemas";
 
 let tomlData: unknown = {};
@@ -77,6 +85,10 @@ const configSchema = z.object({
   minute: minuteSchema,
   processing: processingSchema,
   export: exportSchema,
+  metrics: metricsSchema,
+  repair: repairSchema,
+  server: serverSchema,
+  subtitle: subtitleSchema,
   notifications: notificationsSchema,
 });
 
@@ -87,5 +99,9 @@ export const config = configSchema.parse({
   minute: createMinuteConfig(getConfigValue),
   processing: createProcessingConfig(getConfigValue),
   export: createExportConfig(getConfigValue),
+  metrics: createMetricsConfig(getConfigValue),
+  repair: createRepairConfig(getConfigValue),
+  server: createServerConfig(getConfigValue),
+  subtitle: createSubtitleConfig(getConfigValue),
   notifications: createNotificationsConfig(getConfigValue),
 });

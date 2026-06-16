@@ -35,5 +35,6 @@ export async function sendEmailMessage(message: string) {
     if (error instanceof Error) {
       logger.error(error.stack);
     }
+    throw error;
   }
 }

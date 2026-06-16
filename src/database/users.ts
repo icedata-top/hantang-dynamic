@@ -11,11 +11,11 @@ import type {
  */
 export async function hasUser(pool: Pool, userId: bigint): Promise<boolean> {
   const result = await pool.query(
-    "SELECT COUNT(*) as count FROM discovered_users WHERE user_id = $1",
+    "SELECT EXISTS(SELECT 1 FROM discovered_users WHERE user_id = $1) AS exists",
     [userId.toString()],
   );
 
-  return Number.parseInt(result.rows[0]?.count || "0", 10) > 0;
+  return result.rows[0]?.exists === true;
 }
 
 /**
@@ -193,7 +193,7 @@ export async function getUserProfileHistory(
   limit = 100,
 ): Promise<UserProfileSnapshot[]> {
   const result = await pool.query(
-    `SELECT id, user_id, recorded_at, user_name, face, fans,
+    `SELECT user_id, recorded_at, user_name, face, fans,
             sign, level, official_role, official_title
      FROM user_profile_history
      WHERE user_id = $1
@@ -203,7 +203,6 @@ export async function getUserProfileHistory(
   );
 
   return result.rows.map((row) => ({
-    id: BigInt(row.id),
     userId: BigInt(row.user_id),
     recordedAt: new Date(row.recorded_at),
     userName: row.user_name as string | null,

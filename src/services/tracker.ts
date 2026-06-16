@@ -1,8 +1,16 @@
+import { isAccountAuthError } from "../api/client";
 import { fetchFollowingList } from "../api/relation";
 import { generateBiliTicket } from "../api/signatures/biliTicket";
 import { config } from "../config";
 import type { AccountContext } from "../core/account";
 import { Database } from "../database";
+import {
+  dynamicsSeenTotal,
+  fetchCycleDurationSeconds,
+  fetchCyclesTotal,
+  lastSuccessfulFetchTimestampSeconds,
+  videosProcessedTotal,
+} from "../metrics/registry";
 import type { BiliDynamicCard, VideoData } from "../types";
 import { sleep } from "../utils/datetime";
 import { exportData } from "../utils/exporter/exporter";
@@ -21,12 +29,18 @@ export class DynamicTracker {
   private account: AccountContext;
   private isRunning = false;
   private dynamicsService: DynamicsService;
-  private detailsService = new DetailsService();
+  private detailsService: DetailsService;
   private db = Database.getInstance();
+  private retrospectiveTimer: ReturnType<typeof setInterval> | null = null;
+  private followingStartupTimer: ReturnType<typeof setTimeout> | null = null;
+  private followingTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(account: AccountContext) {
     this.account = account;
     this.dynamicsService = new DynamicsService(account);
+    this.detailsService = new DetailsService({
+      webInterfaceClient: account.webInterfaceClient,
+    });
   }
 
   async start() {
@@ -38,11 +52,25 @@ export class DynamicTracker {
     this.startFollowingSyncSchedule();
 
     while (this.isRunning) {
+      const uid = this.account.uid || "unknown";
+      const endFetchCycle = fetchCycleDurationSeconds.startTimer({ uid });
       try {
         await this.checkDynamics();
+        endFetchCycle();
+        fetchCyclesTotal.inc({ uid, result: "success" });
+        lastSuccessfulFetchTimestampSeconds.set({ uid }, Date.now() / 1000);
 
         await sleep(config.application.fetchInterval);
       } catch (error) {
+        endFetchCycle();
+        fetchCyclesTotal.inc({ uid, result: "error" });
+        if (isAccountAuthError(error)) {
+          logger.error(
+            `[uid=${this.account.uid}] Authenticated tracker disabled: ${error.message}`,
+          );
+          this.stop();
+          break;
+        }
         logger.error(`[uid=${this.account.uid}] Tracker error:`, error);
         if (error instanceof Error) {
           logger.error(error.stack);
@@ -55,6 +83,18 @@ export class DynamicTracker {
 
   stop() {
     this.isRunning = false;
+    if (this.retrospectiveTimer) {
+      clearInterval(this.retrospectiveTimer);
+      this.retrospectiveTimer = null;
+    }
+    if (this.followingStartupTimer) {
+      clearTimeout(this.followingStartupTimer);
+      this.followingStartupTimer = null;
+    }
+    if (this.followingTimer) {
+      clearInterval(this.followingTimer);
+      this.followingTimer = null;
+    }
   }
 
   private async initialize() {
@@ -115,6 +155,10 @@ export class DynamicTracker {
       logger.info(
         `[uid=${this.account.uid}] Got new dynamic page: type=${typeCode}, ${cards.length} cards`,
       );
+      dynamicsSeenTotal.inc(
+        { uid: this.account.uid || "unknown", type: String(typeCode) },
+        cards.length,
+      );
 
       // Save all dynamics to DB immediately (decouple storage from processing)
       await Promise.all(
@@ -133,6 +177,10 @@ export class DynamicTracker {
         const processedVideos = await this.processPage(cards);
 
         if (processedVideos.length > 0) {
+          videosProcessedTotal.inc(
+            { uid: this.account.uid || "unknown" },
+            processedVideos.length,
+          );
           await exportData(processedVideos);
           await notifyNewVideos(processedVideos);
         }
@@ -160,7 +208,7 @@ export class DynamicTracker {
     const maxDepth = config.processing?.features?.maxRecommendationDepth ?? 1;
 
     // Process all dynamics concurrently
-    const processResults = await Promise.all(
+    const processResults = await Promise.allSettled(
       dynamics.map(async (dynamic) => {
         try {
           const { video, relatedVideos } =
@@ -180,6 +228,9 @@ export class DynamicTracker {
           }
           return null;
         } catch (error) {
+          if (isAccountAuthError(error)) {
+            throw error;
+          }
           logger.error(
             `Error processing dynamic ${dynamic.desc.dynamic_id}:`,
             error,
@@ -191,9 +242,17 @@ export class DynamicTracker {
 
     // Collect results
     for (const result of processResults) {
-      if (result) {
-        results.push(result.video);
-        relatedQueue.push(...result.relatedVideos);
+      if (result.status === "rejected") {
+        if (isAccountAuthError(result.reason)) {
+          throw result.reason;
+        }
+        logger.error("Error processing dynamic:", result.reason);
+        continue;
+      }
+
+      if (result.value) {
+        results.push(result.value.video);
+        relatedQueue.push(...result.value.relatedVideos);
       }
     }
 
@@ -212,6 +271,8 @@ export class DynamicTracker {
   }
 
   async runRetrospective() {
+    if (!this.isRunning) return;
+
     const retrospectiveDays = config.application.retrospectiveDays || 30;
     const minTimestamp = Date.now() / 1000 - retrospectiveDays * 86400;
 
@@ -252,10 +313,18 @@ export class DynamicTracker {
     const interval =
       config.application.retrospectiveInterval || 7 * 24 * 3600 * 1000;
 
-    setInterval(() => {
-      this.runRetrospective().catch((err) =>
-        logger.error("Retrospective error:", err),
-      );
+    this.retrospectiveTimer = setInterval(() => {
+      if (!this.isRunning) return;
+      this.runRetrospective().catch((err) => {
+        if (isAccountAuthError(err)) {
+          logger.error(
+            `[uid=${this.account.uid}] Retrospective auth failure; disabling tracker: ${err.message}`,
+          );
+          this.stop();
+          return;
+        }
+        logger.error("Retrospective error:", err);
+      });
     }, interval);
 
     logger.info(
@@ -267,6 +336,8 @@ export class DynamicTracker {
    * Sync followed_by / is_following by fetching this account's following list from Bilibili.
    */
   async syncFollowingStatus(): Promise<void> {
+    if (!this.isRunning) return;
+
     const uid = this.account.uid;
     if (!uid) {
       logger.warn(
@@ -277,7 +348,11 @@ export class DynamicTracker {
 
     logger.info(`[uid=${uid}] Syncing following status from Bilibili...`);
     try {
-      const followings = await fetchFollowingList(uid, true);
+      const followings = await fetchFollowingList(
+        uid,
+        true,
+        this.account.relationClient,
+      );
       const followingIds = new Set(followings.map((f) => f.mid.toString()));
       await this.db.syncFollowingStatus(uid, followingIds);
       this.account.stateManager.updateFollowingSync();
@@ -285,6 +360,13 @@ export class DynamicTracker {
         `[uid=${uid}] Following status synced: ${followingIds.size} users marked as followed`,
       );
     } catch (error) {
+      if (isAccountAuthError(error)) {
+        logger.error(
+          `[uid=${uid}] Following sync auth failure; disabling tracker: ${error.message}`,
+        );
+        this.stop();
+        return;
+      }
       logger.error(`[uid=${uid}] Failed to sync following status:`, error);
     }
   }
@@ -296,7 +378,7 @@ export class DynamicTracker {
 
     if (elapsed >= intervalMs) {
       // Never synced, or overdue — delay 30s to avoid hitting API right at startup
-      setTimeout(
+      this.followingStartupTimer = setTimeout(
         () =>
           this.syncFollowingStatus().catch((err) =>
             logger.error("Following sync error:", err),
@@ -314,12 +396,11 @@ export class DynamicTracker {
       );
     }
 
-    setInterval(
-      () =>
-        this.syncFollowingStatus().catch((err) =>
-          logger.error("Following sync error:", err),
-        ),
-      intervalMs,
-    );
+    this.followingTimer = setInterval(() => {
+      if (!this.isRunning) return;
+      this.syncFollowingStatus().catch((err) =>
+        logger.error("Following sync error:", err),
+      );
+    }, intervalMs);
   }
 }

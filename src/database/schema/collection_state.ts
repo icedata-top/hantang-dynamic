@@ -43,8 +43,125 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_video_collection_state_bootstrap_expire
+    ON video_collection_state(bootstrap_until, aid)
+    WHERE priority > 0
+      AND daily_delta_source = 'bootstrap'
+      AND bootstrap_until IS NOT NULL
+      AND latest_daily_delta IS NULL
+      AND weekly_avg_daily_delta IS NULL
+  `);
+
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_video_collection_state_daily
     ON video_collection_state(priority, last_daily_record_date, aid)
+  `);
+
+  // Add next_gate_value column (reactive gate detection)
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD COLUMN IF NOT EXISTS next_gate_value bigint
+  `);
+
+  // Track when the view count last changed (= last observed Bilibili counter refresh).
+  // Used by advanceUnchangedMinuteVideos to predict the next refresh and
+  // switch to 1-second polling right before it happens.
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD COLUMN IF NOT EXISTS last_view_change_at timestamptz
+  `);
+
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD COLUMN IF NOT EXISTS subtitle_state varchar(20) DEFAULT NULL
+  `);
+
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD COLUMN IF NOT EXISTS subtitle_failure_count integer NOT NULL DEFAULT 0
+  `);
+
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD COLUMN IF NOT EXISTS last_subtitle_error_at timestamptz
+  `);
+
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD COLUMN IF NOT EXISTS subtitle_last_error text
+  `);
+
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    DROP CONSTRAINT IF EXISTS chk_subtitle_state
+  `);
+
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD CONSTRAINT chk_subtitle_state
+      CHECK (
+        subtitle_state IS NULL
+        OR subtitle_state IN (
+          'pending', 'has_manual', 'partial_manual', 'ai_only',
+          'no_subtitle', 'skipped'
+        )
+      )
+  `);
+
+  await pool.query(`
+    DROP INDEX IF EXISTS idx_video_collection_subtitle_pending
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_video_collection_subtitle_pending_order
+    ON video_collection_state(last_view DESC NULLS LAST, aid ASC)
+    WHERE subtitle_state = 'pending'
+  `);
+
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_is_subtitle_gate(
+      p_gate bigint
+    ) RETURNS boolean AS $$
+      SELECT CASE
+        WHEN p_gate IS NULL THEN false
+        WHEN p_gate = 10000 THEN true
+        WHEN p_gate < 1000000 AND p_gate % 100000 = 0 THEN true
+        WHEN p_gate >= 1000000 AND p_gate % 1000000 = 0 THEN true
+        ELSE false
+      END
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE
+  `);
+
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_next_subtitle_state(
+      p_current_state text,
+      p_last_view bigint,
+      p_crossed_gate bigint DEFAULT NULL
+    ) RETURNS text AS $$
+      SELECT CASE
+        WHEN p_current_state IN ('has_manual', 'skipped') THEN p_current_state
+        WHEN fn_is_subtitle_gate(p_crossed_gate)
+          AND (
+            p_current_state IS NULL
+            OR p_current_state IN ('partial_manual', 'ai_only', 'no_subtitle')
+          )
+        THEN 'pending'
+        WHEN p_current_state IS NULL AND COALESCE(p_last_view, 0) >= ${config.subtitle.viewThreshold} THEN 'pending'
+        ELSE p_current_state
+      END
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE
+  `);
+
+  // Bilibili view counters refresh roughly every 75 s (varies 60-90 s).
+  // Polling faster than that just retrieves stale values, so the effective
+  // base interval is floored to 75 s.  Only affects priority = 1
+  // (60 s → 75 s); priority ≥ 2 (120 s) already exceeds the floor.
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_video_collection_interval_secs(
+      p_priority integer
+    ) RETURNS integer AS $$
+      SELECT greatest(p_priority * 60, 75)
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE
   `);
 
   await pool.query(`
@@ -57,12 +174,13 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         WHEN p_priority IS NULL OR p_priority <= 0 THEN NULL
         ELSE (
           SELECT CASE WHEN cand < p_now
-            THEN cand + make_interval(mins => p_priority)
+            THEN cand + make_interval(secs => fn_video_collection_interval_secs(p_priority))
             ELSE cand
           END
           FROM (
             SELECT to_timestamp(
-              floor(extract(epoch FROM p_now) / (p_priority * 60)) * (p_priority * 60)
+              floor(extract(epoch FROM p_now) / fn_video_collection_interval_secs(p_priority))
+                * fn_video_collection_interval_secs(p_priority)
             ) + make_interval(mins => (abs(p_aid) % p_priority)::integer) AS cand
           ) t
         )
@@ -181,6 +299,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         SELECT
           agg.aid,
           agg.current_view,
+          agg.previous_view,
           agg.seven_day_view,
           CASE WHEN agg.previous_view IS NOT NULL
             THEN greatest(agg.current_view - agg.previous_view, 0)
@@ -224,12 +343,36 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
             WHEN m.seven_day_view IS NOT NULL AND m.current_view > m.seven_day_view THEN 0
             ELSE 0
           END AS priority,
-          m.current_view AS last_view
+          m.current_view AS last_view,
+          m.previous_view,
+          fn_video_collection_next_gate_value(m.current_view) AS next_gate_value,
+          fn_video_collection_crossed_gate_value(m.previous_view, m.current_view) AS crossed_gate
         FROM measured m
+      ),
+      -- Record daily-level gate crossings.
+      -- For minute-sampled videos the minute trigger usually records crossings
+      -- first; ON CONFLICT (aid, gate_value) DO NOTHING deduplicates.
+      -- No JOIN on video_collection_state — the state row may not exist yet
+      -- for new videos (the main INSERT below creates it).
+      daily_crossings AS (
+        INSERT INTO video_collection_gate_crossings (
+          aid, gate_value, previous_view, current_view, crossed_at
+        )
+        SELECT
+          c.aid,
+          c.crossed_gate,
+          c.previous_view,
+          c.last_view,
+          p_now
+        FROM calculated c
+        WHERE c.crossed_gate IS NOT NULL
+        ON CONFLICT (aid, gate_value) DO NOTHING
+        RETURNING aid
       )
       INSERT INTO video_collection_state (
         aid, latest_daily_delta, weekly_avg_daily_delta, daily_delta_source,
-        priority, next_minute_due_at, last_daily_record_date, last_view, updated_at
+        priority, next_minute_due_at, last_daily_record_date, last_view,
+        next_gate_value, subtitle_state, updated_at
       )
       SELECT
         c.aid, c.latest_daily_delta, c.weekly_avg_daily_delta, c.daily_delta_source,
@@ -239,6 +382,8 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         END,
         v_today,
         c.last_view,
+        c.next_gate_value,
+        fn_next_subtitle_state(NULL, c.last_view, c.crossed_gate),
         p_now
       FROM calculated c
       ON CONFLICT (aid) DO UPDATE SET
@@ -270,7 +415,21 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           ELSE video_collection_state.bootstrap_until
         END,
         last_daily_record_date = EXCLUDED.last_daily_record_date,
-        last_view              = EXCLUDED.last_view,
+        last_view              = COALESCE(greatest(EXCLUDED.last_view, video_collection_state.last_view), EXCLUDED.last_view, video_collection_state.last_view),
+        next_gate_value        = CASE
+          WHEN EXCLUDED.last_view >= COALESCE(video_collection_state.last_view, 0)
+          THEN EXCLUDED.next_gate_value
+          ELSE video_collection_state.next_gate_value
+        END,
+        subtitle_state         = fn_next_subtitle_state(
+          video_collection_state.subtitle_state,
+          COALESCE(greatest(EXCLUDED.last_view, video_collection_state.last_view), EXCLUDED.last_view, video_collection_state.last_view),
+          (
+            SELECT c.crossed_gate
+            FROM calculated c
+            WHERE c.aid = EXCLUDED.aid
+          )
+        ),
         updated_at             = p_now;
 
       GET DIAGNOSTICS changed_count = ROW_COUNT;
@@ -408,6 +567,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         priority,
         bootstrap_until,
         next_minute_due_at,
+        subtitle_state,
         updated_at
       )
       VALUES (
@@ -422,6 +582,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           WHEN is_new_video THEN fn_video_collection_next_due_at(p_aid, p_bootstrap_priority, p_now)
           ELSE NULL
         END,
+        NULL,
         p_now
       )
       ON CONFLICT (aid) DO UPDATE SET
@@ -437,6 +598,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         END,
         bootstrap_until = COALESCE(video_collection_state.bootstrap_until, EXCLUDED.bootstrap_until),
         next_minute_due_at = COALESCE(video_collection_state.next_minute_due_at, EXCLUDED.next_minute_due_at),
+        subtitle_state = video_collection_state.subtitle_state,
         updated_at = p_now;
 
       RETURN CASE WHEN is_new_video THEN 'upserted_bootstrap' ELSE 'upserted_backfill_daily_only' END;
@@ -481,6 +643,178 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     $$ LANGUAGE plpgsql
   `);
 
+  // For the dynamic-sleep handler loop: find the nearest *future* due time.
+  // Returns NULL if no active videos exist (or all are already past-due).
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_next_minute_due_at(
+      p_now timestamptz DEFAULT now()
+    ) RETURNS timestamptz AS $$
+      SELECT min(next_minute_due_at)
+      FROM video_collection_state
+      WHERE priority > 0
+        AND next_minute_due_at IS NOT NULL
+        AND next_minute_due_at > p_now
+    $$ LANGUAGE sql STABLE
+  `);
+
+  // ── Minute collection scheduling ──────────────────────────────────
+
+  // Select videos due for minute sampling.
+  // Returns (aid, last_view, near_gate, due_at) — the handler uses near_gate
+  // and due_at to implement batch-accumulation: non-gate videos are held
+  // until the batch is full (50), 30 s have elapsed, or a gate video appears.
+  // Single-consumer architecture: no row locking needed.
+  await pool.query(`
+    DROP FUNCTION IF EXISTS fn_select_due_minute_videos(timestamptz, integer)
+  `);
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_select_due_minute_videos(
+      p_now timestamptz DEFAULT now(),
+      p_limit integer DEFAULT 50
+    ) RETURNS TABLE (aid bigint, last_view bigint, near_gate boolean, due_at timestamptz) AS $$
+    BEGIN
+      -- Expire bootstrap entries that never got daily data
+      UPDATE video_collection_state
+      SET priority = 0,
+          next_minute_due_at = NULL,
+          updated_at = p_now
+      WHERE priority > 0
+        AND daily_delta_source = 'bootstrap'
+        AND bootstrap_until IS NOT NULL
+        AND bootstrap_until <= p_now
+        AND latest_daily_delta IS NULL
+        AND weekly_avg_daily_delta IS NULL;
+
+      RETURN QUERY
+      SELECT s.aid, s.last_view,
+        -- A video is "near gate" (time-critical) when its scheduled interval
+        -- is shorter than the Bilibili counter refresh period (~75 s).  Polling
+        -- faster than 75 s means the system is actively trying to pin-point
+        -- a gate crossing — those samples deserve immediate batch flush.
+        --
+        -- The original condition used the video's own priority interval as
+        -- the threshold, which made sense for priority = 1 (75 s) but was
+        -- far too broad for higher priorities (e.g. priority = 30 → 1800 s
+        -- threshold), causing progressive acceleration to dominate batches.
+        -- A fixed 74 s ceiling (< 75 s floor from fn_video_collection_interval_secs)
+        -- ensures only sub-refresh-cycle polling triggers immediate flush,
+        -- regardless of the video's normal priority.
+        (s.last_minute_success_at IS NOT NULL
+          AND extract(epoch from s.next_minute_due_at - s.last_minute_success_at)
+              BETWEEN 0 AND 74
+        ) AS near_gate,
+        s.next_minute_due_at AS due_at
+      FROM video_collection_state s
+      WHERE s.priority > 0
+        AND s.next_minute_due_at IS NOT NULL
+        AND s.next_minute_due_at <= p_now
+      ORDER BY s.next_minute_due_at ASC, s.aid ASC
+      LIMIT p_limit;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_advance_failed_minute_videos(
+      p_aids bigint[],
+      p_now timestamptz DEFAULT now()
+    ) RETURNS integer AS $$
+    DECLARE
+      advanced_count integer;
+    BEGIN
+      UPDATE video_collection_state s
+      SET next_minute_due_at = fn_video_collection_next_due_at(
+            s.aid,
+            s.priority,
+            greatest(
+              p_now + interval '1 second',
+              s.next_minute_due_at + make_interval(secs => fn_video_collection_interval_secs(s.priority))
+            )
+          ),
+          updated_at = p_now
+      WHERE s.aid = ANY(p_aids)
+        AND s.priority > 0
+        AND s.next_minute_due_at IS NOT NULL;
+
+      GET DIAGNOSTICS advanced_count = ROW_COUNT;
+      RETURN advanced_count;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+
+  // For samples where view count didn't change (Bilibili ~75s refresh window).
+  // Three scheduling phases:
+  //   1. Normal: maintain current interval
+  //   2. Pre-burst: jump to predicted burst window start
+  //   3. Burst: 1-second polling to catch exact Bilibili refresh second
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_advance_unchanged_minute_videos(
+      p_aids bigint[],
+      p_now timestamptz DEFAULT now()
+    ) RETURNS integer AS $$
+    DECLARE
+      advanced_count integer;
+    BEGIN
+      WITH state_data AS (
+        SELECT
+          s.aid,
+          COALESCE(extract(epoch from p_now - s.last_view_change_at), 9999)::numeric
+            AS secs_since_change,
+          greatest(
+            COALESCE(extract(epoch from p_now - s.last_minute_success_at), fn_video_collection_interval_secs(s.priority)),
+            5
+          )::numeric
+            AS maintain_secs,
+          s.last_view_change_at + interval '55 seconds'
+            AS burst_start,
+          -- A video is "near gate" only when the next gate is reachable
+          -- within roughly the next 2 Bilibili refresh cycles (~150 s of view
+          -- growth).  The old check (next_gate_value > last_view) was true
+          -- for virtually every video, causing all of them to enter 1-second
+          -- burst polling for ~65 s out of every ~75 s refresh cycle.
+          (s.next_gate_value IS NOT NULL
+            AND s.last_view IS NOT NULL
+            AND s.next_gate_value > s.last_view
+            AND COALESCE(s.latest_daily_delta, 0) > 0
+            AND (s.next_gate_value - s.last_view)
+                <= s.latest_daily_delta::numeric * 150 / 86400
+          ) AS near_gate
+        FROM video_collection_state s
+        WHERE s.aid = ANY(p_aids)
+          AND s.priority > 0
+          AND s.next_minute_due_at IS NOT NULL
+      )
+      UPDATE video_collection_state s
+      SET next_minute_due_at = CASE
+            -- Phase 3: In burst window (55-120s since last Bilibili refresh).
+            -- 1-second polling to capture the exact refresh second.
+            -- Bilibili refresh varies ~60-90s; cap at 120s to handle outliers.
+            WHEN d.near_gate
+             AND d.secs_since_change >= 55
+             AND d.secs_since_change < 120
+            THEN p_now + interval '1 second'
+
+            -- Phase 2: Burst window starts before next maintain-interval sample.
+            -- Jump directly to burst start instead of waiting.
+            WHEN d.near_gate
+             AND d.burst_start > p_now
+             AND d.burst_start < p_now + d.maintain_secs * interval '1 second'
+            THEN d.burst_start
+
+            -- Phase 1: Normal — maintain current interval.
+            ELSE p_now + d.maintain_secs * interval '1 second'
+          END,
+          last_minute_success_at = p_now,
+          updated_at = p_now
+      FROM state_data d
+      WHERE s.aid = d.aid;
+
+      GET DIAGNOSTICS advanced_count = ROW_COUNT;
+      RETURN advanced_count;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+
   await pool.query(`
     CREATE OR REPLACE FUNCTION fn_apply_video_minute_collection_update()
     RETURNS trigger AS $$
@@ -498,35 +832,115 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           s.aid,
           l."time",
           l.latest_view,
+          s.next_gate_value,
+          p.previous_view,
+          p.previous_time,
+          -- Seconds since last sample
+          COALESCE(extract(epoch from l."time" - p.previous_time), 0)::numeric
+            AS sample_secs,
+          -- View delta since last sample
+          greatest(l.latest_view - COALESCE(p.previous_view, l.latest_view), 0)
+            AS delta,
+          -- Distance to next gate (NULL if no gate or already crossed)
+          CASE WHEN s.next_gate_value IS NOT NULL
+                AND l.latest_view < s.next_gate_value
+            THEN (s.next_gate_value - l.latest_view)::numeric
+          END AS gate_dist,
+          -- Gate crossing: did this sample cross the next gate?
+          CASE
+            WHEN s.next_gate_value IS NOT NULL
+             AND l.latest_view >= s.next_gate_value
+            THEN s.next_gate_value
+          END AS crossed_gate,
+          -- Bidirectional adaptive priority from observed growth rate.
+          -- If the per-sample delta falls outside [targetDeltaLower, targetDeltaUpper],
+          -- the current priority doesn't match reality.  Compute the correct
+          -- priority from the implied daily rate (delta / sample_secs * 86400).
+          --   delta > upper → sampling too slowly → least(current, calc)
+          --   delta < lower → sampling too densely → greatest(current, calc)
+          -- This replaces the old burst mechanism (delta >= 500 → priority=1)
+          -- which was both too aggressive (slammed to 1) and too blunt (didn't
+          -- account for sample interval length).
           CASE
             WHEN s.priority = -1 THEN -1
             WHEN p.previous_view IS NOT NULL
-             AND l.latest_view - p.previous_view >= ${config.minute.minuteBurstDeltaThreshold}
-            THEN CASE
-              WHEN s.priority > 0 THEN least(s.priority, ${config.minute.minuteBurstPriority})
-              ELSE ${config.minute.minuteBurstPriority}
-            END
+             AND p.previous_time IS NOT NULL
+             AND extract(epoch from l."time" - p.previous_time) > 0
+             AND l.latest_view - p.previous_view > ${config.minute.targetDeltaUpper}
+            THEN least(
+              CASE WHEN s.priority > 0 THEN s.priority ELSE ${config.minute.maxPositivePriority} END,
+              fn_video_collection_priority(
+                ((l.latest_view - p.previous_view)::numeric
+                 / extract(epoch from l."time" - p.previous_time) * 86400)::bigint
+              )
+            )
+            WHEN p.previous_view IS NOT NULL
+             AND p.previous_time IS NOT NULL
+             AND extract(epoch from l."time" - p.previous_time) > 0
+             AND l.latest_view - p.previous_view < ${config.minute.targetDeltaLower}
+             AND s.priority > 0
+            THEN greatest(
+              s.priority,
+              fn_video_collection_priority(
+                ((l.latest_view - p.previous_view)::numeric
+                 / extract(epoch from l."time" - p.previous_time) * 86400)::bigint
+              )
+            )
             ELSE s.priority
-          END AS next_priority
+          END AS next_priority,
+          fn_video_collection_next_gate_value(l.latest_view) AS new_next_gate
         FROM video_collection_state s
         JOIN latest_rows l ON l.aid = s.aid
         LEFT JOIN LATERAL (
-          SELECT vm."view"::bigint AS previous_view
+          SELECT vm."view"::bigint AS previous_view,
+                 vm."time"         AS previous_time
           FROM video_minute vm
           WHERE vm.aid = l.aid
             AND vm."time" < l."time"
           ORDER BY vm."time" DESC
           LIMIT 1
         ) p ON true
+      ),
+      gate_crossings_recorded AS (
+        INSERT INTO video_collection_gate_crossings (
+          aid, gate_value, previous_view, current_view, crossed_at
+        )
+        SELECT c.aid, c.crossed_gate, c.previous_view, c.latest_view, c."time"
+        FROM computed c
+        WHERE c.crossed_gate IS NOT NULL
+        ON CONFLICT (aid, gate_value) DO NOTHING
+        RETURNING aid, gate_value
       )
       UPDATE video_collection_state s
       SET last_minute_success_at = c."time",
           last_view = c.latest_view,
+          last_view_change_at = c."time",
           priority = c.next_priority,
           next_minute_due_at = CASE
-            WHEN c.next_priority > 0 THEN c."time" + make_interval(mins => c.next_priority)
-            ELSE NULL
+            WHEN c.next_priority <= 0 THEN NULL
+
+            -- Near gate + observed growth → progressive acceleration
+            -- interval = est_seconds_to_gate / 3, clamped to [5s, priority interval]
+            WHEN c.gate_dist IS NOT NULL
+             AND c.delta > 0
+             AND c.sample_secs > 0
+            THEN c."time" + least(
+                greatest(c.gate_dist / c.delta * c.sample_secs / 3, 5),
+                fn_video_collection_interval_secs(c.next_priority)
+              ) * interval '1 second'
+
+            -- Normal schedule: find the next grid-aligned slot strictly after
+            -- the sample time.  This avoids two problems at once:
+            --   • batch-accumulation delay does not cascade (grid is fixed)
+            --   • handler outage does not cause catch-up storms (skips ahead)
+            ELSE fn_video_collection_next_due_at(s.aid, c.next_priority, c."time" + interval '1 second')
           END,
+          next_gate_value = c.new_next_gate,
+          subtitle_state = fn_next_subtitle_state(
+            s.subtitle_state,
+            c.latest_view,
+            c.crossed_gate
+          ),
           updated_at = now()
       FROM computed c
       WHERE s.aid = c.aid;

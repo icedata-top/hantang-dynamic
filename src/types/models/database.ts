@@ -60,7 +60,6 @@ export interface UserData {
  * A single snapshot entry from video_history
  */
 export interface VideoSnapshot {
-  id: bigint;
   aid: bigint;
   bvid: string;
   recordedAt: Date;
@@ -79,7 +78,6 @@ export interface VideoSnapshot {
  * A single snapshot entry from user_profile_history
  */
 export interface UserProfileSnapshot {
-  id: bigint;
   userId: bigint;
   recordedAt: Date;
   userName: string | null;
