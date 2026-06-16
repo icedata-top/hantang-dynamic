@@ -8,6 +8,9 @@ export const processingSchema = z.object({
     enableDeduplication: z.coerce.boolean().default(true),
     enableRecommendation: z.coerce.boolean().default(false),
     maxRecommendationDepth: z.coerce.number().default(1),
+    enableRelatedQualitySignal: z.coerce.boolean().default(true),
+    enableRelatedExpansion: z.coerce.boolean().default(false),
+    maxRelatedExpansionDepth: z.coerce.number().default(1),
   }),
   filtering: z.object({
     typeIdWhitelist: z.array(z.number()).default([]),
@@ -28,6 +31,15 @@ export function createProcessingConfig(
     // biome-ignore lint/suspicious/noExplicitAny: Config values from TOML/env are inherently untyped and validated by zod
   ) => any,
 ): ProcessingConfig {
+  const legacyEnableRecommendation = getConfigValue(
+    ["processing", "features", "enable_recommendation"],
+    "ENABLE_RECOMMENDATION",
+  );
+  const legacyMaxRecommendationDepth = getConfigValue(
+    ["processing", "features", "max_recommendation_depth"],
+    "MAX_RECOMMENDATION_DEPTH",
+  );
+
   return {
     features: {
       enableTagFetch: getConfigValue(
@@ -45,16 +57,27 @@ export function createProcessingConfig(
         "ENABLE_DEDUPLICATION",
         true,
       ),
-      enableRecommendation: getConfigValue(
-        ["processing", "features", "enable_recommendation"],
-        "ENABLE_RECOMMENDATION",
+      enableRecommendation: legacyEnableRecommendation ?? false,
+      maxRecommendationDepth: legacyMaxRecommendationDepth ?? 1,
+      enableRelatedQualitySignal: getConfigValue(
+        ["processing", "features", "enable_related_quality_signal"],
+        "ENABLE_RELATED_QUALITY_SIGNAL",
+        true,
+      ),
+      enableRelatedExpansion:
+        getConfigValue(
+          ["processing", "features", "enable_related_expansion"],
+          "ENABLE_RELATED_EXPANSION",
+        ) ??
+        legacyEnableRecommendation ??
         false,
-      ),
-      maxRecommendationDepth: getConfigValue(
-        ["processing", "features", "max_recommendation_depth"],
-        "MAX_RECOMMENDATION_DEPTH",
+      maxRelatedExpansionDepth:
+        getConfigValue(
+          ["processing", "features", "max_related_expansion_depth"],
+          "MAX_RELATED_EXPANSION_DEPTH",
+        ) ??
+        legacyMaxRecommendationDepth ??
         1,
-      ),
     },
     filtering: {
       typeIdWhitelist:

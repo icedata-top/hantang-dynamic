@@ -99,8 +99,12 @@ max_retries = 3
 enable_tag_fetch = false       # Whether to fetch video tags
 enable_user_relation = false   # Toggle for user relation features
 enable_deduplication = true    # Enable AID-based deduplication (default: true)
-enable_recommendation = false  # Enable recommendation tracking (default: false)
-max_recommendation_depth = 1   # Max depth for recommendation recursion (default: 1)
+enable_related_quality_signal = true  # Store related-video recommendation edges as collection evidence (default: true)
+enable_related_expansion = false      # Recursively collect related videos after a source passes filters (default: false)
+max_related_expansion_depth = 1       # Max recursive related-video expansion depth (default: 1)
+# Backward-compatible aliases used only when the explicit related_* keys above are unset.
+enable_recommendation = false
+max_recommendation_depth = 1
 
 [processing.filtering]
 # Content filtering settings
