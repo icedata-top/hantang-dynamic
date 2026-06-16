@@ -68,7 +68,7 @@ environment variables, and operational notes.
 
 Key sections include:
 
-- **[bilibili]**: Authentication (UID, SessData or Cookie File).
+- **[bilibili]**: Authentication by cookie file or legacy SessData.
 - **[database]**: PostgreSQL connection URL.
 - **[application]**: Execution settings (interval, concurrency, history).
 - **[minute]**: Adaptive minute-level collection. Disabled by default.
@@ -83,9 +83,13 @@ file (e.g., exported from browser extensions like "Cookie-Editor"):
 
 ```toml
 [bilibili]
-uid = "12345678"
 cookie_file = "./.cookies.txt"  # Path to Netscape cookie file
 ```
+
+The app reads the account UID from the `DedeUserID` cookie in the file. Use
+`cookie_files` for multiple accounts. Configure `uid` only when using legacy
+direct `sessdata`, or as a fallback if a cookie file does not contain
+`DedeUserID`.
 
 ## Development
 

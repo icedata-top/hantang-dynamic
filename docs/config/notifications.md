@@ -81,4 +81,4 @@ body = '''
 | `delay` | `HTTP_DELAY` | `100` | Delay between notifications in milliseconds. |
 
 `HTTP_ENDPOINTS` must be a JSON string when provided as an environment variable.
-
+Use TOML for `headers`; `HTTP_HEADERS` is not JSON-parsed by the config loader.

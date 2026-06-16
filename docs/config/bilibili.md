@@ -22,7 +22,9 @@ cookie_files = [
 ```
 
 When cookie files are used, the app extracts `uid` from the `DedeUserID` cookie.
-The `uid` setting is ignored in this mode.
+If a cookie file does not contain `DedeUserID`, the app falls back to the
+configured `uid`. Cookie-file authentication fails when neither source provides
+an account UID.
 
 Legacy direct `sessdata` mode requires `uid`:
 
@@ -67,3 +69,5 @@ dynamic API calls.
 
 `BILIBILI_COOKIE_FILES` is a comma-separated list.
 
+When both `cookie_files` and `cookie_file` are set, `cookie_files` is used.
+`cookie_file` is the single-account fallback.

@@ -104,6 +104,10 @@ priority and due time; it does not insert minute samples directly.
 | `gate_max_lead_views` | `MINUTE_GATE_MAX_LEAD_VIEWS` | `500` | Max view lead for near-threshold gate tasks. |
 | `collection_business_timezone` | `MINUTE_COLLECTION_BUSINESS_TIMEZONE` | `Asia/Shanghai` | Business date timezone for daily refresh. |
 
+`target_delta_per_sample` is clamped into the
+`target_delta_lower`..`target_delta_upper` range after parsing.
+`MINUTE_ENABLED` accepts `1`, `true`, `yes`, and `on` as true values.
+
 Use TOML for array settings such as `bootstrap_label_content_types`,
 `bootstrap_label_writers`, and `bootstrap_tid_v2_allowlist`. Unlike
 `BILIBILI_COOKIE_FILES` and the processing filter lists, these minute array
