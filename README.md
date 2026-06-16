@@ -3,7 +3,7 @@
 A tool to track, filter, and export Bilibili video updates from your following
 list and recommended videos.
 
-See [Changelog](./changelog.md) for version history.
+See [Changelog](./CHANGELOG.md) for version history.
 
 ## Key Features
 
@@ -62,13 +62,20 @@ Normal startup and restarts do not create or alter database objects.
 
 ## Configuration
 
-The application is configured via `config.toml`. Key sections include:
+The application is configured via `config.toml`. See the
+[configuration guide](./docs/config/index.md) for per-section fields, defaults,
+environment variables, and operational notes.
 
-- **[bilibili]**: Authentication (UID, SessData or Cookie File).
+Key sections include:
+
+- **[bilibili]**: Authentication by cookie file or legacy SessData.
 - **[database]**: PostgreSQL connection URL.
 - **[metrics]**: Optional Prometheus `/metrics` endpoint.
 - **[application]**: Execution settings (interval, concurrency, history).
+- **[minute]**: Adaptive minute-level collection. Disabled by default.
 - **[processing]**: Filter rules and feature flags (recommendations).
+- **[export]**: Optional MySQL export.
+- **[notifications]**: Telegram, email, and HTTP notifications.
 
 ### Cookie File Support
 
@@ -77,9 +84,13 @@ file (e.g., exported from browser extensions like "Cookie-Editor"):
 
 ```toml
 [bilibili]
-uid = "12345678"
 cookie_file = "./.cookies.txt"  # Path to Netscape cookie file
 ```
+
+The app reads the account UID from the `DedeUserID` cookie in the file. Use
+`cookie_files` for multiple accounts. Configure `uid` only when using legacy
+direct `sessdata`, or as a fallback if a cookie file does not contain
+`DedeUserID`.
 
 ### Prometheus Metrics
 
