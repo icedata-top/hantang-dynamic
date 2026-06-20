@@ -151,7 +151,7 @@ export async function runImportCsv() {
           {
             processRecommendations: recordRelatedEdges,
             processRelated:
-              enableRelatedExpansion && maxRelatedExpansionDepth > 0,
+              enableRelatedExpansion && maxRelatedExpansionDepth > 1,
             skipCacheCheck: true,
           },
         );
@@ -168,7 +168,7 @@ export async function runImportCsv() {
           if (video.bvid) processedBvids.add(video.bvid);
           const collectedVideos: VideoData[] = [video];
 
-          if (enableRelatedExpansion) {
+          if (enableRelatedExpansion && maxRelatedExpansionDepth > 1) {
             await processRelatedQueue(
               detailsService,
               queue,
@@ -229,7 +229,7 @@ async function processRelatedQueue(
   seenBvids: Set<string>,
   processRecommendations: boolean,
 ) {
-  if (depth > maxDepth || queue.length === 0) return;
+  if (depth >= maxDepth || queue.length === 0) return;
 
   const nextQueue: BiliDynamicCard[] = [];
 
