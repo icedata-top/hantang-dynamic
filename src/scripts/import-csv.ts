@@ -116,6 +116,12 @@ export async function runImportCsv() {
   let successCount = 0;
   let skippedCount = skippedImmediately;
   let errorCount = 0;
+  const features = config.processing?.features;
+  const recordRelatedEdges = features?.enableRelatedQualitySignal ?? true;
+  const enableRelatedExpansion =
+    features?.enableRelatedExpansion ?? features?.enableRecommendation ?? false;
+  const maxRelatedExpansionDepth =
+    features?.maxRelatedExpansionDepth ?? features?.maxRecommendationDepth ?? 1;
 
   bar.start(rows.length, skippedImmediately, {
     success: 0,
@@ -142,7 +148,12 @@ export async function runImportCsv() {
       try {
         const { video, relatedVideos } = await detailsService.processVideoById(
           id,
-          { skipCacheCheck: true },
+          {
+            processRecommendations: recordRelatedEdges,
+            processRelated:
+              enableRelatedExpansion && maxRelatedExpansionDepth > 0,
+            skipCacheCheck: true,
+          },
         );
         if (video) {
           successCount++;
@@ -157,19 +168,15 @@ export async function runImportCsv() {
           if (video.bvid) processedBvids.add(video.bvid);
           const collectedVideos: VideoData[] = [video];
 
-          const enableRecommendation =
-            config.processing?.features?.enableRecommendation ?? false;
-          const maxDepth =
-            config.processing?.features?.maxRecommendationDepth ?? 1;
-
-          if (enableRecommendation) {
+          if (enableRelatedExpansion) {
             await processRelatedQueue(
               detailsService,
               queue,
               1,
-              maxDepth,
+              maxRelatedExpansionDepth,
               collectedVideos,
               processedBvids,
+              recordRelatedEdges,
             );
           }
 
@@ -220,8 +227,9 @@ async function processRelatedQueue(
   maxDepth: number,
   results: VideoData[],
   seenBvids: Set<string>,
+  processRecommendations: boolean,
 ) {
-  if (depth >= maxDepth || queue.length === 0) return;
+  if (depth > maxDepth || queue.length === 0) return;
 
   const nextQueue: BiliDynamicCard[] = [];
 
@@ -232,6 +240,8 @@ async function processRelatedQueue(
 
     try {
       const { video, relatedVideos } = await service.processVideoById(bvid, {
+        processRecommendations,
+        processRelated: depth < maxDepth,
         skipCacheCheck: true,
       });
       if (video) {
@@ -251,6 +261,7 @@ async function processRelatedQueue(
       maxDepth,
       results,
       seenBvids,
+      processRecommendations,
     );
   }
 }
