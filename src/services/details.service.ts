@@ -15,6 +15,11 @@ import { filterVideo } from "../utils/filter";
 import { logger } from "../utils/logger";
 import type { RateLimiter } from "../utils/rateLimiter";
 
+interface VideoProcessingOptions {
+  processRecommendations?: boolean;
+  processRelated?: boolean;
+}
+
 export class DetailsService {
   private rateLimiter: RateLimiter;
   private db: Database;
@@ -32,11 +37,13 @@ export class DetailsService {
    */
   async processVideo(
     dynamic: BiliDynamicCard,
-    processRelated = true,
+    options: boolean | VideoProcessingOptions = {},
   ): Promise<{
     video: VideoData | null;
     relatedVideos: BiliDynamicCard[];
   }> {
+    const processingOptions =
+      typeof options === "boolean" ? { processRelated: options } : options;
     let bvid = dynamic.desc.bvid;
     try {
       if (dynamic.desc.type === 1) {
@@ -49,7 +56,7 @@ export class DetailsService {
         }
       }
 
-      return await this.processVideoById(bvid, { processRelated });
+      return await this.processVideoById(bvid, processingOptions);
     } catch (error) {
       if (isAccountAuthError(error)) {
         throw error;
@@ -345,11 +352,10 @@ export class DetailsService {
     const filtered = await filterVideo(videoData);
 
     if (options.processRecommendations && relatedVideos.length > 0) {
-      const recommendations = relatedVideos.map((v, index) => ({
-        videoAid: v.aid,
-        recommendedByAid: videoData.aid,
-        order: index,
-      }));
+      const recommendations = this.buildRecommendationInputs(
+        videoData.aid,
+        relatedVideos,
+      );
       await this.db.trackRecommendationsBatch(recommendations);
     }
 
@@ -562,7 +568,7 @@ export class DetailsService {
               },
             },
             uid: video.owner.mid,
-            rid: video.tid,
+            rid: BigInt(video.aid),
             view: video.stat.view,
             repost: 0,
             comment: 0,
@@ -580,5 +586,27 @@ export class DetailsService {
           }),
         }) as unknown as BiliDynamicCard,
     );
+  }
+
+  private buildRecommendationInputs(
+    sourceAid: bigint,
+    relatedVideos: RecommendedVideo[],
+  ): Array<{ videoAid: number; recommendedByAid: bigint; order: number }> {
+    const seenAids = new Set<number>();
+
+    return relatedVideos.flatMap((video, index) => {
+      if (seenAids.has(video.aid)) {
+        return [];
+      }
+      seenAids.add(video.aid);
+
+      return [
+        {
+          videoAid: video.aid,
+          recommendedByAid: sourceAid,
+          order: index,
+        },
+      ];
+    });
   }
 }

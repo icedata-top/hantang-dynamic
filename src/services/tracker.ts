@@ -199,32 +199,46 @@ export class DynamicTracker {
   private async processPage(
     dynamics: BiliDynamicCard[],
     depth = 0,
+    seenRelatedCandidates = new Set<string>(),
   ): Promise<VideoData[]> {
     const results: VideoData[] = [];
     const relatedQueue: BiliDynamicCard[] = [];
 
-    const enableRecommendation =
-      config.processing?.features?.enableRecommendation ?? false;
-    const maxDepth = config.processing?.features?.maxRecommendationDepth ?? 1;
+    const features = config.processing?.features;
+    const recordRelatedEdges = features?.enableRelatedQualitySignal ?? true;
+    const enableRelatedExpansion =
+      features?.enableRelatedExpansion ??
+      features?.enableRecommendation ??
+      false;
+    const maxDepth =
+      features?.maxRelatedExpansionDepth ??
+      features?.maxRecommendationDepth ??
+      1;
+    const expandRelated = enableRelatedExpansion && depth < maxDepth;
+
+    for (const dynamic of dynamics) {
+      const key = this.getRelatedCandidateKey(dynamic);
+      if (key) {
+        seenRelatedCandidates.add(key);
+      }
+    }
 
     // Process all dynamics concurrently
     const processResults = await Promise.allSettled(
       dynamics.map(async (dynamic) => {
         try {
           const { video, relatedVideos } =
-            await this.detailsService.processVideo(
-              dynamic,
-              enableRecommendation && depth < maxDepth,
-            );
+            await this.detailsService.processVideo(dynamic, {
+              processRecommendations: recordRelatedEdges,
+              processRelated: expandRelated,
+            });
 
           if (video) {
-            if (
-              enableRecommendation &&
-              depth < maxDepth &&
-              relatedVideos.length > 0
-            ) {
-              return { video, relatedVideos: relatedVideos };
-            }
+            return {
+              video,
+              relatedVideos:
+                expandRelated && relatedVideos.length > 0 ? relatedVideos : [],
+            };
           }
           return null;
         } catch (error) {
@@ -252,13 +266,22 @@ export class DynamicTracker {
 
       if (result.value) {
         results.push(result.value.video);
-        relatedQueue.push(...result.value.relatedVideos);
+        relatedQueue.push(
+          ...this.dedupeRelatedCandidates(
+            result.value.relatedVideos,
+            seenRelatedCandidates,
+          ),
+        );
       }
     }
 
     // Recursive processing for related videos
     if (relatedQueue.length > 0) {
-      const relatedResults = await this.processPage(relatedQueue, depth + 1);
+      const relatedResults = await this.processPage(
+        relatedQueue,
+        depth + 1,
+        seenRelatedCandidates,
+      );
       results.push(...relatedResults);
     }
 
@@ -268,6 +291,39 @@ export class DynamicTracker {
     );
 
     return results;
+  }
+
+  private dedupeRelatedCandidates(
+    candidates: BiliDynamicCard[],
+    seenCandidates: Set<string>,
+  ): BiliDynamicCard[] {
+    const deduped: BiliDynamicCard[] = [];
+
+    for (const candidate of candidates) {
+      const key = this.getRelatedCandidateKey(candidate);
+      if (!key || seenCandidates.has(key)) {
+        continue;
+      }
+
+      seenCandidates.add(key);
+      deduped.push(candidate);
+    }
+
+    return deduped;
+  }
+
+  private getRelatedCandidateKey(candidate: BiliDynamicCard): string | null {
+    const bvid = candidate.desc?.bvid;
+    if (bvid) {
+      return `bvid:${bvid}`;
+    }
+
+    const aid = candidate.desc?.rid;
+    if (aid) {
+      return `aid:${aid.toString()}`;
+    }
+
+    return null;
   }
 
   async runRetrospective() {
