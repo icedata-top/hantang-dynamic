@@ -1,6 +1,6 @@
 import {
-  medialistClient,
-  medialistDirectClient,
+  favoriteClient,
+  favoriteDirectClient,
   type RequestConfig,
 } from "../../api/client";
 import { config } from "../../config";
@@ -8,7 +8,7 @@ import type { VideoMinuteSample } from "../../types/models/minute";
 import { sharedApiRateLimiter } from "../../utils/apiRateLimiter";
 import { logger } from "../../utils/logger";
 
-interface BiliMedialistResourceInfo {
+interface BiliFavoriteResourceInfo {
   id: number;
   bvid?: string;
   cnt_info?: {
@@ -22,10 +22,10 @@ interface BiliMedialistResourceInfo {
   };
 }
 
-interface BiliMedialistResponse {
+interface BiliFavoriteResponse {
   code: number;
   message?: string;
-  data?: BiliMedialistResourceInfo[];
+  data?: BiliFavoriteResourceInfo[];
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -37,7 +37,7 @@ function chunk<T>(items: T[], size: number): T[][] {
 }
 
 function toMinuteSample(
-  item: BiliMedialistResourceInfo,
+  item: BiliFavoriteResourceInfo,
   sampledAt: Date,
 ): VideoMinuteSample | null {
   if (!item.id || !item.cnt_info) return null;
@@ -58,16 +58,13 @@ function toMinuteSample(
 async function fetchStatsBatch(
   aids: bigint[],
   useDirect: boolean,
-): Promise<BiliMedialistResponse> {
+): Promise<BiliFavoriteResponse> {
   const resources = aids.map((aid) => `${aid}:2`).join(",");
-  const client = useDirect ? medialistDirectClient : medialistClient;
-  const response = await client.get<BiliMedialistResponse>(
-    "/gateway/base/resource/infos",
-    {
-      params: { resources },
-      ...({ metadata: { silent: true } } as RequestConfig),
-    },
-  );
+  const client = useDirect ? favoriteDirectClient : favoriteClient;
+  const response = await client.get<BiliFavoriteResponse>("/resource/infos", {
+    params: { resources },
+    ...({ metadata: { silent: true } } as RequestConfig),
+  });
   return response.data;
 }
 
@@ -105,7 +102,7 @@ export async function batchSampleVideoStats(
 
 async function fetchStatsBatchWithFallback(
   aidBatch: bigint[],
-): Promise<BiliMedialistResponse> {
+): Promise<BiliFavoriteResponse> {
   try {
     return await fetchStatsBatch(aidBatch, false);
   } catch (proxyError) {

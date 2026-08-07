@@ -543,15 +543,15 @@ export const playerDirectClient = createClient(
   "https://api.bilibili.com/x/player",
 );
 
-export const medialistClient = createClient(
+export const favoriteClient = createClient(
   config.bilibili.apiProxyUrl
-    ? `${config.bilibili.apiProxyUrl}/medialist`
-    : "https://api.bilibili.com/medialist",
+    ? `${config.bilibili.apiProxyUrl}/x/v3/fav`
+    : "https://api.bilibili.com/x/v3/fav",
   true,
 );
 
-export const medialistDirectClient = createClient(
-  "https://api.bilibili.com/medialist",
+export const favoriteDirectClient = createClient(
+  "https://api.bilibili.com/x/v3/fav",
   true,
 );
 
