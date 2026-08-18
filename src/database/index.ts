@@ -20,6 +20,7 @@ import type {
   VideoSnapshot,
 } from "../types/models/database.js";
 import type {
+  CompleteVideoMinuteTuple,
   DailyCollectionCandidate,
   ProcessedVideoCollectionInput,
   VideoMinuteSample,
@@ -101,7 +102,10 @@ import {
   updateUserStats,
 } from "./users.js";
 import { getDailyCollectionCandidates } from "./videoDaily.js";
-import { insertVideoMinuteSamples } from "./videoMinute.js";
+import {
+  getLatestCompleteVideoMinuteTuple,
+  insertVideoMinuteSamples,
+} from "./videoMinute.js";
 import {
   type BvidListQuery,
   getAllProcessedIds,
@@ -113,6 +117,26 @@ import {
   markVideoDeleted,
   markVideoProcessed,
 } from "./videos.js";
+import {
+  createWatchLaterOperation,
+  getDesiredWatchLaterSet,
+  getEnabledWatchLaterAccounts,
+  getRecoverableWatchLaterOperations,
+  getWatchLaterEligibleAids,
+  getWatchLaterOwnedAids,
+  recordWatchLaterCompleteSnapshot,
+  recordWatchLaterOperationAttempt,
+  removeWatchLaterOwnershipAfterCompleteSnapshot,
+  resolveWatchLaterOperation,
+  upsertWatchLaterAccount,
+  type WatchLaterAccount,
+  type WatchLaterAccountInput,
+  type WatchLaterDesiredSet,
+  type WatchLaterOperation,
+  type WatchLaterOperationIntent,
+  type WatchLaterOperationResolution,
+  withWatchLaterAccountLease,
+} from "./watchLater.js";
 
 /**
  * PostgreSQL database manager - singleton pattern
@@ -552,6 +576,101 @@ export class Database {
     samples: VideoMinuteSample[],
   ): Promise<number> {
     return insertVideoMinuteSamples(this.ensurePool(), samples);
+  }
+
+  public async getLatestCompleteVideoMinuteTuple(
+    aid: bigint,
+  ): Promise<CompleteVideoMinuteTuple | null> {
+    return getLatestCompleteVideoMinuteTuple(this.ensurePool(), aid);
+  }
+
+  // ===== Watch-later Operations =====
+
+  public async upsertWatchLaterAccount(
+    input: WatchLaterAccountInput,
+  ): Promise<void> {
+    return upsertWatchLaterAccount(this.ensurePool(), input);
+  }
+
+  public async getEnabledWatchLaterAccounts(): Promise<WatchLaterAccount[]> {
+    return getEnabledWatchLaterAccounts(this.ensurePool());
+  }
+
+  public async getDesiredWatchLaterSet(
+    targetCount: number,
+  ): Promise<WatchLaterDesiredSet> {
+    return getDesiredWatchLaterSet(this.ensurePool(), targetCount);
+  }
+
+  public async getWatchLaterOwnedAids(accountId: bigint): Promise<bigint[]> {
+    return getWatchLaterOwnedAids(this.ensurePool(), accountId);
+  }
+
+  public async getWatchLaterEligibleAids(
+    excludedAids: bigint[],
+    limit: number,
+  ): Promise<bigint[]> {
+    return getWatchLaterEligibleAids(this.ensurePool(), excludedAids, limit);
+  }
+
+  public async withWatchLaterAccountLease<T>(
+    accountId: bigint,
+    callback: () => Promise<T>,
+  ): Promise<T> {
+    return withWatchLaterAccountLease(this.ensurePool(), accountId, callback);
+  }
+
+  public async createWatchLaterOperation(
+    input: WatchLaterOperationIntent,
+  ): Promise<void> {
+    return createWatchLaterOperation(this.ensurePool(), input);
+  }
+
+  public async recordWatchLaterOperationAttempt(
+    operationId: string,
+    attemptedAt: Date,
+  ): Promise<boolean> {
+    return recordWatchLaterOperationAttempt(
+      this.ensurePool(),
+      operationId,
+      attemptedAt,
+    );
+  }
+
+  public async getRecoverableWatchLaterOperations(
+    accountId: bigint,
+  ): Promise<WatchLaterOperation[]> {
+    return getRecoverableWatchLaterOperations(this.ensurePool(), accountId);
+  }
+
+  public async resolveWatchLaterOperation(
+    input: WatchLaterOperationResolution,
+  ): Promise<boolean> {
+    return resolveWatchLaterOperation(this.ensurePool(), input);
+  }
+
+  public async recordWatchLaterCompleteSnapshot(
+    accountId: bigint,
+    completedAt: Date,
+  ): Promise<void> {
+    return recordWatchLaterCompleteSnapshot(
+      this.ensurePool(),
+      accountId,
+      completedAt,
+    );
+  }
+
+  public async removeWatchLaterOwnershipAfterCompleteSnapshot(
+    accountId: bigint,
+    aids: bigint[],
+    completedAt: Date,
+  ): Promise<number> {
+    return removeWatchLaterOwnershipAfterCompleteSnapshot(
+      this.ensurePool(),
+      accountId,
+      aids,
+      completedAt,
+    );
   }
 
   // ===== Connection Management =====

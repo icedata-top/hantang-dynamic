@@ -57,6 +57,73 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     ON video_collection_state(priority, last_daily_record_date, aid)
   `);
 
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD COLUMN IF NOT EXISTS watch_later_managed_account_ids bigint[] NOT NULL DEFAULT '{}'
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS watch_later_account (
+      account_id bigint PRIMARY KEY,
+      enabled boolean NOT NULL DEFAULT true,
+      target_count integer NOT NULL DEFAULT 3000,
+      remote_capacity integer,
+      lease_token uuid,
+      lease_expires_at timestamptz,
+      capacity_blocked_at timestamptz,
+      requires_complete_refetch boolean NOT NULL DEFAULT false,
+      last_complete_snapshot_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT chk_watch_later_account_target_count CHECK (target_count > 0),
+      CONSTRAINT chk_watch_later_account_remote_capacity
+        CHECK (remote_capacity IS NULL OR remote_capacity > 0)
+    )
+  `);
+
+  await pool.query(`
+    ALTER TABLE watch_later_account
+    ADD COLUMN IF NOT EXISTS lease_token uuid,
+    ADD COLUMN IF NOT EXISTS lease_expires_at timestamptz
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS watch_later_account_operation (
+      operation_id uuid PRIMARY KEY,
+      account_id bigint NOT NULL REFERENCES watch_later_account(account_id),
+      aid bigint NOT NULL,
+      action text NOT NULL,
+      intent_at timestamptz NOT NULL,
+      request_attempt_count integer NOT NULL DEFAULT 0,
+      last_request_at timestamptz,
+      result_classification text NOT NULL DEFAULT 'pending',
+      result_code integer,
+      provenance_run_ref text,
+      resolved_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT chk_watch_later_account_operation_action
+        CHECK (action IN ('add', 'delete')),
+      CONSTRAINT chk_watch_later_account_operation_attempt_count
+        CHECK (request_attempt_count >= 0),
+      CONSTRAINT chk_watch_later_account_operation_result
+        CHECK (result_classification IN (
+          'pending', 'succeeded', 'failed', 'ambiguous', 'capacity_blocked'
+        )),
+      CONSTRAINT chk_watch_later_account_operation_resolution
+        CHECK (
+          (result_classification IN ('pending', 'ambiguous') AND resolved_at IS NULL)
+          OR (result_classification IN ('succeeded', 'failed', 'capacity_blocked') AND resolved_at IS NOT NULL)
+        )
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_watch_later_account_operation_recovery
+    ON watch_later_account_operation(account_id, intent_at ASC)
+    WHERE result_classification IN ('pending', 'ambiguous')
+  `);
+
   // Add next_gate_value column (reactive gate detection)
   await pool.query(`
     ALTER TABLE video_collection_state

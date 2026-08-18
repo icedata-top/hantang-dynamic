@@ -23,6 +23,8 @@ uid = ""                       # Your Bilibili user ID (required when using sess
 sessdata = ""                  # Your Bilibili session data (SESSDATA cookie value)
 csrf_token = ""                # BILI_JCT - CSRF token for user relation operations
 access_key = ""                # BILI_ACCESS_KEY - Access key for app authentication
+# Account UID used only by src/scripts/watch-later-empirical.ts.
+# watch_later_test_account_id = ""
 
 # Optional: Proxy Urls
 api_proxy_url = ""             # API proxy URL (e.g., "https://biliproxy.example.com")

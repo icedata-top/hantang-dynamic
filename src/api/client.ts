@@ -516,6 +516,20 @@ export function createAccountRelationClient(
   });
 }
 
+export function createAccountToViewClient(
+  cookieJar: CookieJar,
+  accountCookieFilePath: string,
+  stateManager: StateManager,
+  accountLabel?: string,
+): AxiosInstance {
+  return createClient("https://api.bilibili.com/x/v2/history/toview", {
+    accountLabel,
+    cookieJar,
+    cookieFilePath: accountCookieFilePath,
+    stateManager,
+  });
+}
+
 export const dynamicClient = createClient(
   "https://api.vc.bilibili.com/dynamic_svr/v1/dynamic_svr",
 );
@@ -557,6 +571,10 @@ export const favoriteDirectClient = createClient(
 
 export const relationClient = createClient(
   "https://api.bilibili.com/x/relation",
+);
+
+export const toViewClient = createClient(
+  "https://api.bilibili.com/x/v2/history/toview",
 );
 
 export const accountClient = createClient("https://account.bilibili.com/api");

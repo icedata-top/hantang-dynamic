@@ -1,4 +1,5 @@
 import { config } from "../../config";
+import { loadAccounts } from "../../core/account";
 import { Database } from "../../database";
 import {
   minuteBatchDurationSeconds,
@@ -8,6 +9,9 @@ import {
 import type { VideoMinuteSample } from "../../types/models/minute";
 import { logger } from "../../utils/logger";
 import { batchSampleVideoStats } from "./batchSampleVideoStats";
+import { isCompleteVideoMinuteSample } from "./completeSample";
+import { shouldPersistMinuteSample } from "./persistencePolicy";
+import { runAutomaticWatchLaterManagement } from "./watchLaterReconciliation";
 
 const MAX_SLEEP_MS = 60_000;
 const MIN_SLEEP_MS = 100;
@@ -65,6 +69,12 @@ export class MinuteHandler {
    * non-gate videos that have accumulated), so gate latency stays minimal.
    */
   private async loop(signal: AbortSignal): Promise<void> {
+    try {
+      await runAutomaticWatchLaterManagement(this.db, loadAccounts());
+    } catch (error) {
+      logger.error("Watch-later management failed:", error);
+    }
+
     while (this.isRunning) {
       try {
         const due = await this.db.selectDueMinuteVideos(
@@ -136,8 +146,8 @@ export class MinuteHandler {
   }
 
   /**
-   * Fetch stats for a pre-selected set of due videos, diff against last_view,
-   * then insert changed samples / advance unchanged / mark failed.
+   * Fetch complete stats for due videos, then persist samples that meet the
+   * counter-aware minute policy and advance all remaining valid coverage.
    */
   private async processBatch(
     due: { aid: bigint; lastView: bigint | null }[],
@@ -146,15 +156,15 @@ export class MinuteHandler {
     const endBatch = minuteBatchDurationSeconds.startTimer();
 
     const aids = due.map((d) => d.aid);
-    const lastViewByAid = new Map(
-      due.map((d) => [d.aid.toString(), d.lastView]),
-    );
-
     let samples: VideoMinuteSample[] = [];
     try {
+      const configuredToViewAccounts =
+        await this.db.getEnabledWatchLaterAccounts();
       try {
         samples = await batchSampleVideoStats(aids, {
           batchSize: config.minute.batchSize,
+          toViewAccounts: loadAccounts(),
+          configuredToViewAccounts,
         });
       } catch (error) {
         logger.error("Minute stats batch request failed:", error);
@@ -169,18 +179,14 @@ export class MinuteHandler {
 
       for (const sample of samples) {
         const key = sample.aid.toString();
-        // Skip samples with missing view — inserting NULL view would overwrite
-        // last_view and break near-gate scheduling. Let it fall to failedAids.
-        if (sample.view === null || sample.view === undefined) {
+        if (!isCompleteVideoMinuteSample(sample)) {
           continue;
         }
         sampledAidSet.add(key);
-        const prev = lastViewByAid.get(key);
-        if (
-          prev === null ||
-          prev === undefined ||
-          BigInt(sample.view) !== prev
-        ) {
+        const previous = await this.db.getLatestCompleteVideoMinuteTuple(
+          sample.aid,
+        );
+        if (shouldPersistMinuteSample(previous, sample)) {
           changed.push(sample);
         } else {
           unchangedAids.push(sample.aid);

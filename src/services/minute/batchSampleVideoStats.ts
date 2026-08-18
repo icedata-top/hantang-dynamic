@@ -7,6 +7,13 @@ import { config } from "../../config";
 import type { VideoMinuteSample } from "../../types/models/minute";
 import { sharedApiRateLimiter } from "../../utils/apiRateLimiter";
 import { logger } from "../../utils/logger";
+import { isMinuteCounter } from "./completeSample";
+import { planFavoriteFallbackBatches } from "./samplingPlan";
+import type { ToViewAccount } from "./toview";
+import {
+  type ConfiguredToViewAccount,
+  sampleConfiguredToViewAccounts,
+} from "./toview";
 
 interface BiliFavoriteResourceInfo {
   id: number;
@@ -28,30 +35,37 @@ interface BiliFavoriteResponse {
   data?: BiliFavoriteResourceInfo[];
 }
 
-function chunk<T>(items: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size));
-  }
-  return chunks;
-}
-
 function toMinuteSample(
   item: BiliFavoriteResourceInfo,
   sampledAt: Date,
 ): VideoMinuteSample | null {
-  if (!item.id || !item.cnt_info) return null;
+  if (!Number.isSafeInteger(item.id) || item.id <= 0 || !item.cnt_info) {
+    return null;
+  }
+
+  const counters = [
+    item.cnt_info.coin,
+    item.cnt_info.collect,
+    item.cnt_info.danmaku,
+    item.cnt_info.play,
+    item.cnt_info.reply,
+    item.cnt_info.share,
+    item.cnt_info.thumb_up,
+  ];
+  if (counters.some((counter) => !isMinuteCounter(counter))) {
+    return null;
+  }
 
   return {
     aid: BigInt(item.id),
     time: sampledAt,
-    coin: item.cnt_info.coin ?? null,
-    favorite: item.cnt_info.collect ?? null,
-    danmaku: item.cnt_info.danmaku ?? null,
-    view: item.cnt_info.play ?? null,
-    reply: item.cnt_info.reply ?? null,
-    share: item.cnt_info.share ?? null,
-    like: item.cnt_info.thumb_up ?? null,
+    coin: item.cnt_info.coin,
+    favorite: item.cnt_info.collect,
+    danmaku: item.cnt_info.danmaku,
+    view: item.cnt_info.play,
+    reply: item.cnt_info.reply,
+    share: item.cnt_info.share,
+    like: item.cnt_info.thumb_up,
   };
 }
 
@@ -70,13 +84,36 @@ async function fetchStatsBatch(
 
 export async function batchSampleVideoStats(
   aids: bigint[],
-  options?: { batchSize?: number; sampledAt?: Date },
+  options?: {
+    batchSize?: number;
+    sampledAt?: Date;
+    toViewAccounts?: ToViewAccount[];
+    configuredToViewAccounts?: ConfiguredToViewAccount[];
+  },
 ): Promise<VideoMinuteSample[]> {
   const sampledAt = options?.sampledAt ?? new Date();
   const batchSize = options?.batchSize ?? config.minute.batchSize;
-  const samples: VideoMinuteSample[] = [];
+  const requestedAids = new Set(aids.map((aid) => aid.toString()));
+  const samplesByAid = new Map<string, VideoMinuteSample>();
 
-  for (const aidBatch of chunk(aids, batchSize)) {
+  if (options?.toViewAccounts && options.configuredToViewAccounts) {
+    const toViewSamples = await sampleConfiguredToViewAccounts(
+      options.toViewAccounts,
+      options.configuredToViewAccounts,
+      sampledAt,
+    );
+    for (const sample of toViewSamples) {
+      if (requestedAids.has(sample.aid.toString())) {
+        samplesByAid.set(sample.aid.toString(), sample);
+      }
+    }
+  }
+
+  for (const aidBatch of planFavoriteFallbackBatches(
+    aids,
+    [...samplesByAid.values()],
+    batchSize,
+  )) {
     const release = await sharedApiRateLimiter.acquire();
     try {
       const data = await fetchStatsBatchWithFallback(aidBatch);
@@ -88,8 +125,8 @@ export async function batchSampleVideoStats(
 
       for (const item of data.data) {
         const sample = toMinuteSample(item, sampledAt);
-        if (sample) {
-          samples.push(sample);
+        if (sample && requestedAids.has(sample.aid.toString())) {
+          samplesByAid.set(sample.aid.toString(), sample);
         }
       }
     } finally {
@@ -97,7 +134,7 @@ export async function batchSampleVideoStats(
     }
   }
 
-  return samples;
+  return [...samplesByAid.values()];
 }
 
 async function fetchStatsBatchWithFallback(

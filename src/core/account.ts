@@ -4,10 +4,12 @@ import {
   createAccountDynamicClient,
   createAccountPlayerClient,
   createAccountRelationClient,
+  createAccountToViewClient,
   createAccountWebInterfaceClient,
   dynamicClient as globalDynamicClient,
   playerDirectClient as globalPlayerClient,
   relationClient as globalRelationClient,
+  toViewClient as globalToViewClient,
   webInterfaceDirectClient as globalWebInterfaceClient,
 } from "../api/client";
 import { config } from "../config";
@@ -36,6 +38,8 @@ export interface AccountContext {
   playerClient: AxiosInstance;
   /** Authenticated relation client for this account */
   relationClient: AxiosInstance;
+  /** Authenticated To View client for this account */
+  toViewClient: AxiosInstance;
 }
 
 let _accounts: AccountContext[] | null = null;
@@ -83,6 +87,12 @@ function loadCookieFileAccount(filePath: string): AccountContext | null {
       stateManager,
       accountLabel,
     );
+    const toViewClient = createAccountToViewClient(
+      jar,
+      filePath,
+      stateManager,
+      accountLabel,
+    );
 
     logger.info(`Loaded account uid=${uid} from ${filePath}`);
     return {
@@ -94,6 +104,7 @@ function loadCookieFileAccount(filePath: string): AccountContext | null {
       webInterfaceClient,
       playerClient,
       relationClient,
+      toViewClient,
     };
   } catch (error) {
     logger.error(
@@ -143,6 +154,7 @@ export function loadAccounts(): AccountContext[] {
         webInterfaceClient: globalWebInterfaceClient,
         playerClient: globalPlayerClient,
         relationClient: globalRelationClient,
+        toViewClient: globalToViewClient,
       },
     ];
   }
