@@ -9,10 +9,10 @@ import { sharedApiRateLimiter } from "../../utils/apiRateLimiter";
 import { logger } from "../../utils/logger";
 import { isMinuteCounter } from "./completeSample";
 import { planFavoriteFallbackBatches } from "./samplingPlan";
-import type { ToViewAccount } from "./toview";
 import {
   type ConfiguredToViewAccount,
   sampleConfiguredToViewAccounts,
+  type ToViewRequestAccount,
 } from "./toview";
 
 interface BiliFavoriteResourceInfo {
@@ -29,10 +29,14 @@ interface BiliFavoriteResourceInfo {
   };
 }
 
-interface BiliFavoriteResponse {
+export interface BiliFavoriteResponse {
   code: number;
   message?: string;
   data?: BiliFavoriteResourceInfo[];
+}
+
+export interface BatchSampleDependencies {
+  fetchStatsBatch(aids: bigint[]): Promise<BiliFavoriteResponse>;
 }
 
 function toMinuteSample(
@@ -87,8 +91,9 @@ export async function batchSampleVideoStats(
   options?: {
     batchSize?: number;
     sampledAt?: Date;
-    toViewAccounts?: ToViewAccount[];
+    toViewAccounts?: ToViewRequestAccount[];
     configuredToViewAccounts?: ConfiguredToViewAccount[];
+    dependencies?: Partial<BatchSampleDependencies>;
   },
 ): Promise<VideoMinuteSample[]> {
   const sampledAt = options?.sampledAt ?? new Date();
@@ -116,7 +121,9 @@ export async function batchSampleVideoStats(
   )) {
     const release = await sharedApiRateLimiter.acquire();
     try {
-      const data = await fetchStatsBatchWithFallback(aidBatch);
+      const data = options?.dependencies?.fetchStatsBatch
+        ? await options.dependencies.fetchStatsBatch(aidBatch)
+        : await fetchStatsBatchWithFallback(aidBatch);
 
       if (data.code !== 0 || !Array.isArray(data.data)) {
         logger.warn(`Minute stats API failed with code ${data.code}`);

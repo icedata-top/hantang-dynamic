@@ -49,6 +49,25 @@ manual `watch-later-empirical` script. The script adds up to ten eligible items
 and verifies the snapshots, so leave this value unset unless running that
 authorized empirical check.
 
+## Watch-later minute sampling accounts
+
+Configure normal sampling accounts explicitly. `capacity` is the only mutation
+enablement value. It defaults to `0`, so changing it to a positive value alone
+enables bounded additions for that account. `target_count` and optional
+`remote_capacity` are independent per-account limits.
+
+```toml
+[bilibili]
+watch_later_accounts = [
+  { account_id = "12345678", capacity = 20, target_count = 20 },
+]
+```
+
+Each `account_id` must match one configured authenticated account. Startup
+creates or upgrades the required watch-later tables and provisions these rows;
+manual SQL is not required. Existing configured rows removed from this list are
+disabled by setting their capacity to `0`.
+
 ## Proxies
 
 ```toml

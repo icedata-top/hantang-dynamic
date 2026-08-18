@@ -1,5 +1,12 @@
 import { z } from "zod";
 
+const watchLaterAccountSchema = z.object({
+  accountId: z.string().regex(/^\d+$/),
+  capacity: z.coerce.number().int().nonnegative().default(0),
+  targetCount: z.coerce.number().int().positive().default(3000),
+  remoteCapacity: z.coerce.number().int().positive().optional(),
+});
+
 // Base schema without refinement for inference
 const bilibiliBaseSchema = z.object({
   uid: z.string().optional(), // Optional when cookie_file/cookie_files is used (uid extracted from DedeUserID)
@@ -9,6 +16,7 @@ const bilibiliBaseSchema = z.object({
   apiProxyUrl: z.string().optional(),
   dynamicProxyUrl: z.string().optional(),
   watchLaterTestAccountId: z.string().regex(/^\d+$/).optional(),
+  watchLaterAccounts: z.array(watchLaterAccountSchema).default([]),
   cookieFile: z.string().optional(), // First cookie file path (backward compat alias for cookieFiles[0])
   cookieFiles: z.array(z.string()).default([]), // All cookie file paths (canonical)
 });
@@ -70,7 +78,25 @@ export function createBilibiliConfig(
     }
   }
 
-  return {
+  const watchLaterAccountsRaw = getConfigValue(
+    ["bilibili", "watch_later_accounts"],
+    "BILIBILI_WATCH_LATER_ACCOUNTS",
+    [],
+  );
+  const watchLaterAccounts = Array.isArray(watchLaterAccountsRaw)
+    ? watchLaterAccountsRaw.map((account) => {
+        if (!account || typeof account !== "object") return account;
+        const values = account as Record<string, unknown>;
+        return {
+          accountId: values.account_id ?? values.accountId,
+          capacity: values.capacity,
+          targetCount: values.target_count ?? values.targetCount,
+          remoteCapacity: values.remote_capacity ?? values.remoteCapacity,
+        };
+      })
+    : watchLaterAccountsRaw;
+
+  return bilibiliBaseSchema.parse({
     uid: getConfigValue(["bilibili", "uid"], "BILIBILI_UID"),
     sessdata: getConfigValue(["bilibili", "sessdata"], "SESSDATA"),
     csrfToken: getConfigValue(["bilibili", "csrf_token"], "BILI_JCT"),
@@ -87,7 +113,8 @@ export function createBilibiliConfig(
       ["bilibili", "watch_later_test_account_id"],
       "BILIBILI_WATCH_LATER_TEST_ACCOUNT_ID",
     ),
+    watchLaterAccounts,
     cookieFile: cookieFiles[0] || undefined,
     cookieFiles,
-  };
+  });
 }

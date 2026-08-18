@@ -12,11 +12,10 @@ import {
   type WatchLaterSnapshot,
 } from "./watchLaterApi";
 
-export const WATCH_LATER_AUTOMATIC_CAPACITY = 0;
 const MAX_MUTATIONS_PER_RUN = 20;
 const MUTATION_DELAY_MS = 1_000;
-const MAX_MUTATION_ATTEMPTS = 2;
 const CAPACITY_BLOCKED_CODE = 90001;
+type Delay = (milliseconds: number) => Promise<void>;
 
 export interface WatchLaterDatabase {
   getDesiredWatchLaterSet(targetCount: number): Promise<{
@@ -147,52 +146,39 @@ async function performOperation(
     provenanceRunRef: runRef,
   });
 
-  for (let attempt = 0; attempt < MAX_MUTATION_ATTEMPTS; attempt += 1) {
-    await database.recordWatchLaterOperationAttempt(operationId, new Date());
-    try {
-      const code = await mutateWatchLater(account, aid, action);
-      if (code === 0) {
-        await database.resolveWatchLaterOperation({
-          operationId,
-          resultClassification: "succeeded",
-          resultCode: code,
-        });
-        return "succeeded";
-      }
-      if (code === CAPACITY_BLOCKED_CODE) {
-        await database.resolveWatchLaterOperation({
-          operationId,
-          resultClassification: "capacity_blocked",
-          resultCode: code,
-        });
-        return "capacity_blocked";
-      }
-      if (attempt + 1 === MAX_MUTATION_ATTEMPTS) {
-        await database.resolveWatchLaterOperation({
-          operationId,
-          resultClassification: "failed",
-          resultCode: code,
-        });
-        return "failed";
-      }
-      await sleep(MUTATION_DELAY_MS * (attempt + 1));
-    } catch {
+  await database.recordWatchLaterOperationAttempt(operationId, new Date());
+  try {
+    const code = await mutateWatchLater(account, aid, action);
+    if (code === 0) {
       await database.resolveWatchLaterOperation({
         operationId,
-        resultClassification: "ambiguous",
-        resultCode: null,
+        resultClassification: "succeeded",
+        resultCode: code,
       });
-      return "ambiguous";
+      return "succeeded";
     }
+    await database.resolveWatchLaterOperation({
+      operationId,
+      resultClassification:
+        code === CAPACITY_BLOCKED_CODE ? "capacity_blocked" : "failed",
+      resultCode: code,
+    });
+    return code === CAPACITY_BLOCKED_CODE ? "capacity_blocked" : "failed";
+  } catch {
+    await database.resolveWatchLaterOperation({
+      operationId,
+      resultClassification: "ambiguous",
+      resultCode: null,
+    });
+    return "ambiguous";
   }
-  return "failed";
 }
 
 export async function reconcileWatchLaterAccount(
   database: WatchLaterDatabase,
   account: WatchLaterAccountContext,
   configured: WatchLaterAccount,
-  capacity: number,
+  delay: Delay = sleep,
 ): Promise<WatchLaterReconciliationResult> {
   return database.withWatchLaterAccountLease(configured.accountId, async () => {
     const snapshot = await fetchWatchLaterSnapshot(account.toViewClient);
@@ -211,8 +197,8 @@ export async function reconcileWatchLaterAccount(
       snapshot,
     );
     const accountCapacity = Math.min(
-      configured.remoteCapacity ?? capacity,
-      capacity,
+      configured.remoteCapacity ?? configured.configuredCapacity,
+      configured.configuredCapacity,
     );
     const targetCount = Math.min(configured.targetCount, accountCapacity);
     const desired = await database.getDesiredWatchLaterSet(targetCount);
@@ -277,7 +263,12 @@ export async function reconcileWatchLaterAccount(
         requiresRecoverySnapshot = true;
         break;
       }
-      await sleep(MUTATION_DELAY_MS);
+      if (
+        outcome === "succeeded" &&
+        operation !== operations[operations.length - 1]
+      ) {
+        await delay(MUTATION_DELAY_MS);
+      }
     }
 
     if (!requiresRecoverySnapshot) {
@@ -296,9 +287,6 @@ export async function runAutomaticWatchLaterManagement(
   },
   accounts: WatchLaterAccountContext[],
 ): Promise<WatchLaterReconciliationResult[]> {
-  if (WATCH_LATER_AUTOMATIC_CAPACITY === 0) {
-    return [];
-  }
   const accountsById = new Map(
     accounts.flatMap((account) => {
       const accountId = asAccountId(account);
@@ -311,12 +299,7 @@ export async function runAutomaticWatchLaterManagement(
     const account = accountsById.get(configured.accountId);
     if (account) {
       results.push(
-        await reconcileWatchLaterAccount(
-          database,
-          account,
-          configured,
-          WATCH_LATER_AUTOMATIC_CAPACITY,
-        ),
+        await reconcileWatchLaterAccount(database, account, configured),
       );
     }
   }
@@ -326,6 +309,7 @@ export async function runAutomaticWatchLaterManagement(
 export async function runWatchLaterEmpiricalAddTest(
   database: WatchLaterEmpiricalDatabase,
   account: WatchLaterAccountContext,
+  delay: Delay = sleep,
 ): Promise<WatchLaterEmpiricalResult> {
   const preSnapshot = await fetchWatchLaterSnapshot(account.toViewClient);
   if (!preSnapshot) {
@@ -355,6 +339,7 @@ export async function runWatchLaterEmpiricalAddTest(
         };
       }
       added += 1;
+      if (aid !== selected[selected.length - 1]) await delay(MUTATION_DELAY_MS);
     } catch {
       return {
         reason: "request_failed",

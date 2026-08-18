@@ -3,6 +3,10 @@
 # Data flow: Input → Processing → Output
 
 [bilibili]
+watch_later_accounts = [
+  # capacity = 0 disables automatic mutations for this account.
+  # { account_id = "12345678", capacity = 20, target_count = 20 },
+]
 # Authentication: provide cookie_file / cookie_files OR sessdata (at least one required)
 #
 # Option 1 (recommended): Netscape format cookie file exported from browser

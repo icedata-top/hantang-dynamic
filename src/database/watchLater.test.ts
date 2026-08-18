@@ -2,9 +2,23 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
 import {
+  getWatchLaterEligibleAids,
   resolveWatchLaterOperation,
   withWatchLaterAccountLease,
 } from "./watchLater";
+
+test("empirical candidates include priority 29 and exclude priority 30", async () => {
+  let query = "";
+  const pool = {
+    async query(sql: string) {
+      query = sql;
+      return { rows: [] };
+    },
+  } as Pool;
+  await getWatchLaterEligibleAids(pool, [], 10);
+  assert.match(query, /priority >= 1/);
+  assert.match(query, /priority < 30/);
+});
 
 test("successful delete removes only the operation account from ownership", async () => {
   const queries: Array<{ sql: string; values?: unknown[] }> = [];

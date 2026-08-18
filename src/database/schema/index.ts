@@ -18,6 +18,7 @@ import { initVideoMinuteSchema } from "./video_minute.js";
 import { initVideoStaticSchema } from "./video_static.js";
 import { initVideoSubtitlesSchema } from "./video_subtitles.js";
 import { initVideosSchema } from "./videos.js";
+import { initWatchLaterSchema } from "./watchLater.js";
 
 export async function initializeSchema(
   pool: Pool,
@@ -53,6 +54,7 @@ export async function initializeSchema(
   ]);
 
   await initVideoSubtitlesSchema(pool);
+  await initWatchLaterSchema(pool);
 
   logger.info("Database schema initialized");
 }

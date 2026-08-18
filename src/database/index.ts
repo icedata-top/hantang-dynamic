@@ -79,6 +79,7 @@ import {
   trackRecommendationsBatch,
 } from "./recommendations.js";
 import { initializeSchema } from "./schema/index.js";
+import { initWatchLaterSchema } from "./schema/watchLater.js";
 import { getStats } from "./stats.js";
 import {
   cidHasAiSubtitle,
@@ -124,11 +125,13 @@ import {
   getRecoverableWatchLaterOperations,
   getWatchLaterEligibleAids,
   getWatchLaterOwnedAids,
+  provisionWatchLaterAccounts,
   recordWatchLaterCompleteSnapshot,
   recordWatchLaterOperationAttempt,
   removeWatchLaterOwnershipAfterCompleteSnapshot,
   resolveWatchLaterOperation,
   type WatchLaterAccount,
+  type WatchLaterAccountConfiguration,
   type WatchLaterDesiredSet,
   type WatchLaterOperation,
   type WatchLaterOperationIntent,
@@ -160,9 +163,8 @@ export class Database {
   /**
    * Initialize the database connection pool.
    *
-   * Schema initialization is intentionally opt-in. Normal startup and restarts
-   * should not run DDL against the database; run `--init-schema` for install or
-   * upgrade steps that explicitly need it.
+   * Normal startup applies the idempotent watch-later upgrade before minute
+   * processing can query its relations. Full schema initialization remains opt-in.
    */
   public async init(
     url: string = config.database.url,
@@ -197,7 +199,18 @@ export class Database {
 
       if (options.initializeSchema === true) {
         await initializeSchema(this.pool, schema);
+      } else {
+        await initWatchLaterSchema(this.pool);
       }
+      await provisionWatchLaterAccounts(
+        this.pool,
+        config.bilibili.watchLaterAccounts.map((account) => ({
+          accountId: BigInt(account.accountId),
+          capacity: account.capacity,
+          targetCount: account.targetCount,
+          remoteCapacity: account.remoteCapacity ?? null,
+        })),
+      );
 
       logger.info("PostgreSQL initialized successfully");
     } catch (error) {
@@ -586,6 +599,12 @@ export class Database {
 
   public async getEnabledWatchLaterAccounts(): Promise<WatchLaterAccount[]> {
     return getEnabledWatchLaterAccounts(this.ensurePool());
+  }
+
+  public async provisionWatchLaterAccounts(
+    accounts: WatchLaterAccountConfiguration[],
+  ): Promise<void> {
+    return provisionWatchLaterAccounts(this.ensurePool(), accounts);
   }
 
   public async getDesiredWatchLaterSet(

@@ -6,7 +6,10 @@ import {
   minuteBatchesTotal,
   minuteSamplesTotal,
 } from "../../metrics/registry";
-import type { VideoMinuteSample } from "../../types/models/minute";
+import type {
+  CompleteVideoMinuteTuple,
+  VideoMinuteSample,
+} from "../../types/models/minute";
 import { logger } from "../../utils/logger";
 import { batchSampleVideoStats } from "./batchSampleVideoStats";
 import { isCompleteVideoMinuteSample } from "./completeSample";
@@ -17,6 +20,32 @@ const MAX_SLEEP_MS = 60_000;
 const MIN_SLEEP_MS = 100;
 /** Non-gate videos wait at most this long before being flushed. */
 const BATCH_TIMEOUT_MS = 30_000;
+
+export type MinuteDatabase = Pick<
+  Database,
+  | "advanceFailedMinuteVideos"
+  | "advanceUnchangedMinuteVideos"
+  | "getEnabledWatchLaterAccounts"
+  | "getDesiredWatchLaterSet"
+  | "getWatchLaterOwnedAids"
+  | "getRecoverableWatchLaterOperations"
+  | "createWatchLaterOperation"
+  | "recordWatchLaterOperationAttempt"
+  | "resolveWatchLaterOperation"
+  | "removeWatchLaterOwnershipAfterCompleteSnapshot"
+  | "recordWatchLaterCompleteSnapshot"
+  | "withWatchLaterAccountLease"
+  | "getLatestCompleteVideoMinuteTuple"
+  | "getNextMinuteDueAt"
+  | "insertVideoMinuteSamples"
+  | "selectDueMinuteVideos"
+>;
+
+export interface MinuteHandlerDependencies {
+  database?: MinuteDatabase;
+  loadAccounts?: typeof loadAccounts;
+  sampleVideoStats?: typeof batchSampleVideoStats;
+}
 
 function cancellableSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -33,10 +62,19 @@ function cancellableSleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 export class MinuteHandler {
-  private db = Database.getInstance();
+  private db: MinuteDatabase;
+  private readonly accounts: typeof loadAccounts;
+  private readonly sampleVideoStats: typeof batchSampleVideoStats;
   private isRunning = false;
   private loopPromise: Promise<void> | null = null;
   private abortController: AbortController | null = null;
+
+  constructor(dependencies: MinuteHandlerDependencies = {}) {
+    this.db = dependencies.database ?? Database.getInstance();
+    this.accounts = dependencies.loadAccounts ?? loadAccounts;
+    this.sampleVideoStats =
+      dependencies.sampleVideoStats ?? batchSampleVideoStats;
+  }
 
   start(): void {
     if (this.loopPromise) return;
@@ -70,7 +108,7 @@ export class MinuteHandler {
    */
   private async loop(signal: AbortSignal): Promise<void> {
     try {
-      await runAutomaticWatchLaterManagement(this.db, loadAccounts());
+      await runAutomaticWatchLaterManagement(this.db, this.accounts());
     } catch (error) {
       logger.error("Watch-later management failed:", error);
     }
@@ -149,7 +187,7 @@ export class MinuteHandler {
    * Fetch complete stats for due videos, then persist samples that meet the
    * counter-aware minute policy and advance all remaining valid coverage.
    */
-  private async processBatch(
+  async processBatch(
     due: { aid: bigint; lastView: bigint | null }[],
   ): Promise<number> {
     if (due.length === 0) return 0;
@@ -161,9 +199,9 @@ export class MinuteHandler {
       const configuredToViewAccounts =
         await this.db.getEnabledWatchLaterAccounts();
       try {
-        samples = await batchSampleVideoStats(aids, {
+        samples = await this.sampleVideoStats(aids, {
           batchSize: config.minute.batchSize,
-          toViewAccounts: loadAccounts(),
+          toViewAccounts: this.accounts(),
           configuredToViewAccounts,
         });
       } catch (error) {
@@ -175,14 +213,24 @@ export class MinuteHandler {
 
       const changed: VideoMinuteSample[] = [];
       const unchangedAids: bigint[] = [];
-      const sampledAidSet = new Set<string>();
+      const samplesByAid = new Map<string, CompleteVideoMinuteTuple>();
+      const invalidAids = new Set<string>();
 
       for (const sample of samples) {
         const key = sample.aid.toString();
         if (!isCompleteVideoMinuteSample(sample)) {
+          invalidAids.add(key);
           continue;
         }
-        sampledAidSet.add(key);
+        if (samplesByAid.has(key)) {
+          invalidAids.add(key);
+          continue;
+        }
+        samplesByAid.set(key, sample);
+      }
+
+      for (const [key, sample] of samplesByAid) {
+        if (invalidAids.has(key)) continue;
         const previous = await this.db.getLatestCompleteVideoMinuteTuple(
           sample.aid,
         );
@@ -194,7 +242,8 @@ export class MinuteHandler {
       }
 
       const failedAids = aids.filter(
-        (aid) => !sampledAidSet.has(aid.toString()),
+        (aid) =>
+          !samplesByAid.has(aid.toString()) || invalidAids.has(aid.toString()),
       );
 
       if (changed.length > 0) {

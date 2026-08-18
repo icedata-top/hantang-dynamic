@@ -11,11 +11,10 @@ export type WatchLaterOperationResultClassification =
 
 export interface WatchLaterAccount {
   accountId: bigint;
-  enabled: boolean;
+  configuredCapacity: number;
   targetCount: number;
   remoteCapacity: number | null;
   capacityBlockedAt: Date | null;
-  requiresCompleteRefetch: boolean;
   lastCompleteSnapshotAt: Date | null;
 }
 
@@ -57,11 +56,10 @@ export interface WatchLaterOperationResolution {
 
 interface WatchLaterAccountRow {
   account_id: string;
-  enabled: boolean;
+  configured_capacity: number;
   target_count: number;
   remote_capacity: number | null;
   capacity_blocked_at: Date | null;
-  requires_complete_refetch: boolean;
   last_complete_snapshot_at: Date | null;
 }
 
@@ -82,11 +80,10 @@ interface WatchLaterOperationRow {
 function mapWatchLaterAccount(row: WatchLaterAccountRow): WatchLaterAccount {
   return {
     accountId: BigInt(row.account_id),
-    enabled: row.enabled,
+    configuredCapacity: row.configured_capacity,
     targetCount: row.target_count,
     remoteCapacity: row.remote_capacity,
     capacityBlockedAt: row.capacity_blocked_at,
-    requiresCompleteRefetch: row.requires_complete_refetch,
     lastCompleteSnapshotAt: row.last_complete_snapshot_at,
   };
 }
@@ -109,15 +106,52 @@ function mapWatchLaterOperation(
   };
 }
 
+export interface WatchLaterAccountConfiguration {
+  accountId: bigint;
+  capacity: number;
+  targetCount: number;
+  remoteCapacity: number | null;
+}
+
+export async function provisionWatchLaterAccounts(
+  pool: Pool,
+  accounts: WatchLaterAccountConfiguration[],
+): Promise<void> {
+  await pool.query(
+    `UPDATE watch_later_account
+     SET configured_capacity = 0, updated_at = now()
+     WHERE NOT (account_id = ANY($1::bigint[]))`,
+    [accounts.map((account) => account.accountId.toString())],
+  );
+  for (const account of accounts) {
+    await pool.query(
+      `INSERT INTO watch_later_account (
+         account_id, configured_capacity, target_count, remote_capacity
+       ) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (account_id) DO UPDATE
+       SET configured_capacity = EXCLUDED.configured_capacity,
+           target_count = EXCLUDED.target_count,
+           remote_capacity = EXCLUDED.remote_capacity,
+           updated_at = now()`,
+      [
+        account.accountId.toString(),
+        account.capacity,
+        account.targetCount,
+        account.remoteCapacity,
+      ],
+    );
+  }
+}
+
 export async function getEnabledWatchLaterAccounts(
   pool: Pool,
 ): Promise<WatchLaterAccount[]> {
   const result = await pool.query<WatchLaterAccountRow>(
-    `SELECT account_id, enabled, target_count, remote_capacity,
-            capacity_blocked_at, requires_complete_refetch,
+    `SELECT account_id, configured_capacity, target_count, remote_capacity,
+            capacity_blocked_at,
             last_complete_snapshot_at
      FROM watch_later_account
-     WHERE enabled = true
+     WHERE configured_capacity > 0
      ORDER BY account_id ASC`,
   );
 
@@ -166,7 +200,8 @@ export async function getWatchLaterEligibleAids(
   const result = await pool.query<{ aid: string }>(
     `SELECT aid
      FROM video_collection_state
-     WHERE priority BETWEEN 1 AND 30
+     WHERE priority >= 1
+       AND priority < 30
        AND NOT (aid = ANY($1::bigint[]))
      ORDER BY priority ASC, aid ASC
      LIMIT $2`,
@@ -322,7 +357,6 @@ export async function resolveWatchLaterOperation(
       await client.query(
         `UPDATE watch_later_account
          SET capacity_blocked_at = $2,
-             requires_complete_refetch = true,
              updated_at = now()
          WHERE account_id = $1`,
         [operation.account_id, resolvedAt],
@@ -381,7 +415,6 @@ export async function recordWatchLaterCompleteSnapshot(
   await pool.query(
     `UPDATE watch_later_account
      SET last_complete_snapshot_at = $2,
-         requires_complete_refetch = false,
          updated_at = now()
      WHERE account_id = $1`,
     [accountId.toString(), completedAt],
@@ -400,7 +433,6 @@ export async function removeWatchLaterOwnershipAfterCompleteSnapshot(
     const accountResult = await client.query(
       `UPDATE watch_later_account
        SET last_complete_snapshot_at = $2,
-           requires_complete_refetch = false,
            updated_at = now()
        WHERE account_id = $1`,
       [accountId.toString(), completedAt],

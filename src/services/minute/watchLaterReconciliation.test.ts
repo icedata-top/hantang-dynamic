@@ -34,9 +34,11 @@ function account(
   }>,
   mutationCodes: number[] = [],
 ): WatchLaterAccountContext {
+  const cookieJar = new CookieJar();
+  cookieJar.setCookieSync("bili_jct=test", "https://www.bilibili.com/");
   return {
     uid: "7",
-    cookieJar: new CookieJar(),
+    cookieJar,
     toViewClient: {
       async get() {
         const response = responses.shift();
@@ -86,15 +88,14 @@ function database(
 
 const configured: WatchLaterAccount = {
   accountId: 7n,
-  enabled: true,
+  configuredCapacity: 4,
   targetCount: 9,
   remoteCapacity: null,
   capacityBlockedAt: null,
-  requiresCompleteRefetch: false,
   lastCompleteSnapshotAt: null,
 };
 
-test("automatic management has one disabled capacity gate and performs no account lookup", async () => {
+test("automatic management reaches the explicitly configured account", async () => {
   let lookedUp = false;
   const result = await runAutomaticWatchLaterManagement(
     {
@@ -104,10 +105,10 @@ test("automatic management has one disabled capacity gate and performs no accoun
         return [configured];
       },
     },
-    [],
+    [account([{ code: 0, data: { count: 0, list: [] } }])],
   );
-  assert.deepEqual(result, []);
-  assert.equal(lookedUp, false);
+  assert.equal(result.length, 1);
+  assert.equal(lookedUp, true);
 });
 
 test("each configured account uses its own target constrained by the configured capacity", async () => {
@@ -121,7 +122,6 @@ test("each configured account uses its own target constrained by the configured 
     }),
     account([{ code: 0, data: { count: 0, list: [] } }]),
     configured,
-    4,
   );
   assert.equal(result.reason, "completed");
   assert.equal(requestedTarget, 4);
@@ -138,7 +138,6 @@ test("each account respects its recorded remote capacity", async () => {
     }),
     account([{ code: 0, data: { count: 0, list: [] } }]),
     { ...configured, remoteCapacity: 2 },
-    4,
   );
   assert.equal(result.reason, "completed");
   assert.equal(requestedTarget, 2);
@@ -156,8 +155,7 @@ test("each account reserves capacity already used by its watch-later snapshot", 
       },
     }),
     account([{ code: 0, data: { count: 1, list: [item(1)] } }], [0]),
-    configured,
-    2,
+    { ...configured, configuredCapacity: 2 },
   );
   assert.equal(result.added, 1);
   assert.deepEqual(attemptedAids, [2n]);
@@ -196,4 +194,53 @@ test("empirical add test reports eligible exhaustion after verifying the post sn
   assert.equal(result.reason, "eligible_exhausted");
   assert.equal(result.added, 1);
   assert.deepEqual(excludedAids, [1n]);
+});
+
+test("empirical additions use the reconciliation delay between successful posts", async () => {
+  const delays: number[] = [];
+  const result = await runWatchLaterEmpiricalAddTest(
+    {
+      async getWatchLaterEligibleAids() {
+        return [2n, 3n];
+      },
+    },
+    account(
+      [
+        { code: 0, data: { count: 0, list: [] } },
+        { code: 0, data: { count: 2, list: [item(2), item(3)] } },
+      ],
+      [0, 0],
+    ),
+    async (milliseconds) => {
+      delays.push(milliseconds);
+    },
+  );
+  assert.equal(result.added, 2);
+  assert.deepEqual(delays, [1000]);
+});
+
+test("ambiguous mutation is retained and stops further operations", async () => {
+  let posts = 0;
+  const classifications: string[] = [];
+  const failingAccount = account([{ code: 0, data: { count: 0, list: [] } }]);
+  failingAccount.toViewClient.post = async () => {
+    posts += 1;
+    throw new Error("connection lost");
+  };
+  const result = await reconcileWatchLaterAccount(
+    database({
+      async getDesiredWatchLaterSet() {
+        return { aids: [1n, 2n], overflow: false };
+      },
+      async resolveWatchLaterOperation(input) {
+        classifications.push(input.resultClassification);
+        return true;
+      },
+    }),
+    failingAccount,
+    { ...configured, configuredCapacity: 2 },
+  );
+  assert.equal(posts, 1);
+  assert.deepEqual(classifications, ["ambiguous"]);
+  assert.equal(result.added, 0);
 });
