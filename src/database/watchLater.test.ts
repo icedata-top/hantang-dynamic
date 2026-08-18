@@ -2,10 +2,39 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
 import {
+  getConfiguredWatchLaterAccounts,
   getWatchLaterEligibleAids,
   resolveWatchLaterOperation,
   withWatchLaterAccountLease,
 } from "./watchLater";
+
+test("configured account lookup includes accounts with zero capacity", async () => {
+  let query = "";
+  const pool = {
+    async query(sql: string, values?: unknown[]) {
+      query = sql;
+      assert.deepEqual(values, [["7"]]);
+      return {
+        rows: [
+          {
+            account_id: "7",
+            configured_capacity: 0,
+            target_count: 1,
+            remote_capacity: null,
+            capacity_blocked_at: null,
+            last_complete_snapshot_at: null,
+          },
+        ],
+      };
+    },
+  } as Pool;
+
+  const accounts = await getConfiguredWatchLaterAccounts(pool, [7n]);
+
+  assert.equal(accounts[0]?.configuredCapacity, 0);
+  assert.doesNotMatch(query, /configured_capacity > 0/);
+  assert.match(query, /account_id = ANY\(\$1::bigint\[\]\)/);
+});
 
 test("empirical candidates include priority 29 and exclude priority 30", async () => {
   let query = "";

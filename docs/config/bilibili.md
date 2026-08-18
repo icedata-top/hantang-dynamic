@@ -51,10 +51,13 @@ authorized empirical check.
 
 ## Watch-later minute sampling accounts
 
-Configure normal sampling accounts explicitly. `capacity` is the only mutation
-enablement value. It defaults to `0`, so changing it to a positive value alone
-enables bounded additions for that account. `target_count` and optional
-`remote_capacity` are independent per-account limits.
+Configure normal sampling accounts explicitly. Every account in this list is
+sampled once per minute pass, including accounts with `capacity = 0`.
+`capacity` is the only mutation enablement value. It defaults to `0`, so a
+zero-capacity account remains read-only while still contributing To View
+samples. Changing `capacity` to a positive value alone enables bounded
+additions for that account. `target_count` and optional `remote_capacity` are
+independent per-account limits.
 
 ```toml
 [bilibili]

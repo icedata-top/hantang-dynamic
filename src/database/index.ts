@@ -120,6 +120,7 @@ import {
 } from "./videos.js";
 import {
   createWatchLaterOperation,
+  getConfiguredWatchLaterAccounts,
   getDesiredWatchLaterSet,
   getEnabledWatchLaterAccounts,
   getRecoverableWatchLaterOperations,
@@ -599,6 +600,12 @@ export class Database {
 
   public async getEnabledWatchLaterAccounts(): Promise<WatchLaterAccount[]> {
     return getEnabledWatchLaterAccounts(this.ensurePool());
+  }
+
+  public async getConfiguredWatchLaterAccounts(
+    accountIds: bigint[],
+  ): Promise<WatchLaterAccount[]> {
+    return getConfiguredWatchLaterAccounts(this.ensurePool(), accountIds);
   }
 
   public async provisionWatchLaterAccounts(

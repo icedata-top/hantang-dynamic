@@ -158,6 +158,23 @@ export async function getEnabledWatchLaterAccounts(
   return result.rows.map(mapWatchLaterAccount);
 }
 
+export async function getConfiguredWatchLaterAccounts(
+  pool: Pool,
+  accountIds: bigint[],
+): Promise<WatchLaterAccount[]> {
+  const result = await pool.query<WatchLaterAccountRow>(
+    `SELECT account_id, configured_capacity, target_count, remote_capacity,
+            capacity_blocked_at,
+            last_complete_snapshot_at
+     FROM watch_later_account
+     WHERE account_id = ANY($1::bigint[])
+     ORDER BY account_id ASC`,
+    [accountIds.map((accountId) => accountId.toString())],
+  );
+
+  return result.rows.map(mapWatchLaterAccount);
+}
+
 export async function getDesiredWatchLaterSet(
   pool: Pool,
   targetCount: number,

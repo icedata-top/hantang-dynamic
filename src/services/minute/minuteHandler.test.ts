@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import axios, { type AxiosInstance } from "axios";
+import { CookieJar } from "tough-cookie";
+import { config } from "../../config";
+import type { AccountContext } from "../../core/account";
+import type { StateManager } from "../../core/state";
 import type { WatchLaterAccount } from "../../database/watchLater";
 import type {
   CompleteVideoMinuteTuple,
   VideoMinuteSample,
 } from "../../types/models/minute";
 import { type MinuteDatabase, MinuteHandler } from "./minuteHandler";
+import { runAutomaticWatchLaterManagement } from "./watchLaterReconciliation";
 
 const configuredAccount: WatchLaterAccount = {
   accountId: 7n,
@@ -54,9 +60,13 @@ function database(calls: string[]): MinuteDatabase {
       calls.push(`unchanged:${aids.join(",")}`);
       return aids.length;
     },
-    async getEnabledWatchLaterAccounts() {
-      calls.push("accounts");
+    async getConfiguredWatchLaterAccounts() {
+      calls.push("configured-accounts");
       return [configuredAccount];
+    },
+    async getEnabledWatchLaterAccounts() {
+      calls.push("enabled-accounts");
+      return [];
     },
     async getDesiredWatchLaterSet() {
       return { aids: [], mandatoryCount: 0, overflow: false };
@@ -120,7 +130,7 @@ test("MinuteHandler processes initial, changed, unchanged, malformed, and duplic
     { aid: 3n, lastView: null },
     { aid: 4n, lastView: null },
   ]);
-  assert.deepEqual(calls, ["accounts", "insert:1", "failed:2,3,4"]);
+  assert.deepEqual(calls, ["configured-accounts", "insert:1", "failed:2,3,4"]);
 });
 
 test("MinuteHandler advances unchanged tuples and marks a sampler failure", async () => {
@@ -138,7 +148,7 @@ test("MinuteHandler advances unchanged tuples and marks a sampler failure", asyn
     },
   });
   await unchangedHandler.processBatch([{ aid: 1n, lastView: null }]);
-  assert.deepEqual(calls, ["accounts", "unchanged:1"]);
+  assert.deepEqual(calls, ["configured-accounts", "unchanged:1"]);
 
   const failedHandler = new MinuteHandler({
     database: database(calls),
@@ -149,4 +159,99 @@ test("MinuteHandler advances unchanged tuples and marks a sampler failure", asyn
   });
   await failedHandler.processBatch([{ aid: 2n, lastView: null }]);
   assert.ok(calls.includes("failed:2"));
+});
+
+test("MinuteHandler samples a zero-capacity configured account without enabling reconciliation mutations", async () => {
+  const calls: string[] = [];
+  let getRequests = 0;
+  let postRequests = 0;
+  const previousConfiguredAccounts = config.bilibili.watchLaterAccounts;
+  config.bilibili.watchLaterAccounts = [
+    {
+      accountId: "7",
+      capacity: 0,
+      targetCount: 1,
+      remoteCapacity: undefined,
+    },
+  ];
+  const toViewClient = axios.create({
+    adapter: async (request) => {
+      if (request.method === "get") {
+        getRequests += 1;
+        return {
+          data: {
+            code: 0,
+            data: {
+              count: 1,
+              list: [
+                {
+                  aid: 1,
+                  stat: {
+                    aid: 1,
+                    coin: 1,
+                    favorite: 1,
+                    danmaku: 1,
+                    view: 1,
+                    reply: 1,
+                    share: 1,
+                    like: 1,
+                  },
+                },
+              ],
+            },
+          },
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          config: request,
+        };
+      }
+      postRequests += 1;
+      return {
+        data: { code: 0 },
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config: request,
+      };
+    },
+  });
+  const account: AccountContext = {
+    uid: "7",
+    cookieJar: new CookieJar(),
+    cookieFilePath: null,
+    stateManager: {} as StateManager,
+    dynamicClient: {} as AxiosInstance,
+    webInterfaceClient: {} as AxiosInstance,
+    playerClient: {} as AxiosInstance,
+    relationClient: {} as AxiosInstance,
+    toViewClient,
+  };
+  try {
+    const db = {
+      ...database(calls),
+      async getConfiguredWatchLaterAccounts(accountIds: bigint[]) {
+        calls.push("configured-accounts");
+        assert.deepEqual(accountIds, [7n]);
+        return [configuredAccount];
+      },
+    };
+    const handler = new MinuteHandler({
+      database: db,
+      loadAccounts: () => [account],
+    });
+
+    await handler.processBatch([{ aid: 1n, lastView: null }]);
+    await runAutomaticWatchLaterManagement(db, [account]);
+
+    assert.equal(getRequests, 1);
+    assert.equal(postRequests, 0);
+    assert.deepEqual(calls, [
+      "configured-accounts",
+      "insert:1",
+      "enabled-accounts",
+    ]);
+  } finally {
+    config.bilibili.watchLaterAccounts = previousConfiguredAccounts;
+  }
 });
