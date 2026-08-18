@@ -128,9 +128,7 @@ import {
   recordWatchLaterOperationAttempt,
   removeWatchLaterOwnershipAfterCompleteSnapshot,
   resolveWatchLaterOperation,
-  upsertWatchLaterAccount,
   type WatchLaterAccount,
-  type WatchLaterAccountInput,
   type WatchLaterDesiredSet,
   type WatchLaterOperation,
   type WatchLaterOperationIntent,
@@ -585,12 +583,6 @@ export class Database {
   }
 
   // ===== Watch-later Operations =====
-
-  public async upsertWatchLaterAccount(
-    input: WatchLaterAccountInput,
-  ): Promise<void> {
-    return upsertWatchLaterAccount(this.ensurePool(), input);
-  }
 
   public async getEnabledWatchLaterAccounts(): Promise<WatchLaterAccount[]> {
     return getEnabledWatchLaterAccounts(this.ensurePool());

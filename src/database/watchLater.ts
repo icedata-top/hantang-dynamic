@@ -19,13 +19,6 @@ export interface WatchLaterAccount {
   lastCompleteSnapshotAt: Date | null;
 }
 
-export interface WatchLaterAccountInput {
-  accountId: bigint;
-  enabled: boolean;
-  targetCount: number;
-  remoteCapacity: number | null;
-}
-
 export interface WatchLaterDesiredSet {
   aids: bigint[];
   mandatoryCount: number;
@@ -114,28 +107,6 @@ function mapWatchLaterOperation(
     provenanceRunRef: row.provenance_run_ref,
     resolvedAt: row.resolved_at,
   };
-}
-
-export async function upsertWatchLaterAccount(
-  pool: Pool,
-  input: WatchLaterAccountInput,
-): Promise<void> {
-  await pool.query(
-    `INSERT INTO watch_later_account (
-       account_id, enabled, target_count, remote_capacity, updated_at
-     ) VALUES ($1, $2, $3, $4, now())
-     ON CONFLICT (account_id) DO UPDATE SET
-       enabled = EXCLUDED.enabled,
-       target_count = EXCLUDED.target_count,
-       remote_capacity = EXCLUDED.remote_capacity,
-       updated_at = now()`,
-    [
-      input.accountId.toString(),
-      input.enabled,
-      input.targetCount,
-      input.remoteCapacity,
-    ],
-  );
 }
 
 export async function getEnabledWatchLaterAccounts(
