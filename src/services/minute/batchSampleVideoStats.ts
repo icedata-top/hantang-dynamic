@@ -98,6 +98,7 @@ export async function batchSampleVideoStats(
     toViewAccounts?: ToViewRequestAccount[];
     watchLaterToViewAccounts?: WatchLaterToViewAccount[];
     unavailableWatchLaterAccountIds?: ReadonlySet<bigint>;
+    desiredWatchLaterAidsByAccountId?: ReadonlyMap<bigint, readonly bigint[]>;
     onWatchLaterToViewAccountFailure?(accountId: bigint): void;
     dependencies?: Partial<BatchSampleDependencies>;
   },
@@ -123,14 +124,26 @@ export async function batchSampleVideoStats(
     }
   }
 
+  const unavailableDesiredAids = new Set<string>();
+  for (const accountId of options?.unavailableWatchLaterAccountIds ?? []) {
+    for (const aid of options?.desiredWatchLaterAidsByAccountId?.get(
+      accountId,
+    ) ?? []) {
+      unavailableDesiredAids.add(aid.toString());
+    }
+  }
+
   for (const aidBatch of planFavoriteFallbackBatches(
     aids,
     [...samplesByAid.values()],
     batchSize,
   )) {
-    if ((options?.unavailableWatchLaterAccountIds?.size ?? 0) > 0) {
+    const attributableAids = aidBatch.filter((aid) =>
+      unavailableDesiredAids.has(aid.toString()),
+    );
+    if (attributableAids.length > 0) {
       watchLaterFallbackBatchesTotal.inc();
-      watchLaterFallbackVideosTotal.inc(aidBatch.length);
+      watchLaterFallbackVideosTotal.inc(attributableAids.length);
     }
     const release = await sharedApiRateLimiter.acquire();
     try {

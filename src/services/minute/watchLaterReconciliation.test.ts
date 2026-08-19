@@ -225,6 +225,7 @@ test("desired Watch Later assignments cap global and per-account cardinality", (
 test("startup health excludes invalid accounts from capacity and assignment", async () => {
   let desiredTarget = -1;
   const unavailableAccountIds: bigint[] = [];
+  let assignments = new Map<bigint, readonly bigint[]>();
   const healthy = account([snapshot([])]);
   const invalid = account([{ code: -101 }], [], "8");
   const result = await runAutomaticWatchLaterManagement(
@@ -232,7 +233,7 @@ test("startup health excludes invalid accounts from capacity and assignment", as
       ...database({
         async getDesiredWatchLaterSet(target) {
           desiredTarget = target;
-          return { aids: [1n], overflow: false };
+          return { aids: [1n, 2n], overflow: false };
         },
       }),
       async getWatchLaterAccounts() {
@@ -245,12 +246,22 @@ test("startup health excludes invalid accounts from capacity and assignment", as
       onUnavailableAccount(accountId) {
         unavailableAccountIds.push(accountId);
       },
+      onDesiredAssignments(value) {
+        assignments = new Map(value);
+      },
     },
   );
 
-  assert.equal(desiredTarget, 2);
+  assert.equal(desiredTarget, 4);
   assert.equal(result.length, 1);
   assert.deepEqual(unavailableAccountIds, [8n]);
+  assert.deepEqual(
+    assignments,
+    new Map([
+      [7n, [1n]],
+      [8n, [2n]],
+    ]),
+  );
 });
 
 test("zero injected capacity samples the remote snapshot without posting mutations", async () => {

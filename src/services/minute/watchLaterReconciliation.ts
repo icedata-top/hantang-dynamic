@@ -30,7 +30,7 @@ type Delay = (milliseconds: number) => Promise<void>;
 type ProgressWriter = (text: string) => void;
 
 interface ReconciliationInput {
-  desiredAids?: bigint[];
+  desiredAids?: readonly bigint[];
   snapshot?: WatchLaterSnapshot;
 }
 
@@ -90,6 +90,9 @@ export interface WatchLaterReconciliationResult {
 
 export interface WatchLaterManagementOptions {
   onUnavailableAccount?(accountId: bigint): void;
+  onDesiredAssignments?(
+    assignments: ReadonlyMap<bigint, readonly bigint[]>,
+  ): void;
 }
 
 export interface WatchLaterEmpiricalDatabase {
@@ -427,17 +430,40 @@ export async function runAutomaticWatchLaterManagement(
   watchLaterCapacity.set({ pool: "priority" }, 0);
   watchLaterCapacity.set({ pool: "newest" }, 0);
   watchLaterAccountSlotItems.reset();
+  const desired = await database.getDesiredWatchLaterSet(
+    capacity * provisionedAccounts.length,
+  );
+  const assignments = partitionDesiredWatchLaterAids(
+    desired.aids,
+    provisionedAccounts.length,
+    capacity,
+  );
+  const assignedAidsByAccountId = new Map<bigint, readonly bigint[]>();
+  for (const [index, watchLaterAccount] of provisionedAccounts.entries()) {
+    assignedAidsByAccountId.set(
+      watchLaterAccount.accountId,
+      assignments[index] ?? [],
+    );
+  }
+  options.onDesiredAssignments?.(assignedAidsByAccountId);
   const healthyAccounts: Array<{
     account: WatchLaterAccountContext;
     watchLaterAccount: WatchLaterAccount;
     snapshot: WatchLaterSnapshot;
+    assignedAids: readonly bigint[];
   }> = [];
   for (const watchLaterAccount of provisionedAccounts) {
     const account = accountsById.get(watchLaterAccount.accountId);
     if (account) {
       const snapshot = await fetchWatchLaterSnapshot(account.toViewClient);
       if (snapshot) {
-        healthyAccounts.push({ account, watchLaterAccount, snapshot });
+        healthyAccounts.push({
+          account,
+          watchLaterAccount,
+          snapshot,
+          assignedAids:
+            assignedAidsByAccountId.get(watchLaterAccount.accountId) ?? [],
+        });
       } else {
         options.onUnavailableAccount?.(watchLaterAccount.accountId);
       }
@@ -450,22 +476,14 @@ export async function runAutomaticWatchLaterManagement(
   );
   if (healthyAccounts.length === 0) return [];
 
-  const desired = await database.getDesiredWatchLaterSet(
-    capacity * healthyAccounts.length,
-  );
   const results: WatchLaterReconciliationResult[] = [];
-  const assignments = partitionDesiredWatchLaterAids(
-    desired.aids,
-    healthyAccounts.length,
-    capacity,
-  );
   const totalCapacity = capacity * healthyAccounts.length;
   const priorityCapacity = Math.floor((totalCapacity * 3) / 5);
   watchLaterCapacity.set({ pool: "total" }, totalCapacity);
   watchLaterCapacity.set({ pool: "priority" }, priorityCapacity);
   watchLaterCapacity.set({ pool: "newest" }, totalCapacity - priorityCapacity);
   for (const [index, healthyAccount] of healthyAccounts.entries()) {
-    const assignedAids = assignments[index] ?? [];
+    const assignedAids = healthyAccount.assignedAids;
     const accountSlot = String(index);
     watchLaterAccountSlotItems.set(
       { account_slot: accountSlot, kind: "assigned" },

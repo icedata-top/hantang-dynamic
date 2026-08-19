@@ -71,6 +71,10 @@ export class MinuteHandler {
   private loopPromise: Promise<void> | null = null;
   private abortController: AbortController | null = null;
   private readonly unavailableWatchLaterAccountIds = new Set<bigint>();
+  private readonly desiredWatchLaterAidsByAccountId = new Map<
+    bigint,
+    readonly bigint[]
+  >();
 
   constructor(dependencies: MinuteHandlerDependencies = {}) {
     this.db = dependencies.database ?? Database.getInstance();
@@ -83,6 +87,7 @@ export class MinuteHandler {
     if (this.loopPromise) return;
     this.isRunning = true;
     this.unavailableWatchLaterAccountIds.clear();
+    this.desiredWatchLaterAidsByAccountId.clear();
     watchLaterUnavailableAccounts.set(0);
     this.abortController = new AbortController();
     this.loopPromise = this.loop(this.abortController.signal);
@@ -132,6 +137,12 @@ export class MinuteHandler {
         {
           onUnavailableAccount: (accountId) => {
             this.markWatchLaterAccountUnavailable(accountId, "startup");
+          },
+          onDesiredAssignments: (assignments) => {
+            this.desiredWatchLaterAidsByAccountId.clear();
+            for (const [accountId, aids] of assignments) {
+              this.desiredWatchLaterAidsByAccountId.set(accountId, aids);
+            }
           },
         },
       );
@@ -237,6 +248,8 @@ export class MinuteHandler {
               !this.unavailableWatchLaterAccountIds.has(account.accountId),
           ),
           unavailableWatchLaterAccountIds: this.unavailableWatchLaterAccountIds,
+          desiredWatchLaterAidsByAccountId:
+            this.desiredWatchLaterAidsByAccountId,
           onWatchLaterToViewAccountFailure: (accountId) => {
             this.markWatchLaterAccountUnavailable(
               accountId,
