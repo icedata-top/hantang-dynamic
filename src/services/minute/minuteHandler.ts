@@ -5,6 +5,8 @@ import {
   minuteBatchDurationSeconds,
   minuteBatchesTotal,
   minuteSamplesTotal,
+  watchLaterAccountExclusionsTotal,
+  watchLaterUnavailableAccounts,
 } from "../../metrics/registry";
 import type {
   CompleteVideoMinuteTuple,
@@ -80,9 +82,23 @@ export class MinuteHandler {
   start(): void {
     if (this.loopPromise) return;
     this.isRunning = true;
+    this.unavailableWatchLaterAccountIds.clear();
+    watchLaterUnavailableAccounts.set(0);
     this.abortController = new AbortController();
     this.loopPromise = this.loop(this.abortController.signal);
     logger.info("Adaptive minute handler started (batch-accumulation)");
+  }
+
+  private markWatchLaterAccountUnavailable(
+    accountId: bigint,
+    phase: "startup" | "runtime_sampling",
+  ): void {
+    if (this.unavailableWatchLaterAccountIds.has(accountId)) return;
+    this.unavailableWatchLaterAccountIds.add(accountId);
+    watchLaterAccountExclusionsTotal.inc({ phase });
+    watchLaterUnavailableAccounts.set(
+      this.unavailableWatchLaterAccountIds.size,
+    );
   }
 
   async stop(): Promise<void> {
@@ -115,7 +131,7 @@ export class MinuteHandler {
         undefined,
         {
           onUnavailableAccount: (accountId) => {
-            this.unavailableWatchLaterAccountIds.add(accountId);
+            this.markWatchLaterAccountUnavailable(accountId, "startup");
           },
         },
       );
@@ -220,8 +236,12 @@ export class MinuteHandler {
             (account) =>
               !this.unavailableWatchLaterAccountIds.has(account.accountId),
           ),
+          unavailableWatchLaterAccountIds: this.unavailableWatchLaterAccountIds,
           onWatchLaterToViewAccountFailure: (accountId) => {
-            this.unavailableWatchLaterAccountIds.add(accountId);
+            this.markWatchLaterAccountUnavailable(
+              accountId,
+              "runtime_sampling",
+            );
           },
         });
       } catch (error) {

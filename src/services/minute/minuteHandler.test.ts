@@ -5,6 +5,10 @@ import { CookieJar } from "tough-cookie";
 import type { AccountContext } from "../../core/account";
 import type { StateManager } from "../../core/state";
 import type { WatchLaterAccount } from "../../database/watchLater";
+import {
+  watchLaterAccountExclusionsTotal,
+  watchLaterUnavailableAccounts,
+} from "../../metrics/registry";
 import type {
   CompleteVideoMinuteTuple,
   VideoMinuteSample,
@@ -154,6 +158,8 @@ test("MinuteHandler advances unchanged tuples and marks a sampler failure", asyn
 });
 
 test("MinuteHandler keeps a failed To View account unavailable across later batches", async () => {
+  watchLaterAccountExclusionsTotal.reset();
+  watchLaterUnavailableAccounts.set(0);
   const calls: string[] = [];
   const sampledAccountIds: bigint[][] = [];
   const fallbackBatches: bigint[][] = [];
@@ -224,6 +230,12 @@ test("MinuteHandler keeps a failed To View account unavailable across later batc
     "insert:1",
     "watch-later-accounts",
     "insert:2",
+  ]);
+  assert.deepEqual((await watchLaterAccountExclusionsTotal.get()).values, [
+    { labels: { phase: "runtime_sampling" }, value: 1 },
+  ]);
+  assert.deepEqual((await watchLaterUnavailableAccounts.get()).values, [
+    { labels: {}, value: 1 },
   ]);
 });
 

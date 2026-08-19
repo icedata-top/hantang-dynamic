@@ -4,6 +4,10 @@ import {
   type RequestConfig,
 } from "../../api/client";
 import { config } from "../../config";
+import {
+  watchLaterFallbackBatchesTotal,
+  watchLaterFallbackVideosTotal,
+} from "../../metrics/registry";
 import type { VideoMinuteSample } from "../../types/models/minute";
 import { sharedApiRateLimiter } from "../../utils/apiRateLimiter";
 import { logger } from "../../utils/logger";
@@ -93,6 +97,7 @@ export async function batchSampleVideoStats(
     sampledAt?: Date;
     toViewAccounts?: ToViewRequestAccount[];
     watchLaterToViewAccounts?: WatchLaterToViewAccount[];
+    unavailableWatchLaterAccountIds?: ReadonlySet<bigint>;
     onWatchLaterToViewAccountFailure?(accountId: bigint): void;
     dependencies?: Partial<BatchSampleDependencies>;
   },
@@ -123,6 +128,10 @@ export async function batchSampleVideoStats(
     [...samplesByAid.values()],
     batchSize,
   )) {
+    if ((options?.unavailableWatchLaterAccountIds?.size ?? 0) > 0) {
+      watchLaterFallbackBatchesTotal.inc();
+      watchLaterFallbackVideosTotal.inc(aidBatch.length);
+    }
     const release = await sharedApiRateLimiter.acquire();
     try {
       const data = options?.dependencies?.fetchStatsBatch

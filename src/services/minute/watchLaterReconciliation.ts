@@ -4,6 +4,13 @@ import type {
   WatchLaterAction,
   WatchLaterOperation,
 } from "../../database/watchLater";
+import {
+  watchLaterAccountSlotItems,
+  watchLaterCapacity,
+  watchLaterEnabledAccounts,
+  watchLaterMutationsTotal,
+  watchLaterReconciliationsTotal,
+} from "../../metrics/registry";
 import { sleep } from "../../utils/datetime";
 import { redactForLog } from "../../utils/redact";
 import {
@@ -225,21 +232,25 @@ async function performOperation(
         resultClassification: "succeeded",
         resultCode: code,
       });
+      watchLaterMutationsTotal.inc({ action, outcome: "succeeded" });
       return "succeeded";
     }
+    const outcome =
+      code === CAPACITY_BLOCKED_CODE ? "capacity_blocked" : "failed";
     await database.resolveWatchLaterOperation({
       operationId,
-      resultClassification:
-        code === CAPACITY_BLOCKED_CODE ? "capacity_blocked" : "failed",
+      resultClassification: outcome,
       resultCode: code,
     });
-    return code === CAPACITY_BLOCKED_CODE ? "capacity_blocked" : "failed";
+    watchLaterMutationsTotal.inc({ action, outcome });
+    return outcome;
   } catch {
     await database.resolveWatchLaterOperation({
       operationId,
       resultClassification: "ambiguous",
       resultCode: null,
     });
+    watchLaterMutationsTotal.inc({ action, outcome: "ambiguous" });
     return "ambiguous";
   }
 }
@@ -257,14 +268,17 @@ export async function reconcileWatchLaterAccount(
     async () => {
       const snapshot =
         input.snapshot ?? (await fetchWatchLaterSnapshot(account.toViewClient));
-      if (!snapshot)
-        return {
+      if (!snapshot) {
+        const result: WatchLaterReconciliationResult = {
           reason: "snapshot_invalid",
           added: 0,
           deleted: 0,
           recovered: 0,
           capacityBlocked: false,
         };
+        watchLaterReconciliationsTotal.inc({ outcome: result.reason });
+        return result;
+      }
 
       const recovered = await recoverOperations(
         database,
@@ -276,13 +290,15 @@ export async function reconcileWatchLaterAccount(
           watchLaterAccount.accountId,
           snapshot.completedAt,
         );
-        return {
+        const result: WatchLaterReconciliationResult = {
           reason: "completed",
           added: 0,
           deleted: 0,
           recovered,
           capacityBlocked: false,
         };
+        watchLaterReconciliationsTotal.inc({ outcome: result.reason });
+        return result;
       }
 
       const desired = input.desiredAids
@@ -293,13 +309,15 @@ export async function reconcileWatchLaterAccount(
           watchLaterAccount.accountId,
           snapshot.completedAt,
         );
-        return {
+        const result: WatchLaterReconciliationResult = {
           reason: "desired_overflow",
           added: 0,
           deleted: 0,
           recovered,
           capacityBlocked: false,
         };
+        watchLaterReconciliationsTotal.inc({ outcome: result.reason });
+        return result;
       }
 
       const owned = await database.getWatchLaterOwnedAids(
@@ -368,13 +386,15 @@ export async function reconcileWatchLaterAccount(
           snapshot.completedAt,
         );
       }
-      return {
+      const result: WatchLaterReconciliationResult = {
         reason: "completed",
         added,
         deleted,
         recovered,
         capacityBlocked,
       };
+      watchLaterReconciliationsTotal.inc({ outcome: result.reason });
+      return result;
     },
   );
 }
@@ -399,6 +419,14 @@ export async function runAutomaticWatchLaterManagement(
   const provisionedAccounts = await database.getWatchLaterAccounts([
     ...accountsById.keys(),
   ]);
+  watchLaterEnabledAccounts.reset();
+  watchLaterEnabledAccounts.set({ state: "healthy" }, 0);
+  watchLaterEnabledAccounts.set({ state: "unavailable" }, 0);
+  watchLaterCapacity.reset();
+  watchLaterCapacity.set({ pool: "total" }, 0);
+  watchLaterCapacity.set({ pool: "priority" }, 0);
+  watchLaterCapacity.set({ pool: "newest" }, 0);
+  watchLaterAccountSlotItems.reset();
   const healthyAccounts: Array<{
     account: WatchLaterAccountContext;
     watchLaterAccount: WatchLaterAccount;
@@ -415,6 +443,11 @@ export async function runAutomaticWatchLaterManagement(
       }
     }
   }
+  watchLaterEnabledAccounts.set({ state: "healthy" }, healthyAccounts.length);
+  watchLaterEnabledAccounts.set(
+    { state: "unavailable" },
+    provisionedAccounts.length - healthyAccounts.length,
+  );
   if (healthyAccounts.length === 0) return [];
 
   const desired = await database.getDesiredWatchLaterSet(
@@ -426,8 +459,22 @@ export async function runAutomaticWatchLaterManagement(
     healthyAccounts.length,
     capacity,
   );
+  const totalCapacity = capacity * healthyAccounts.length;
+  const priorityCapacity = Math.floor((totalCapacity * 3) / 5);
+  watchLaterCapacity.set({ pool: "total" }, totalCapacity);
+  watchLaterCapacity.set({ pool: "priority" }, priorityCapacity);
+  watchLaterCapacity.set({ pool: "newest" }, totalCapacity - priorityCapacity);
   for (const [index, healthyAccount] of healthyAccounts.entries()) {
     const assignedAids = assignments[index] ?? [];
+    const accountSlot = String(index);
+    watchLaterAccountSlotItems.set(
+      { account_slot: accountSlot, kind: "assigned" },
+      assignedAids.length,
+    );
+    watchLaterAccountSlotItems.set(
+      { account_slot: accountSlot, kind: "observed" },
+      healthyAccount.snapshot.aids.size,
+    );
     results.push(
       await reconcileWatchLaterAccount(
         database,

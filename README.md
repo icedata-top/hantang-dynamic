@@ -132,7 +132,9 @@ Equivalent environment variables are `SERVER_ENABLED`, `SERVER_HOST`,
 The endpoint exports process metrics plus application metrics with the
 `bili_tracker_` prefix for fetch cycles, Bilibili API latency and errors, rate
 limiter depth, PostgreSQL query and pool state, adaptive minute sampling,
-notifications, exports, and fatal exit reasons.
+  Watch Later startup capacity, reconciliation, account availability, and
+  fallback coverage, notifications, exports, and fatal exit reasons. Watch
+  Later account series use deterministic slots rather than account IDs.
 
 Prometheus scrape example:
 

@@ -11,6 +11,13 @@ import { config } from "../../config";
 import { StateManager } from "../../core/state";
 import type { WatchLaterAccount } from "../../database/watchLater";
 import {
+  watchLaterAccountSlotItems,
+  watchLaterCapacity,
+  watchLaterEnabledAccounts,
+  watchLaterMutationsTotal,
+  watchLaterReconciliationsTotal,
+} from "../../metrics/registry";
+import {
   mutateWatchLater,
   type WatchLaterAccountContext,
 } from "./watchLaterApi";
@@ -833,4 +840,123 @@ test("ambiguous mutation is retained and stops further operations", async () => 
   assert.equal(posts, 1);
   assert.deepEqual(classifications, ["ambiguous"]);
   assert.equal(result.added, 0);
+});
+
+test("Watch Later metrics report startup layout and reconciliation outcomes", async () => {
+  watchLaterEnabledAccounts.reset();
+  watchLaterCapacity.reset();
+  watchLaterAccountSlotItems.reset();
+  watchLaterMutationsTotal.reset();
+  watchLaterReconciliationsTotal.reset();
+
+  await runAutomaticWatchLaterManagement(
+    {
+      ...database({
+        async getDesiredWatchLaterSet() {
+          return { aids: [1n], overflow: false };
+        },
+      }),
+      async getWatchLaterAccounts() {
+        return [configured, { ...configured, accountId: 8n }];
+      },
+    },
+    [account([snapshot([])]), account([{ code: -101 }], [], "8")],
+    2,
+  );
+  await reconcileWatchLaterAccount(
+    database({
+      async getDesiredWatchLaterSet() {
+        return { aids: [1n], overflow: false };
+      },
+    }),
+    account([snapshot([])]),
+    configured,
+    async () => {},
+    1,
+  );
+  await reconcileWatchLaterAccount(
+    database({
+      async getDesiredWatchLaterSet() {
+        return { aids: [1n], overflow: false };
+      },
+    }),
+    account([snapshot([])], [-400]),
+    configured,
+    async () => {},
+    1,
+  );
+  const ambiguousAccount = account([snapshot([])]);
+  ambiguousAccount.toViewClient.post = async () => {
+    throw new Error("connection lost");
+  };
+  await reconcileWatchLaterAccount(
+    database({
+      async getDesiredWatchLaterSet() {
+        return { aids: [1n], overflow: false };
+      },
+    }),
+    ambiguousAccount,
+    configured,
+    async () => {},
+    1,
+  );
+  await reconcileWatchLaterAccount(
+    database(),
+    account([{ code: -101 }]),
+    configured,
+    async () => {},
+    1,
+  );
+  await reconcileWatchLaterAccount(
+    database({
+      async getDesiredWatchLaterSet() {
+        return { aids: [1n], overflow: false };
+      },
+    }),
+    account([snapshot([])], [90001]),
+    configured,
+    async () => {},
+    1,
+  );
+  await reconcileWatchLaterAccount(
+    database({
+      async getDesiredWatchLaterSet() {
+        return { aids: [], overflow: true };
+      },
+    }),
+    account([snapshot([])]),
+    configured,
+    async () => {},
+    1,
+  );
+
+  assert.deepEqual((await watchLaterEnabledAccounts.get()).values, [
+    { labels: { state: "healthy" }, value: 1 },
+    { labels: { state: "unavailable" }, value: 1 },
+  ]);
+  assert.deepEqual((await watchLaterCapacity.get()).values, [
+    { labels: { pool: "total" }, value: 2 },
+    { labels: { pool: "priority" }, value: 1 },
+    { labels: { pool: "newest" }, value: 1 },
+  ]);
+  assert.deepEqual((await watchLaterAccountSlotItems.get()).values, [
+    { labels: { account_slot: "0", kind: "assigned" }, value: 1 },
+    { labels: { account_slot: "0", kind: "observed" }, value: 0 },
+  ]);
+  assert.deepEqual(
+    (await watchLaterMutationsTotal.get()).values.sort((left, right) =>
+      JSON.stringify(left.labels).localeCompare(JSON.stringify(right.labels)),
+    ),
+    [
+      { labels: { action: "add", outcome: "ambiguous" }, value: 1 },
+      { labels: { action: "add", outcome: "capacity_blocked" }, value: 1 },
+      { labels: { action: "add", outcome: "failed" }, value: 1 },
+      { labels: { action: "add", outcome: "succeeded" }, value: 2 },
+    ],
+  );
+  assert.deepEqual((await watchLaterReconciliationsTotal.get()).values, [
+    { labels: { outcome: "completed" }, value: 5 },
+    { labels: { outcome: "snapshot_invalid" }, value: 1 },
+    { labels: { outcome: "desired_overflow" }, value: 1 },
+  ]);
 });
