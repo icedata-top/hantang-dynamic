@@ -6,7 +6,10 @@ import {
 } from "../services/minute/watchLaterReconciliation";
 
 async function main(): Promise<void> {
-  const maxPriorityExclusive = Number(process.argv[2] ?? 30);
+  const priorityArgument = process.argv
+    .slice(2)
+    .find((value) => value !== "--");
+  const maxPriorityExclusive = Number(priorityArgument ?? 30);
   if (
     !Number.isInteger(maxPriorityExclusive) ||
     maxPriorityExclusive <= 1 ||
