@@ -383,9 +383,8 @@ export async function runWatchLaterEmpiricalAddTest(
   }
 
   let preSnapshot = initialSnapshot;
-  const eligibleAids = await database.getWatchLaterEligibleAids(
-    maxPriorityExclusive,
-  );
+  const eligibleAids =
+    await database.getWatchLaterEligibleAids(maxPriorityExclusive);
   const missingAids = eligibleAids.filter(
     (aid) => !initialSnapshot.aids.has(aid.toString()),
   );

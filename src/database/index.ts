@@ -619,10 +619,7 @@ export class Database {
   public async getWatchLaterEligibleAids(
     maxPriorityExclusive: number,
   ): Promise<bigint[]> {
-    return getWatchLaterEligibleAids(
-      this.ensurePool(),
-      maxPriorityExclusive,
-    );
+    return getWatchLaterEligibleAids(this.ensurePool(), maxPriorityExclusive);
   }
 
   public async withWatchLaterAccountLease<T>(
