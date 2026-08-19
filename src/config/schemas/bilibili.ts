@@ -1,9 +1,15 @@
 import { z } from "zod";
 
-const cookieFileSchema = z.object({
-  path: z.string().min(1),
-  enableWatchLater: z.boolean().default(false),
-});
+const cookieFileSchema = z
+  .object({
+    path: z.string().min(1),
+    enable_watch_later: z.boolean().default(false),
+  })
+  .strict()
+  .transform(({ path, enable_watch_later }) => ({
+    path,
+    enableWatchLater: enable_watch_later,
+  }));
 
 // Base schema without refinement for inference
 const bilibiliBaseSchema = z.object({
@@ -51,21 +57,9 @@ export function createBilibiliConfig(
     "BILIBILI_COOKIE_FILES",
   );
 
-  let cookieFiles: Array<{ path: string; enableWatchLater: boolean }> = [];
+  let cookieFiles: unknown[] = [];
   if (Array.isArray(multipleCookieFilesRaw)) {
-    cookieFiles = multipleCookieFilesRaw.map((cookieFile) => {
-      if (!cookieFile || typeof cookieFile !== "object") return cookieFile;
-      const values = cookieFile as {
-        path?: unknown;
-        enable_watch_later?: unknown;
-        enableWatchLater?: unknown;
-      };
-      return {
-        path: values.path,
-        enableWatchLater:
-          values.enable_watch_later ?? values.enableWatchLater ?? false,
-      };
-    });
+    cookieFiles = multipleCookieFilesRaw;
   } else if (
     typeof multipleCookieFilesRaw === "string" &&
     multipleCookieFilesRaw
@@ -75,7 +69,7 @@ export function createBilibiliConfig(
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean)
-      .map((path) => ({ path, enableWatchLater: false }));
+      .map((path) => ({ path }));
   } else {
     // Fallback to single cookie_file
     const singleCookieFile = getConfigValue(
@@ -83,11 +77,11 @@ export function createBilibiliConfig(
       "BILIBILI_COOKIE_FILE",
     );
     if (singleCookieFile) {
-      cookieFiles = [{ path: singleCookieFile, enableWatchLater: false }];
+      cookieFiles = [{ path: singleCookieFile }];
     }
   }
 
-  return bilibiliBaseSchema.parse({
+  const parsed = bilibiliBaseSchema.parse({
     uid: getConfigValue(["bilibili", "uid"], "BILIBILI_UID"),
     sessdata: getConfigValue(["bilibili", "sessdata"], "SESSDATA"),
     csrfToken: getConfigValue(["bilibili", "csrf_token"], "BILI_JCT"),
@@ -104,7 +98,7 @@ export function createBilibiliConfig(
       ["bilibili", "watch_later_test_account_id"],
       "BILIBILI_WATCH_LATER_TEST_ACCOUNT_ID",
     ),
-    cookieFile: cookieFiles[0]?.path,
     cookieFiles,
   });
+  return { ...parsed, cookieFile: parsed.cookieFiles[0]?.path };
 }
