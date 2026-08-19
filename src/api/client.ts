@@ -26,6 +26,7 @@ import { generateBiliTicket } from "./signatures/biliTicket";
 import { buildSignedQuery } from "./signatures/wbiSignature";
 
 export interface RequestConfig extends InternalAxiosRequestConfig {
+  noRetry?: boolean;
   metadata?: {
     startTime: number;
     silent?: boolean;
@@ -406,7 +407,10 @@ function createClient(
         });
       }
 
-      if (!error.response || error.response.status === 524) {
+      if (
+        !errorConfig?.noRetry &&
+        (!error.response || error.response.status === 524)
+      ) {
         recordApiRequest(baseURL, errorConfig?.url, "retry", durationMs);
         return retryDelay(
           () => client(error.config),

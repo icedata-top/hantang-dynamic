@@ -1,8 +1,19 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 import { CookieJar } from "tough-cookie";
+import {
+  createAccountToViewClient,
+  type RequestConfig,
+} from "../../api/client";
+import { config } from "../../config";
+import { StateManager } from "../../core/state";
 import type { WatchLaterAccount } from "../../database/watchLater";
-import type { WatchLaterAccountContext } from "./watchLaterApi";
+import {
+  mutateWatchLater,
+  type WatchLaterAccountContext,
+} from "./watchLaterApi";
 import {
   reconcileWatchLaterAccount,
   runAutomaticWatchLaterManagement,
@@ -261,6 +272,95 @@ test("empirical add test stops on an add request failure", async () => {
   );
   assert.equal(result.reason, "request_failed");
   assert.equal(result.added, 1);
+});
+
+test("Watch Later transport failures dispatch each mutation once", async () => {
+  const directory = mkdtempSync("/tmp/hantang-watch-later-");
+  const cookieJar = new CookieJar();
+  cookieJar.setCookieSync("bili_jct=test", "https://www.bilibili.com/");
+  const stateManager = new StateManager(join(directory, "state.json"));
+  stateManager.updateTicket("test", Math.floor(Date.now() / 1000) + 7_200);
+  stateManager.updateWbiKeys(
+    "test",
+    "test",
+    Math.floor(Date.now() / 1000) + 7_200,
+  );
+  const client = createAccountToViewClient(
+    cookieJar,
+    join(directory, "cookies.txt"),
+    stateManager,
+  );
+  const dispatches = { add: 0, del: 0, retryingGet: 0 };
+  client.defaults.adapter = async (request) => {
+    if (request.url === "/retry") {
+      dispatches.retryingGet += 1;
+      if (dispatches.retryingGet === 1) {
+        const error = new Error("connection lost") as Error & {
+          config: typeof request;
+        };
+        error.config = request;
+        throw error;
+      }
+      return {
+        data: { code: 0 },
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config: request,
+      };
+    }
+    if (request.method === "get") {
+      return {
+        data: snapshot([]),
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config: request,
+      };
+    }
+    assert.equal((request as RequestConfig).noRetry, true);
+    if (request.url === "/add") dispatches.add += 1;
+    if (request.url === "/del") dispatches.del += 1;
+    const error = new Error("connection lost") as Error & {
+      config: typeof request;
+    };
+    error.config = request;
+    throw error;
+  };
+  const realClientAccount: WatchLaterAccountContext = {
+    uid: "7",
+    cookieJar,
+    enableWatchLater: true,
+    toViewClient: client,
+  };
+
+  try {
+    const result = await runWatchLaterEmpiricalAddTest(
+      {
+        async getWatchLaterEligibleAids() {
+          return [2n];
+        },
+      },
+      realClientAccount,
+      async () => {},
+    );
+    assert.equal(result.reason, "request_failed");
+    assert.equal(dispatches.add, 1);
+    await assert.rejects(() =>
+      mutateWatchLater(realClientAccount, 3n, "delete"),
+    );
+    assert.equal(dispatches.del, 1);
+    const originalRetryTimes = config.application.apiRetryTimes;
+    config.application.apiRetryTimes = 0;
+    try {
+      await client.get("/retry");
+    } finally {
+      config.application.apiRetryTimes = originalRetryTimes;
+    }
+    assert.equal(dispatches.retryingGet, 2);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
 });
 
 test("empirical add test reports eligible exhaustion after verifying the post snapshot", async () => {

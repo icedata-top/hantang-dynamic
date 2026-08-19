@@ -9,11 +9,16 @@ interface WatchLaterResponse {
   code: number;
 }
 
+interface WatchLaterMutationRequestConfig {
+  headers: { "Content-Type": string };
+  noRetry: true;
+}
+
 export interface WatchLaterMutationClient extends ToViewClient {
   post(
     url: string,
     data: URLSearchParams,
-    config: { headers: { "Content-Type": string } },
+    config: WatchLaterMutationRequestConfig,
   ): Promise<{ data: WatchLaterResponse }>;
 }
 
@@ -96,7 +101,10 @@ export async function mutateWatchLater(
     const response = await account.toViewClient.post(
       action === "add" ? "/add" : "/del",
       body,
-      { headers: { "Content-Type": "application/x-www-form-urlencoded" } },
+      {
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        noRetry: true,
+      },
     );
     return response.data.code;
   } finally {
