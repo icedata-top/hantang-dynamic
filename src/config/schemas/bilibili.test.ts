@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createBilibiliConfig } from "./bilibili";
+import { bilibiliSchema, createBilibiliConfig } from "./bilibili";
 
 test("cookie file entries default watch-later sampling to disabled", () => {
   const configuration = createBilibiliConfig((tomlPath) => {
@@ -27,6 +27,16 @@ test("cookie file entries preserve watch-later enablement", () => {
   assert.deepEqual(configuration.cookieFiles, [
     { path: "./account.txt", enableWatchLater: true },
   ]);
+});
+
+test("normalized cookie entries pass final configuration validation", () => {
+  const configuration = createBilibiliConfig((tomlPath) => {
+    return tomlPath.join(".") === "bilibili.cookie_files"
+      ? [{ path: "./account.txt", enable_watch_later: true }]
+      : undefined;
+  });
+
+  assert.deepEqual(bilibiliSchema.parse(configuration), configuration);
 });
 
 test("cookie file entries reject camelCase and stale account-policy fields", () => {

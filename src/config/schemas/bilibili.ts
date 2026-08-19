@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const cookieFileSchema = z
+const cookieFileInputSchema = z
   .object({
     path: z.string().min(1),
     enable_watch_later: z.boolean().default(false),
@@ -10,6 +10,13 @@ const cookieFileSchema = z
     path,
     enableWatchLater: enable_watch_later,
   }));
+
+const cookieFileSchema = z
+  .object({
+    path: z.string().min(1),
+    enableWatchLater: z.boolean().default(false),
+  })
+  .strict();
 
 // Base schema without refinement for inference
 const bilibiliBaseSchema = z.object({
@@ -58,7 +65,7 @@ export function createBilibiliConfig(
 
   let cookieFiles: unknown[] = [];
   if (Array.isArray(multipleCookieFilesRaw)) {
-    cookieFiles = multipleCookieFilesRaw;
+    cookieFiles = z.array(cookieFileInputSchema).parse(multipleCookieFilesRaw);
   } else if (
     typeof multipleCookieFilesRaw === "string" &&
     multipleCookieFilesRaw
