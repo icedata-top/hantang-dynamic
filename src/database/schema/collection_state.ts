@@ -14,6 +14,25 @@ function sqlIntegerArray(values: number[]): string {
   return values.join(", ");
 }
 
+export async function repairDeletedVideoCollectionStates(
+  pool: Pool,
+): Promise<number> {
+  const result = await pool.query(`
+    UPDATE video_collection_state AS state
+    SET priority = -1,
+        next_minute_due_at = NULL,
+        updated_at = now()
+    FROM processed_videos AS video
+    WHERE state.aid = video.aid
+      AND video.is_deleted IS TRUE
+      AND (
+        state.priority IS DISTINCT FROM -1
+        OR state.next_minute_due_at IS NOT NULL
+      )
+  `);
+  return result.rowCount ?? 0;
+}
+
 export async function initCollectionStateSchema(pool: Pool): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS video_collection_state (
@@ -329,6 +348,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
             ELSE 'processed_backfill'
           END AS daily_delta_source,
           CASE
+            WHEN video.is_deleted IS TRUE THEN -1
             WHEN m.seven_day_view IS NOT NULL AND m.current_view = m.seven_day_view THEN -2
             WHEN COALESCE(m.daily_delta, 0) > 100 THEN
               fn_video_collection_priority(
@@ -348,6 +368,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           fn_video_collection_next_gate_value(m.current_view) AS next_gate_value,
           fn_video_collection_crossed_gate_value(m.previous_view, m.current_view) AS crossed_gate
         FROM measured m
+        LEFT JOIN processed_videos AS video ON video.aid = m.aid
       ),
       -- Record daily-level gate crossings.
       -- For minute-sampled videos the minute trigger usually records crossings
@@ -396,11 +417,11 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           ELSE EXCLUDED.daily_delta_source
         END,
         priority = CASE
-          WHEN video_collection_state.priority = -1 THEN -1
+          WHEN video_collection_state.priority = -1 OR EXCLUDED.priority = -1 THEN -1
           ELSE EXCLUDED.priority
         END,
         next_minute_due_at = CASE
-          WHEN video_collection_state.priority = -1 THEN NULL
+          WHEN video_collection_state.priority = -1 OR EXCLUDED.priority = -1 THEN NULL
           WHEN EXCLUDED.priority > 0
            AND (video_collection_state.next_minute_due_at IS NULL
              OR video_collection_state.priority IS DISTINCT FROM EXCLUDED.priority)
