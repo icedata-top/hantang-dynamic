@@ -75,10 +75,7 @@ export interface WatchLaterReconciliationResult {
 }
 
 export interface WatchLaterEmpiricalDatabase {
-  getWatchLaterEligibleAids(
-    excludedAids: bigint[],
-    limit: number,
-  ): Promise<bigint[]>;
+  getWatchLaterEligibleAids(): Promise<bigint[]>;
 }
 
 export interface WatchLaterEmpiricalResult {
@@ -378,14 +375,19 @@ export async function runWatchLaterEmpiricalAddTest(
   }
 
   let preSnapshot = initialSnapshot;
+  const eligibleAids = await database.getWatchLaterEligibleAids();
+  const missingAids = eligibleAids.filter(
+    (aid) => !initialSnapshot.aids.has(aid.toString()),
+  );
+  writeProgress?.(
+    `priority<30 targets: ${eligibleAids.length}, present: ${eligibleAids.length - missingAids.length}, missing: ${missingAids.length}, watch-later total: ${initialSnapshot.aids.size}\n`,
+  );
   let selectedTotal = 0;
   let addedTotal = 0;
   let delayBeforeNextMutation = false;
+  let nextMissingIndex = 0;
   for (;;) {
-    const selected = await database.getWatchLaterEligibleAids(
-      [...preSnapshot.aids].map((aid) => BigInt(aid)),
-      10,
-    );
+    const selected = missingAids.slice(nextMissingIndex, nextMissingIndex + 10);
     selectedTotal += selected.length;
     if (selected.length === 0) {
       return {
@@ -454,6 +456,7 @@ export async function runWatchLaterEmpiricalAddTest(
       };
     }
     preSnapshot = postSnapshot;
+    nextMissingIndex += selected.length;
     if (selected.length < 10) {
       return {
         reason: "eligible_exhausted",

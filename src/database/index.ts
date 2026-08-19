@@ -616,11 +616,8 @@ export class Database {
     return getWatchLaterOwnedAids(this.ensurePool(), accountId);
   }
 
-  public async getWatchLaterEligibleAids(
-    excludedAids: bigint[],
-    limit: number,
-  ): Promise<bigint[]> {
-    return getWatchLaterEligibleAids(this.ensurePool(), excludedAids, limit);
+  public async getWatchLaterEligibleAids(): Promise<bigint[]> {
+    return getWatchLaterEligibleAids(this.ensurePool());
   }
 
   public async withWatchLaterAccountLease<T>(

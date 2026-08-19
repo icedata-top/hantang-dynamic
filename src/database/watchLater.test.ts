@@ -56,9 +56,10 @@ test("empirical candidates include priority 29 and exclude priority 30", async (
       return { rows: [] };
     },
   } as Pool;
-  await getWatchLaterEligibleAids(pool, [], 10);
+  await getWatchLaterEligibleAids(pool);
   assert.match(query, /priority >= 1/);
   assert.match(query, /priority < 30/);
+  assert.doesNotMatch(query, /LIMIT/);
 });
 
 test("successful delete removes only the operation account from ownership", async () => {

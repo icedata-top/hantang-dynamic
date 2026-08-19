@@ -364,12 +364,12 @@ test("Watch Later transport failures dispatch each mutation once", async () => {
 });
 
 test("empirical add test reports eligible exhaustion after verifying the post snapshot", async () => {
-  let excludedAids: bigint[] = [];
+  let candidateQueries = 0;
   const result = await runWatchLaterEmpiricalAddTest(
     {
-      async getWatchLaterEligibleAids(excluded) {
-        excludedAids = excluded;
-        return [2n];
+      async getWatchLaterEligibleAids() {
+        candidateQueries += 1;
+        return [1n, 2n];
       },
     } satisfies WatchLaterEmpiricalDatabase,
     account(
@@ -383,7 +383,7 @@ test("empirical add test reports eligible exhaustion after verifying the post sn
   );
   assert.equal(result.reason, "eligible_exhausted");
   assert.equal(result.added, 1);
-  assert.deepEqual(excludedAids, [1n]);
+  assert.equal(candidateQueries, 1);
 });
 
 test("empirical additions settle after the final post before verification", async () => {
@@ -411,7 +411,10 @@ test("empirical additions settle after the final post before verification", asyn
   );
   assert.equal(result.added, 2);
   assert.deepEqual(delays, [1000, 3000]);
-  assert.equal(progress, "adding 1 to 2: ..\n");
+  assert.equal(
+    progress,
+    "priority<30 targets: 2, present: 0, missing: 2, watch-later total: 0\nadding 1 to 2: ..\n",
+  );
 });
 
 test("empirical run processes two full batches and reuses each post snapshot", async () => {
@@ -419,14 +422,12 @@ test("empirical run processes two full batches and reuses each post snapshot", a
   const initial = [1];
   const firstBatch = Array.from({ length: 10 }, (_, index) => index + 2);
   const secondBatch = Array.from({ length: 10 }, (_, index) => index + 12);
-  const exclusions: bigint[][] = [];
+  let candidateQueries = 0;
   const result = await runWatchLaterEmpiricalAddTest(
     {
-      async getWatchLaterEligibleAids(excluded) {
-        exclusions.push(excluded);
-        if (exclusions.length === 1) return firstBatch.map(BigInt);
-        if (exclusions.length === 2) return secondBatch.map(BigInt);
-        return [];
+      async getWatchLaterEligibleAids() {
+        candidateQueries += 1;
+        return [...firstBatch, ...secondBatch].map(BigInt);
       },
     },
     account(
@@ -453,19 +454,17 @@ test("empirical run processes two full batches and reuses each post snapshot", a
     postCount: 21,
   });
   assert.equal(getCount, 3);
-  assert.deepEqual(exclusions[1], [...initial, ...firstBatch].map(BigInt));
+  assert.equal(candidateQueries, 1);
 });
 
 test("empirical run completes a partial final batch with aggregate pacing", async () => {
   const firstBatch = Array.from({ length: 10 }, (_, index) => index + 1);
   const finalBatch = [11, 12];
   const delays: number[] = [];
-  let batch = 0;
   const result = await runWatchLaterEmpiricalAddTest(
     {
       async getWatchLaterEligibleAids() {
-        batch += 1;
-        return batch === 1 ? firstBatch.map(BigInt) : finalBatch.map(BigInt);
+        return [...firstBatch, ...finalBatch].map(BigInt);
       },
     },
     account(
