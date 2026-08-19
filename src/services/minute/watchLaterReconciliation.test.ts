@@ -223,9 +223,13 @@ test("desired Watch Later assignments cap global and per-account cardinality", (
 });
 
 test("startup health excludes invalid accounts from capacity and assignment", async () => {
+  watchLaterEnabledAccounts.reset();
+  watchLaterCapacity.reset();
+  watchLaterAccountSlotItems.reset();
   let desiredTarget = -1;
   const unavailableAccountIds: bigint[] = [];
   let assignments = new Map<bigint, readonly bigint[]>();
+  const operations: Array<{ accountId: bigint; aid: bigint }> = [];
   const healthy = account([snapshot([])]);
   const invalid = account([{ code: -101 }], [], "8");
   const result = await runAutomaticWatchLaterManagement(
@@ -234,6 +238,12 @@ test("startup health excludes invalid accounts from capacity and assignment", as
         async getDesiredWatchLaterSet(target) {
           desiredTarget = target;
           return { aids: [1n, 2n], overflow: false };
+        },
+        async getWatchLaterOwnedAids(accountId) {
+          return accountId === 8n ? [1n, 3n] : [];
+        },
+        async createWatchLaterOperation(input) {
+          operations.push({ accountId: input.accountId, aid: input.aid });
         },
       }),
       async getWatchLaterAccounts() {
@@ -252,16 +262,33 @@ test("startup health excludes invalid accounts from capacity and assignment", as
     },
   );
 
-  assert.equal(desiredTarget, 4);
+  assert.equal(desiredTarget, 2);
   assert.equal(result.length, 1);
   assert.deepEqual(unavailableAccountIds, [8n]);
+  assert.deepEqual(operations, [
+    { accountId: 7n, aid: 1n },
+    { accountId: 7n, aid: 2n },
+  ]);
   assert.deepEqual(
     assignments,
     new Map([
-      [7n, [1n]],
-      [8n, [2n]],
+      [7n, [1n, 2n]],
+      [8n, [3n]],
     ]),
   );
+  assert.deepEqual((await watchLaterEnabledAccounts.get()).values, [
+    { labels: { state: "healthy" }, value: 1 },
+    { labels: { state: "unavailable" }, value: 1 },
+  ]);
+  assert.deepEqual((await watchLaterCapacity.get()).values, [
+    { labels: { pool: "total" }, value: 2 },
+    { labels: { pool: "priority" }, value: 1 },
+    { labels: { pool: "newest" }, value: 1 },
+  ]);
+  assert.deepEqual((await watchLaterAccountSlotItems.get()).values, [
+    { labels: { account_slot: "0", kind: "assigned" }, value: 2 },
+    { labels: { account_slot: "0", kind: "observed" }, value: 0 },
+  ]);
 });
 
 test("zero injected capacity samples the remote snapshot without posting mutations", async () => {

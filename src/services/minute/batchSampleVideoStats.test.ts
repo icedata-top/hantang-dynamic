@@ -78,12 +78,12 @@ test("batch sampler requests each configured To View account and falls back only
   assert.deepEqual(samples.map((sample) => sample.aid).sort(), [1n, 2n, 3n]);
 });
 
-test("batch sampler attributes startup-unavailable fallback only to that account's assigned AIDs", async () => {
+test("batch sampler excludes healthy reassignment from startup-unavailable ownership fallback", async () => {
   const favoriteBatches: bigint[][] = [];
   const unavailableAccountIds = new Set<bigint>();
   watchLaterFallbackBatchesTotal.reset();
   watchLaterFallbackVideosTotal.reset();
-  await batchSampleVideoStats([1n, 2n, 3n], {
+  await batchSampleVideoStats([1n, 2n, 3n, 4n], {
     batchSize: 2,
     toViewAccounts: [
       {
@@ -97,7 +97,10 @@ test("batch sampler attributes startup-unavailable fallback only to that account
     ],
     watchLaterToViewAccounts: [{ accountId: 10n }],
     unavailableWatchLaterAccountIds: unavailableAccountIds,
-    desiredWatchLaterAidsByAccountId: new Map([[10n, [1n, 2n]]]),
+    desiredWatchLaterAidsByAccountId: new Map([
+      [10n, [3n]],
+      [20n, [1n, 2n]],
+    ]),
     onWatchLaterToViewAccountFailure(accountId) {
       unavailableAccountIds.add(accountId);
     },
@@ -108,13 +111,16 @@ test("batch sampler attributes startup-unavailable fallback only to that account
       },
     },
   });
-  assert.deepEqual(favoriteBatches, [[1n, 2n], [3n]]);
+  assert.deepEqual(favoriteBatches, [
+    [1n, 2n],
+    [3n, 4n],
+  ]);
   assert.deepEqual([...unavailableAccountIds], [10n]);
   assert.deepEqual((await watchLaterFallbackBatchesTotal.get()).values, [
     { labels: {}, value: 1 },
   ]);
   assert.deepEqual((await watchLaterFallbackVideosTotal.get()).values, [
-    { labels: {}, value: 2 },
+    { labels: {}, value: 1 },
   ]);
 });
 
