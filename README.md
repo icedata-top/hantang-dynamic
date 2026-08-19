@@ -88,9 +88,9 @@ cookie_file = "./.cookies.txt"  # Path to Netscape cookie file
 ```
 
 The app reads the account UID from the `DedeUserID` cookie in the file. Use
-`cookie_files` for multiple accounts. Configure `uid` only when using legacy
-direct `sessdata`, or as a fallback if a cookie file does not contain
-`DedeUserID`.
+object entries in `cookie_files` for multiple accounts and set
+`enable_watch_later = true` only for accounts that should sample To View.
+Configure `uid` only when using legacy direct `sessdata`.
 
 ### Prometheus Metrics
 

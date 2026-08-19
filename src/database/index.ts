@@ -1,5 +1,6 @@
 import { Pool } from "pg";
 import { config } from "../config/index.js";
+import { loadAccounts } from "../core/account";
 import {
   dbPoolConnections,
   dbQueryDurationSeconds,
@@ -120,10 +121,9 @@ import {
 } from "./videos.js";
 import {
   createWatchLaterOperation,
-  getConfiguredWatchLaterAccounts,
   getDesiredWatchLaterSet,
-  getEnabledWatchLaterAccounts,
   getRecoverableWatchLaterOperations,
+  getWatchLaterAccounts,
   getWatchLaterEligibleAids,
   getWatchLaterOwnedAids,
   provisionWatchLaterAccounts,
@@ -132,7 +132,6 @@ import {
   removeWatchLaterOwnershipAfterCompleteSnapshot,
   resolveWatchLaterOperation,
   type WatchLaterAccount,
-  type WatchLaterAccountConfiguration,
   type WatchLaterDesiredSet,
   type WatchLaterOperation,
   type WatchLaterOperationIntent,
@@ -205,12 +204,9 @@ export class Database {
       }
       await provisionWatchLaterAccounts(
         this.pool,
-        config.bilibili.watchLaterAccounts.map((account) => ({
-          accountId: BigInt(account.accountId),
-          capacity: account.capacity,
-          targetCount: account.targetCount,
-          remoteCapacity: account.remoteCapacity ?? null,
-        })),
+        loadAccounts()
+          .filter((account) => account.enableWatchLater)
+          .map((account) => BigInt(account.uid)),
       );
 
       logger.info("PostgreSQL initialized successfully");
@@ -598,20 +594,16 @@ export class Database {
 
   // ===== Watch-later Operations =====
 
-  public async getEnabledWatchLaterAccounts(): Promise<WatchLaterAccount[]> {
-    return getEnabledWatchLaterAccounts(this.ensurePool());
-  }
-
-  public async getConfiguredWatchLaterAccounts(
+  public async getWatchLaterAccounts(
     accountIds: bigint[],
   ): Promise<WatchLaterAccount[]> {
-    return getConfiguredWatchLaterAccounts(this.ensurePool(), accountIds);
+    return getWatchLaterAccounts(this.ensurePool(), accountIds);
   }
 
   public async provisionWatchLaterAccounts(
-    accounts: WatchLaterAccountConfiguration[],
+    accountIds: bigint[],
   ): Promise<void> {
-    return provisionWatchLaterAccounts(this.ensurePool(), accounts);
+    return provisionWatchLaterAccounts(this.ensurePool(), accountIds);
   }
 
   public async getDesiredWatchLaterSet(

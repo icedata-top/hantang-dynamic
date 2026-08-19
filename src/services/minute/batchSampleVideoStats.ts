@@ -10,9 +10,9 @@ import { logger } from "../../utils/logger";
 import { isMinuteCounter } from "./completeSample";
 import { planFavoriteFallbackBatches } from "./samplingPlan";
 import {
-  type ConfiguredToViewAccount,
-  sampleConfiguredToViewAccounts,
+  sampleWatchLaterToViewAccounts,
   type ToViewRequestAccount,
+  type WatchLaterToViewAccount,
 } from "./toview";
 
 interface BiliFavoriteResourceInfo {
@@ -92,7 +92,7 @@ export async function batchSampleVideoStats(
     batchSize?: number;
     sampledAt?: Date;
     toViewAccounts?: ToViewRequestAccount[];
-    configuredToViewAccounts?: ConfiguredToViewAccount[];
+    watchLaterToViewAccounts?: WatchLaterToViewAccount[];
     dependencies?: Partial<BatchSampleDependencies>;
   },
 ): Promise<VideoMinuteSample[]> {
@@ -101,10 +101,10 @@ export async function batchSampleVideoStats(
   const requestedAids = new Set(aids.map((aid) => aid.toString()));
   const samplesByAid = new Map<string, VideoMinuteSample>();
 
-  if (options?.toViewAccounts && options.configuredToViewAccounts) {
-    const toViewSamples = await sampleConfiguredToViewAccounts(
+  if (options?.toViewAccounts && options.watchLaterToViewAccounts) {
+    const toViewSamples = await sampleWatchLaterToViewAccounts(
       options.toViewAccounts,
-      options.configuredToViewAccounts,
+      options.watchLaterToViewAccounts,
       sampledAt,
     );
     for (const sample of toViewSamples) {

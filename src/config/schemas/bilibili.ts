@@ -1,10 +1,8 @@
 import { z } from "zod";
 
-const watchLaterAccountSchema = z.object({
-  accountId: z.string().regex(/^\d+$/),
-  capacity: z.coerce.number().int().nonnegative().default(0),
-  targetCount: z.coerce.number().int().positive().default(3000),
-  remoteCapacity: z.coerce.number().int().positive().optional(),
+const cookieFileSchema = z.object({
+  path: z.string().min(1),
+  enableWatchLater: z.boolean().default(false),
 });
 
 // Base schema without refinement for inference
@@ -16,9 +14,8 @@ const bilibiliBaseSchema = z.object({
   apiProxyUrl: z.string().optional(),
   dynamicProxyUrl: z.string().optional(),
   watchLaterTestAccountId: z.string().regex(/^\d+$/).optional(),
-  watchLaterAccounts: z.array(watchLaterAccountSchema).default([]),
-  cookieFile: z.string().optional(), // First cookie file path (backward compat alias for cookieFiles[0])
-  cookieFiles: z.array(z.string()).default([]), // All cookie file paths (canonical)
+  cookieFile: z.string().optional(), // Single-account authentication fallback
+  cookieFiles: z.array(cookieFileSchema).default([]),
 });
 
 // Bilibili authentication and API configuration
@@ -54,10 +51,21 @@ export function createBilibiliConfig(
     "BILIBILI_COOKIE_FILES",
   );
 
-  let cookieFiles: string[] = [];
+  let cookieFiles: Array<{ path: string; enableWatchLater: boolean }> = [];
   if (Array.isArray(multipleCookieFilesRaw)) {
-    // From TOML: native array
-    cookieFiles = multipleCookieFilesRaw.filter(Boolean);
+    cookieFiles = multipleCookieFilesRaw.map((cookieFile) => {
+      if (!cookieFile || typeof cookieFile !== "object") return cookieFile;
+      const values = cookieFile as {
+        path?: unknown;
+        enable_watch_later?: unknown;
+        enableWatchLater?: unknown;
+      };
+      return {
+        path: values.path,
+        enableWatchLater:
+          values.enable_watch_later ?? values.enableWatchLater ?? false,
+      };
+    });
   } else if (
     typeof multipleCookieFilesRaw === "string" &&
     multipleCookieFilesRaw
@@ -66,7 +74,8 @@ export function createBilibiliConfig(
     cookieFiles = multipleCookieFilesRaw
       .split(",")
       .map((s) => s.trim())
-      .filter(Boolean);
+      .filter(Boolean)
+      .map((path) => ({ path, enableWatchLater: false }));
   } else {
     // Fallback to single cookie_file
     const singleCookieFile = getConfigValue(
@@ -74,27 +83,9 @@ export function createBilibiliConfig(
       "BILIBILI_COOKIE_FILE",
     );
     if (singleCookieFile) {
-      cookieFiles = [singleCookieFile];
+      cookieFiles = [{ path: singleCookieFile, enableWatchLater: false }];
     }
   }
-
-  const watchLaterAccountsRaw = getConfigValue(
-    ["bilibili", "watch_later_accounts"],
-    "BILIBILI_WATCH_LATER_ACCOUNTS",
-    [],
-  );
-  const watchLaterAccounts = Array.isArray(watchLaterAccountsRaw)
-    ? watchLaterAccountsRaw.map((account) => {
-        if (!account || typeof account !== "object") return account;
-        const values = account as Record<string, unknown>;
-        return {
-          accountId: values.account_id ?? values.accountId,
-          capacity: values.capacity,
-          targetCount: values.target_count ?? values.targetCount,
-          remoteCapacity: values.remote_capacity ?? values.remoteCapacity,
-        };
-      })
-    : watchLaterAccountsRaw;
 
   return bilibiliBaseSchema.parse({
     uid: getConfigValue(["bilibili", "uid"], "BILIBILI_UID"),
@@ -113,8 +104,7 @@ export function createBilibiliConfig(
       ["bilibili", "watch_later_test_account_id"],
       "BILIBILI_WATCH_LATER_TEST_ACCOUNT_ID",
     ),
-    watchLaterAccounts,
-    cookieFile: cookieFiles[0] || undefined,
+    cookieFile: cookieFiles[0]?.path,
     cookieFiles,
   });
 }

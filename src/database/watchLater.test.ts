@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
 import {
-  getConfiguredWatchLaterAccounts,
+  getWatchLaterAccounts,
   getWatchLaterEligibleAids,
+  provisionWatchLaterAccounts,
   resolveWatchLaterOperation,
   withWatchLaterAccountLease,
 } from "./watchLater";
 
-test("configured account lookup includes accounts with zero capacity", async () => {
+test("watch-later account lookup selects only supplied account identities", async () => {
   let query = "";
   const pool = {
     async query(sql: string, values?: unknown[]) {
@@ -18,9 +19,6 @@ test("configured account lookup includes accounts with zero capacity", async () 
         rows: [
           {
             account_id: "7",
-            configured_capacity: 0,
-            target_count: 1,
-            remote_capacity: null,
             capacity_blocked_at: null,
             last_complete_snapshot_at: null,
           },
@@ -29,11 +27,25 @@ test("configured account lookup includes accounts with zero capacity", async () 
     },
   } as Pool;
 
-  const accounts = await getConfiguredWatchLaterAccounts(pool, [7n]);
+  const accounts = await getWatchLaterAccounts(pool, [7n]);
 
-  assert.equal(accounts[0]?.configuredCapacity, 0);
-  assert.doesNotMatch(query, /configured_capacity > 0/);
+  assert.equal(accounts[0]?.accountId, 7n);
+  assert.doesNotMatch(query, /configured_capacity/);
   assert.match(query, /account_id = ANY\(\$1::bigint\[\]\)/);
+});
+
+test("provisioning uses only loaded enabled account identities", async () => {
+  const values: unknown[][] = [];
+  const pool = {
+    async query(_sql: string, queryValues?: unknown[]) {
+      values.push(queryValues ?? []);
+      return { rows: [], rowCount: 1 };
+    },
+  } as Pool;
+
+  await provisionWatchLaterAccounts(pool, [7n, 8n]);
+
+  assert.deepEqual(values, [["7"], ["8"]]);
 });
 
 test("empirical candidates include priority 29 and exclude priority 30", async () => {

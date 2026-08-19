@@ -11,9 +11,6 @@ export type WatchLaterOperationResultClassification =
 
 export interface WatchLaterAccount {
   accountId: bigint;
-  configuredCapacity: number;
-  targetCount: number;
-  remoteCapacity: number | null;
   capacityBlockedAt: Date | null;
   lastCompleteSnapshotAt: Date | null;
 }
@@ -56,9 +53,6 @@ export interface WatchLaterOperationResolution {
 
 interface WatchLaterAccountRow {
   account_id: string;
-  configured_capacity: number;
-  target_count: number;
-  remote_capacity: number | null;
   capacity_blocked_at: Date | null;
   last_complete_snapshot_at: Date | null;
 }
@@ -80,9 +74,6 @@ interface WatchLaterOperationRow {
 function mapWatchLaterAccount(row: WatchLaterAccountRow): WatchLaterAccount {
   return {
     accountId: BigInt(row.account_id),
-    configuredCapacity: row.configured_capacity,
-    targetCount: row.target_count,
-    remoteCapacity: row.remote_capacity,
     capacityBlockedAt: row.capacity_blocked_at,
     lastCompleteSnapshotAt: row.last_complete_snapshot_at,
   };
@@ -106,65 +97,27 @@ function mapWatchLaterOperation(
   };
 }
 
-export interface WatchLaterAccountConfiguration {
-  accountId: bigint;
-  capacity: number;
-  targetCount: number;
-  remoteCapacity: number | null;
-}
-
 export async function provisionWatchLaterAccounts(
   pool: Pool,
-  accounts: WatchLaterAccountConfiguration[],
+  accountIds: bigint[],
 ): Promise<void> {
-  await pool.query(
-    `UPDATE watch_later_account
-     SET configured_capacity = 0, updated_at = now()
-     WHERE NOT (account_id = ANY($1::bigint[]))`,
-    [accounts.map((account) => account.accountId.toString())],
-  );
-  for (const account of accounts) {
+  for (const accountId of accountIds) {
     await pool.query(
-      `INSERT INTO watch_later_account (
-         account_id, configured_capacity, target_count, remote_capacity
-       ) VALUES ($1, $2, $3, $4)
+      `INSERT INTO watch_later_account (account_id)
+       VALUES ($1)
        ON CONFLICT (account_id) DO UPDATE
-       SET configured_capacity = EXCLUDED.configured_capacity,
-           target_count = EXCLUDED.target_count,
-           remote_capacity = EXCLUDED.remote_capacity,
-           updated_at = now()`,
-      [
-        account.accountId.toString(),
-        account.capacity,
-        account.targetCount,
-        account.remoteCapacity,
-      ],
+       SET updated_at = now()`,
+      [accountId.toString()],
     );
   }
 }
 
-export async function getEnabledWatchLaterAccounts(
-  pool: Pool,
-): Promise<WatchLaterAccount[]> {
-  const result = await pool.query<WatchLaterAccountRow>(
-    `SELECT account_id, configured_capacity, target_count, remote_capacity,
-            capacity_blocked_at,
-            last_complete_snapshot_at
-     FROM watch_later_account
-     WHERE configured_capacity > 0
-     ORDER BY account_id ASC`,
-  );
-
-  return result.rows.map(mapWatchLaterAccount);
-}
-
-export async function getConfiguredWatchLaterAccounts(
+export async function getWatchLaterAccounts(
   pool: Pool,
   accountIds: bigint[],
 ): Promise<WatchLaterAccount[]> {
   const result = await pool.query<WatchLaterAccountRow>(
-    `SELECT account_id, configured_capacity, target_count, remote_capacity,
-            capacity_blocked_at,
+    `SELECT account_id, capacity_blocked_at,
             last_complete_snapshot_at
      FROM watch_later_account
      WHERE account_id = ANY($1::bigint[])

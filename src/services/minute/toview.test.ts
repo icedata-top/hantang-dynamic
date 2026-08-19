@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  sampleConfiguredToViewAccounts,
-  selectConfiguredToViewAccounts,
+  sampleWatchLaterToViewAccounts,
+  selectWatchLaterToViewAccounts,
   type ToViewClient,
 } from "./toview";
 
 test("To View selects only explicitly configured account IDs", () => {
-  const selected = selectConfiguredToViewAccounts(
+  const selected = selectWatchLaterToViewAccounts(
     [{ uid: "100" }, { uid: "200" }],
     [{ accountId: 200n }],
   );
@@ -28,7 +28,7 @@ test("To View fetches once per configured account", async () => {
     { uid: "200", toViewClient: client },
   ];
 
-  const samples = await sampleConfiguredToViewAccounts(
+  const samples = await sampleWatchLaterToViewAccounts(
     accounts,
     [{ accountId: 100n }, { accountId: 200n }],
     new Date(),
@@ -47,7 +47,7 @@ test("To View de-duplicates configured account IDs within a pass", async () => {
     },
   };
 
-  await sampleConfiguredToViewAccounts(
+  await sampleWatchLaterToViewAccounts(
     [{ uid: "100", toViewClient: client }],
     [{ accountId: 100n }, { accountId: 100n }],
     new Date(),
@@ -63,7 +63,7 @@ test("To View rejects an incomplete response before sampling", async () => {
     },
   };
 
-  const samples = await sampleConfiguredToViewAccounts(
+  const samples = await sampleWatchLaterToViewAccounts(
     [{ uid: "100", toViewClient: client }],
     [{ accountId: 100n }],
     new Date(),

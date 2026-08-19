@@ -5,7 +5,7 @@ import { sharedApiRateLimiter } from "../../utils/apiRateLimiter";
 import { logger } from "../../utils/logger";
 import { validateToViewResponse } from "./toviewContract";
 
-export interface ConfiguredToViewAccount {
+export interface WatchLaterToViewAccount {
   accountId: bigint;
 }
 
@@ -44,9 +44,9 @@ function accountId(account: ToViewAccountIdentity): bigint | null {
   }
 }
 
-export function selectConfiguredToViewAccounts<T extends ToViewAccountIdentity>(
+export function selectWatchLaterToViewAccounts<T extends ToViewAccountIdentity>(
   accounts: T[],
-  configuredAccounts: ConfiguredToViewAccount[],
+  selectedWatchLaterAccounts: WatchLaterToViewAccount[],
 ): T[] {
   const accountsById = new Map<bigint, T>();
   for (const account of accounts) {
@@ -55,10 +55,10 @@ export function selectConfiguredToViewAccounts<T extends ToViewAccountIdentity>(
   }
 
   const selectedIds = new Set<bigint>();
-  return configuredAccounts.flatMap((configuredAccount) => {
-    if (selectedIds.has(configuredAccount.accountId)) return [];
-    selectedIds.add(configuredAccount.accountId);
-    const account = accountsById.get(configuredAccount.accountId);
+  return selectedWatchLaterAccounts.flatMap((watchLaterAccount) => {
+    if (selectedIds.has(watchLaterAccount.accountId)) return [];
+    selectedIds.add(watchLaterAccount.accountId);
+    const account = accountsById.get(watchLaterAccount.accountId);
     return account ? [account] : [];
   });
 }
@@ -106,14 +106,14 @@ async function fetchToViewSamples(
   }
 }
 
-export async function sampleConfiguredToViewAccounts(
+export async function sampleWatchLaterToViewAccounts(
   accounts: ToViewRequestAccount[],
-  configuredAccounts: ConfiguredToViewAccount[],
+  selectedWatchLaterAccounts: WatchLaterToViewAccount[],
   sampledAt: Date,
 ): Promise<CompleteVideoMinuteTuple[]> {
-  const selectedAccounts = selectConfiguredToViewAccounts(
+  const selectedAccounts = selectWatchLaterToViewAccounts(
     accounts,
-    configuredAccounts,
+    selectedWatchLaterAccounts,
   );
   const samplesByAid = new Map<string, CompleteVideoMinuteTuple>();
 

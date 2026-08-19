@@ -20,6 +20,7 @@ export interface WatchLaterMutationClient extends ToViewClient {
 export interface WatchLaterAccountContext extends ToViewAccountIdentity {
   cookieJar: CookieJar | null;
   toViewClient: WatchLaterMutationClient;
+  enableWatchLater?: boolean;
 }
 
 export interface WatchLaterSnapshot {

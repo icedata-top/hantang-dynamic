@@ -33,12 +33,14 @@ function account(
     data?: { count: number; list: ReturnType<typeof item>[] };
   }>,
   mutationCodes: number[] = [],
+  uid = "7",
 ): WatchLaterAccountContext {
   const cookieJar = new CookieJar();
   cookieJar.setCookieSync("bili_jct=test", "https://www.bilibili.com/");
   return {
-    uid: "7",
+    uid,
     cookieJar,
+    enableWatchLater: true,
     toViewClient: {
       async get() {
         const response = responses.shift();
@@ -88,20 +90,18 @@ function database(
 
 const configured: WatchLaterAccount = {
   accountId: 7n,
-  configuredCapacity: 4,
-  targetCount: 9,
-  remoteCapacity: null,
   capacityBlockedAt: null,
   lastCompleteSnapshotAt: null,
 };
 
-test("automatic management reaches the explicitly configured account", async () => {
+test("automatic management reaches loaded enabled accounts", async () => {
   let lookedUp = false;
   const result = await runAutomaticWatchLaterManagement(
     {
       ...database(),
-      async getEnabledWatchLaterAccounts() {
+      async getWatchLaterAccounts(accountIds) {
         lookedUp = true;
+        assert.deepEqual(accountIds, [7n]);
         return [configured];
       },
     },
@@ -111,7 +111,60 @@ test("automatic management reaches the explicitly configured account", async () 
   assert.equal(lookedUp, true);
 });
 
-test("each configured account uses its own target constrained by the configured capacity", async () => {
+test("disabled authentication accounts are excluded from watch-later selection", async () => {
+  let lookedUp = false;
+  const disabledAccount = account([{ code: 0, data: { count: 0, list: [] } }]);
+  disabledAccount.enableWatchLater = false;
+  const result = await runAutomaticWatchLaterManagement(
+    {
+      ...database(),
+      async getWatchLaterAccounts(accountIds) {
+        lookedUp = true;
+        assert.deepEqual(accountIds, []);
+        return [];
+      },
+    },
+    [disabledAccount],
+  );
+  assert.equal(lookedUp, true);
+  assert.deepEqual(result, []);
+});
+
+test("enabled accounts reconcile independently with the shared injected capacity", async () => {
+  const operations: Array<{ accountId: bigint; aid: bigint }> = [];
+  let desiredCall = 0;
+  const results = await runAutomaticWatchLaterManagement(
+    {
+      ...database({
+        async getDesiredWatchLaterSet(target) {
+          assert.equal(target, 2);
+          desiredCall += 1;
+          return { aids: [BigInt(desiredCall)], overflow: false };
+        },
+        async createWatchLaterOperation(input) {
+          operations.push({ accountId: input.accountId, aid: input.aid });
+        },
+      }),
+      async getWatchLaterAccounts(accountIds) {
+        assert.deepEqual(accountIds, [7n, 8n]);
+        return [configured, { ...configured, accountId: 8n }];
+      },
+    },
+    [
+      account([{ code: 0, data: { count: 0, list: [] } }]),
+      account([{ code: 0, data: { count: 0, list: [] } }], [], "8"),
+    ],
+    2,
+  );
+
+  assert.equal(results.length, 2);
+  assert.deepEqual(operations, [
+    { accountId: 7n, aid: 1n },
+    { accountId: 8n, aid: 2n },
+  ]);
+});
+
+test("zero capacity samples the remote snapshot without posting mutations", async () => {
   let requestedTarget = -1;
   const result = await reconcileWatchLaterAccount(
     database({
@@ -124,10 +177,10 @@ test("each configured account uses its own target constrained by the configured 
     configured,
   );
   assert.equal(result.reason, "completed");
-  assert.equal(requestedTarget, 4);
+  assert.equal(requestedTarget, -1);
 });
 
-test("each account respects its recorded remote capacity", async () => {
+test("an injected positive capacity is the reconciliation target", async () => {
   let requestedTarget = -1;
   const result = await reconcileWatchLaterAccount(
     database({
@@ -137,7 +190,9 @@ test("each account respects its recorded remote capacity", async () => {
       },
     }),
     account([{ code: 0, data: { count: 0, list: [] } }]),
-    { ...configured, remoteCapacity: 2 },
+    configured,
+    async () => {},
+    2,
   );
   assert.equal(result.reason, "completed");
   assert.equal(requestedTarget, 2);
@@ -155,7 +210,9 @@ test("each account reserves capacity already used by its watch-later snapshot", 
       },
     }),
     account([{ code: 0, data: { count: 1, list: [item(1)] } }], [0]),
-    { ...configured, configuredCapacity: 2 },
+    configured,
+    async () => {},
+    2,
   );
   assert.equal(result.added, 1);
   assert.deepEqual(attemptedAids, [2n]);
@@ -238,7 +295,9 @@ test("ambiguous mutation is retained and stops further operations", async () => 
       },
     }),
     failingAccount,
-    { ...configured, configuredCapacity: 2 },
+    configured,
+    async () => {},
+    2,
   );
   assert.equal(posts, 1);
   assert.deepEqual(classifications, ["ambiguous"]);

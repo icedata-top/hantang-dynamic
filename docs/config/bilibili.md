@@ -16,15 +16,14 @@ For multiple accounts, use `cookie_files`:
 ```toml
 [bilibili]
 cookie_files = [
-  "./.cookies_account1.txt",
-  "./.cookies_account2.txt",
+  { path = "./.cookies_account1.txt", enable_watch_later = true },
+  { path = "./.cookies_account2.txt", enable_watch_later = false },
 ]
 ```
 
 When cookie files are used, the app extracts `uid` from the `DedeUserID` cookie.
-If a cookie file does not contain `DedeUserID`, the app falls back to the
-configured `uid`. Cookie-file authentication fails when neither source provides
-an account UID.
+Cookie-file authentication requires `DedeUserID`; that cookie is the account
+identity. `enable_watch_later` defaults to `false`.
 
 Legacy direct `sessdata` mode requires `uid`:
 
@@ -49,27 +48,13 @@ manual `watch-later-empirical` script. The script adds up to ten eligible items
 and verifies the snapshots, so leave this value unset unless running that
 authorized empirical check.
 
-## Watch-later minute sampling accounts
+## Watch-later minute sampling
 
-Configure normal sampling accounts explicitly. Every account in this list is
-sampled once per minute pass, including accounts with `capacity = 0`.
-`capacity` is the only mutation enablement value. It defaults to `0`, so a
-zero-capacity account remains read-only while still contributing To View
-samples. Changing `capacity` to a positive value alone enables bounded
-additions for that account. `target_count` and optional `remote_capacity` are
-independent per-account limits.
-
-```toml
-[bilibili]
-watch_later_accounts = [
-  { account_id = "12345678", capacity = 20, target_count = 20 },
-]
-```
-
-Each `account_id` must match one configured authenticated account. Startup
-creates or upgrades the required watch-later tables and provisions these rows;
-manual SQL is not required. Existing configured rows removed from this list are
-disabled by setting their capacity to `0`.
+Set `enable_watch_later = true` on a cookie-file entry to sample that loaded
+account and provision its independent watch-later state. The global production
+capacity currently equals `0`, so enabled accounts make read-only To View GET
+requests and send no mutation POSTs. Environment cookie paths remain
+authentication-only and do not enable Watch Later.
 
 ## Proxies
 
@@ -99,3 +84,7 @@ dynamic API calls.
 
 When both `cookie_files` and `cookie_file` are set, `cookie_files` is used.
 `cookie_file` is the single-account fallback.
+
+`cookie_files` previously accepted string paths. It now accepts only object
+entries with `path` and `enable_watch_later`; convert each existing path to an
+object entry during this public TOML migration.

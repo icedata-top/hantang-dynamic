@@ -3,23 +3,18 @@
 # Data flow: Input → Processing → Output
 
 [bilibili]
-watch_later_accounts = [
-  # capacity = 0 disables automatic mutations for this account.
-  # { account_id = "12345678", capacity = 20, target_count = 20 },
-]
 # Authentication: provide cookie_file / cookie_files OR sessdata (at least one required)
 #
 # Option 1 (recommended): Netscape format cookie file exported from browser
 #   - uid is extracted automatically from the DedeUserID cookie in the file
-#   - uid setting below is ignored when cookie_file / cookie_files is used
 #
 # Single account:
 cookie_file = ""               # Path to Netscape cookie file (e.g., "./.cookies.txt")
 #
 # Multiple accounts (each file = one account, tracked in parallel):
 # cookie_files = [
-#   "./.cookies_account1.txt",
-#   "./.cookies_account2.txt",
+#   { path = "./.cookies_account1.txt", enable_watch_later = true },
+#   { path = "./.cookies_account2.txt", enable_watch_later = false },
 # ]
 #
 # Option 2 (legacy): provide sessdata directly — uid is required in this case

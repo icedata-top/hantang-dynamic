@@ -47,7 +47,7 @@ test("batch sampler requests each configured To View account and falls back only
       toViewAccount("10", [1], toViewRequests),
       toViewAccount("20", [2], toViewRequests),
     ],
-    configuredToViewAccounts: [{ accountId: 10n }, { accountId: 20n }],
+    watchLaterToViewAccounts: [{ accountId: 10n }, { accountId: 20n }],
     dependencies: {
       async fetchStatsBatch(aids) {
         favoriteBatches.push(aids);
@@ -87,7 +87,7 @@ test("batch sampler conservatively falls back after an invalid To View snapshot"
         },
       },
     ],
-    configuredToViewAccounts: [{ accountId: 10n }],
+    watchLaterToViewAccounts: [{ accountId: 10n }],
     dependencies: {
       async fetchStatsBatch(aids) {
         favoriteBatches.push(aids);

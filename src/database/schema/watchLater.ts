@@ -14,27 +14,23 @@ export async function initWatchLaterSchema(pool: Pool): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS watch_later_account (
       account_id bigint PRIMARY KEY,
-      target_count integer NOT NULL DEFAULT 3000,
-      configured_capacity integer NOT NULL DEFAULT 0,
-      remote_capacity integer,
       lease_token uuid,
       lease_expires_at timestamptz,
       capacity_blocked_at timestamptz,
       last_complete_snapshot_at timestamptz,
       created_at timestamptz NOT NULL DEFAULT now(),
-      updated_at timestamptz NOT NULL DEFAULT now(),
-      CONSTRAINT chk_watch_later_account_target_count CHECK (target_count > 0),
-      CONSTRAINT chk_watch_later_account_configured_capacity CHECK (configured_capacity >= 0),
-      CONSTRAINT chk_watch_later_account_remote_capacity
-        CHECK (remote_capacity IS NULL OR remote_capacity > 0)
+      updated_at timestamptz NOT NULL DEFAULT now()
     )
   `);
 
   await pool.query(`
     ALTER TABLE watch_later_account
-    ADD COLUMN IF NOT EXISTS target_count integer NOT NULL DEFAULT 3000,
-    ADD COLUMN IF NOT EXISTS configured_capacity integer NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS remote_capacity integer,
+    DROP CONSTRAINT IF EXISTS chk_watch_later_account_target_count,
+    DROP CONSTRAINT IF EXISTS chk_watch_later_account_configured_capacity,
+    DROP CONSTRAINT IF EXISTS chk_watch_later_account_remote_capacity,
+    DROP COLUMN IF EXISTS target_count,
+    DROP COLUMN IF EXISTS configured_capacity,
+    DROP COLUMN IF EXISTS remote_capacity,
     ADD COLUMN IF NOT EXISTS lease_token uuid,
     ADD COLUMN IF NOT EXISTS lease_expires_at timestamptz,
     ADD COLUMN IF NOT EXISTS capacity_blocked_at timestamptz,

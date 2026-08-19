@@ -28,6 +28,8 @@ export interface AccountContext {
   cookieJar: CookieJar | null;
   /** Path to the cookie file this account was loaded from (null in sessdata/legacy mode) */
   cookieFilePath: string | null;
+  /** Whether this loaded cookie account participates in Watch Later sampling. */
+  enableWatchLater: boolean;
   /** Per-account state manager (state file named by uid when using cookie files) */
   stateManager: StateManager;
   /** Authenticated dynamic API client for this account */
@@ -44,17 +46,20 @@ export interface AccountContext {
 
 let _accounts: AccountContext[] | null = null;
 
-function loadCookieFileAccount(filePath: string): AccountContext | null {
+export function loadCookieFileAccount(cookieFile: {
+  path: string;
+  enableWatchLater: boolean;
+}): AccountContext | null {
+  const { path: filePath, enableWatchLater } = cookieFile;
   try {
     const cookies = parseNetscapeCookieFile(filePath);
     const jar = createCookieJarFromNetscape(cookies);
 
-    const uid =
-      getDedeUserIDFromCookieFile(filePath) ?? config.bilibili.uid ?? "";
-    if (!uid) {
+    const uid = getDedeUserIDFromCookieFile(filePath) ?? "";
+    if (!/^\d+$/.test(uid)) {
       throw new Error(
         `Cannot determine uid for cookie file: ${filePath}. ` +
-          "No DedeUserID cookie found and no uid set in config.",
+          "No numeric DedeUserID cookie found.",
       );
     }
 
@@ -99,6 +104,7 @@ function loadCookieFileAccount(filePath: string): AccountContext | null {
       uid,
       cookieJar: jar,
       cookieFilePath: filePath,
+      enableWatchLater,
       stateManager,
       dynamicClient: client,
       webInterfaceClient,
@@ -119,8 +125,7 @@ function loadCookieFileAccount(filePath: string): AccountContext | null {
  * Load all configured accounts.
  *
  * - When `cookie_files` (or `cookie_file`) is set, each file becomes one account.
- *   The uid is extracted from the `DedeUserID` cookie in the file; the `uid`
- *   setting in config is ignored.
+ *   The uid is extracted from the `DedeUserID` cookie in the file.
  * - When only `sessdata` is configured (legacy mode), a single account is created
  *   using the uid from config and the global dynamic client.
  *
@@ -133,7 +138,7 @@ export function loadAccounts(): AccountContext[] {
 
   if (cookieFiles.length > 0) {
     _accounts = cookieFiles
-      .map((filePath) => loadCookieFileAccount(filePath))
+      .map(loadCookieFileAccount)
       .filter((account): account is AccountContext => account !== null);
 
     if (_accounts.length === 0) {
@@ -149,6 +154,7 @@ export function loadAccounts(): AccountContext[] {
         uid,
         cookieJar: null,
         cookieFilePath: null,
+        enableWatchLater: false,
         stateManager: new StateManager("./state.json"),
         dynamicClient: globalDynamicClient,
         webInterfaceClient: globalWebInterfaceClient,

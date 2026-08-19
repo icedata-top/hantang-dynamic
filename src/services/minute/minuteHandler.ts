@@ -25,8 +25,7 @@ export type MinuteDatabase = Pick<
   Database,
   | "advanceFailedMinuteVideos"
   | "advanceUnchangedMinuteVideos"
-  | "getConfiguredWatchLaterAccounts"
-  | "getEnabledWatchLaterAccounts"
+  | "getWatchLaterAccounts"
   | "getDesiredWatchLaterSet"
   | "getWatchLaterOwnedAids"
   | "getRecoverableWatchLaterOperations"
@@ -197,17 +196,17 @@ export class MinuteHandler {
     const aids = due.map((d) => d.aid);
     let samples: VideoMinuteSample[] = [];
     try {
-      const configuredToViewAccounts =
-        await this.db.getConfiguredWatchLaterAccounts(
-          config.bilibili.watchLaterAccounts.map((account) =>
-            BigInt(account.accountId),
-          ),
-        );
+      const accounts = this.accounts();
+      const watchLaterToViewAccounts = await this.db.getWatchLaterAccounts(
+        accounts
+          .filter((account) => account.enableWatchLater)
+          .map((account) => BigInt(account.uid)),
+      );
       try {
         samples = await this.sampleVideoStats(aids, {
           batchSize: config.minute.batchSize,
-          toViewAccounts: this.accounts(),
-          configuredToViewAccounts,
+          toViewAccounts: accounts,
+          watchLaterToViewAccounts,
         });
       } catch (error) {
         logger.error("Minute stats batch request failed:", error);
