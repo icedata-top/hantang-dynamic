@@ -19,6 +19,7 @@ import {
   runAutomaticWatchLaterManagement,
   runWatchLaterEmpiricalAddTest,
   selectWatchLaterEmpiricalAccount,
+  WATCH_LATER_CAPACITY,
   type WatchLaterDatabase,
   type WatchLaterEmpiricalDatabase,
 } from "./watchLaterReconciliation";
@@ -150,14 +151,13 @@ test("disabled authentication accounts are excluded from watch-later selection",
 
 test("enabled accounts reconcile independently with the shared injected capacity", async () => {
   const operations: Array<{ accountId: bigint; aid: bigint }> = [];
-  let desiredCall = 0;
+  let desiredTarget = 0;
   const results = await runAutomaticWatchLaterManagement(
     {
       ...database({
         async getDesiredWatchLaterSet(target) {
-          assert.equal(target, 2);
-          desiredCall += 1;
-          return { aids: [BigInt(desiredCall)], overflow: false };
+          desiredTarget = target;
+          return { aids: [1n, 2n, 3n, 4n], overflow: false };
         },
         async createWatchLaterOperation(input) {
           operations.push({ accountId: input.accountId, aid: input.aid });
@@ -176,13 +176,40 @@ test("enabled accounts reconcile independently with the shared injected capacity
   );
 
   assert.equal(results.length, 2);
+  assert.equal(desiredTarget, 4);
   assert.deepEqual(operations, [
     { accountId: 7n, aid: 1n },
+    { accountId: 7n, aid: 3n },
     { accountId: 8n, aid: 2n },
+    { accountId: 8n, aid: 4n },
   ]);
 });
 
-test("zero capacity samples the remote snapshot without posting mutations", async () => {
+test("startup health excludes invalid accounts from capacity and assignment", async () => {
+  let desiredTarget = -1;
+  const healthy = account([snapshot([])]);
+  const invalid = account([{ code: -101 }], [], "8");
+  const result = await runAutomaticWatchLaterManagement(
+    {
+      ...database({
+        async getDesiredWatchLaterSet(target) {
+          desiredTarget = target;
+          return { aids: [1n], overflow: false };
+        },
+      }),
+      async getWatchLaterAccounts() {
+        return [configured, { ...configured, accountId: 8n }];
+      },
+    },
+    [healthy, invalid],
+    2,
+  );
+
+  assert.equal(desiredTarget, 2);
+  assert.equal(result.length, 1);
+});
+
+test("zero injected capacity samples the remote snapshot without posting mutations", async () => {
   let requestedTarget = -1;
   const result = await reconcileWatchLaterAccount(
     database({
@@ -193,9 +220,28 @@ test("zero capacity samples the remote snapshot without posting mutations", asyn
     }),
     account([{ code: 0, data: { count: 0, list: [] } }]),
     configured,
+    async () => {},
+    0,
   );
   assert.equal(result.reason, "completed");
   assert.equal(requestedTarget, -1);
+});
+
+test("default reconciliation capacity enables the measured 1000-item target", async () => {
+  let requestedTarget = -1;
+  await reconcileWatchLaterAccount(
+    database({
+      async getDesiredWatchLaterSet(target) {
+        requestedTarget = target;
+        return { aids: [], overflow: false };
+      },
+    }),
+    account([snapshot([])]),
+    configured,
+    async () => {},
+  );
+  assert.equal(WATCH_LATER_CAPACITY, 1_000);
+  assert.equal(requestedTarget, 1_000);
 });
 
 test("an injected positive capacity is the reconciliation target", async () => {
@@ -234,6 +280,32 @@ test("each account reserves capacity already used by its watch-later snapshot", 
   );
   assert.equal(result.added, 1);
   assert.deepEqual(attemptedAids, [2n]);
+});
+
+test("dedicated accounts delete unmanaged remote entries before adding at capacity", async () => {
+  const operations: Array<{ action: string; aid: bigint }> = [];
+  const result = await reconcileWatchLaterAccount(
+    database({
+      async getDesiredWatchLaterSet() {
+        return { aids: [3n], overflow: false };
+      },
+      async createWatchLaterOperation(input) {
+        operations.push({ action: input.action, aid: input.aid });
+      },
+    }),
+    account([snapshot([1, 2])], [0, 0, 0]),
+    configured,
+    async () => {},
+    2,
+  );
+
+  assert.deepEqual(operations, [
+    { action: "delete", aid: 1n },
+    { action: "delete", aid: 2n },
+    { action: "add", aid: 3n },
+  ]);
+  assert.equal(result.deleted, 2);
+  assert.equal(result.added, 1);
 });
 
 test("empirical account selection rejects zero or multiple enabled accounts", () => {
@@ -324,6 +396,34 @@ test("empirical add test skips unsupported interactive videos", async () => {
   assert.equal(posts, 3);
   assert.deepEqual(marked, [1n]);
   assert.match(progress, /HTTP 200, bili code 90002/);
+});
+
+test("empirical add stops on capacity without marking the candidate", async () => {
+  const marked: bigint[] = [];
+  const result = await runWatchLaterEmpiricalAddTest(
+    {
+      async getWatchLaterEligibleAids() {
+        return [1n];
+      },
+      async markWatchLaterEmpiricalFailedAid(aid) {
+        marked.push(aid);
+        return true;
+      },
+    },
+    account([snapshot([])], [90001]),
+    async () => {},
+  );
+
+  assert.deepEqual(result, {
+    reason: "request_failed",
+    selected: 1,
+    added: 0,
+    skipped: 0,
+    preCount: 0,
+    postCount: 0,
+    error: "bili code 90001",
+  });
+  assert.deepEqual(marked, []);
 });
 
 test("empirical add test stops after twenty consecutive failed adds", async () => {

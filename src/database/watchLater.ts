@@ -132,35 +132,53 @@ export async function getDesiredWatchLaterSet(
   pool: Pool,
   targetCount: number,
 ): Promise<WatchLaterDesiredSet> {
-  const result = await pool.query<{ aid: string; priority: number }>(
-    `WITH mandatory AS (
+  const result = await pool.query<{ aid: string }>(
+    `WITH priority_candidates AS (
        SELECT aid, priority
        FROM video_collection_state
-       WHERE priority BETWEEN 1 AND 30
-         AND NOT (-1 = ANY(watch_later_managed_account_ids))
-     ),
-     remainder AS (
-       SELECT aid, priority
-       FROM video_collection_state
-       WHERE priority > 30
+       WHERE priority > 0
          AND NOT (-1 = ANY(watch_later_managed_account_ids))
        ORDER BY priority ASC, aid ASC
-       LIMIT GREATEST($1 - (SELECT count(*) FROM mandatory), 0)
+       LIMIT ($1 * 3 / 5)
+     ),
+     rolling_candidates AS (
+       SELECT state.aid
+       FROM video_collection_state AS state
+       INNER JOIN processed_videos AS video ON video.aid = state.aid
+       WHERE state.priority >= 0
+         AND video.is_filtered = TRUE
+         AND COALESCE(video.is_deleted, FALSE) = FALSE
+         AND NOT (-1 = ANY(state.watch_later_managed_account_ids))
+         AND NOT EXISTS (
+           SELECT 1
+           FROM priority_candidates
+           WHERE priority_candidates.aid = state.aid
+         )
+       ORDER BY video.pubdate DESC NULLS LAST, video.aid DESC
+       LIMIT LEAST(
+         GREATEST($1 - (SELECT count(*) FROM priority_candidates), 0),
+         ($1 * 2 / 5)
+       )
      )
-     SELECT aid, priority
-     FROM mandatory
+     SELECT aid, 0 AS section, priority AS priority_order,
+            aid AS priority_aid_order, NULL::bigint AS pubdate_order,
+            NULL::bigint AS rolling_aid_order
+     FROM priority_candidates
      UNION ALL
-     SELECT aid, priority
-     FROM remainder
-     ORDER BY priority ASC, aid ASC`,
+     SELECT rolling_candidates.aid, 1 AS section, 0 AS priority_order,
+            NULL::bigint AS priority_aid_order, video.pubdate AS pubdate_order,
+            video.aid AS rolling_aid_order
+     FROM rolling_candidates
+     INNER JOIN processed_videos AS video ON video.aid = rolling_candidates.aid
+     ORDER BY section ASC, priority_order ASC, priority_aid_order ASC NULLS LAST,
+              pubdate_order DESC NULLS LAST, rolling_aid_order DESC NULLS LAST`,
     [targetCount],
   );
 
-  const mandatoryCount = result.rows.filter((row) => row.priority <= 30).length;
   return {
     aids: result.rows.map((row) => BigInt(row.aid)),
-    mandatoryCount,
-    overflow: mandatoryCount > targetCount,
+    mandatoryCount: result.rows.length,
+    overflow: false,
   };
 }
 
@@ -333,7 +351,7 @@ export async function resolveWatchLaterOperation(
          WHERE aid = $1`,
         [operation.aid, operation.account_id, operation.action],
       );
-      if ((ownershipResult.rowCount ?? 0) !== 1) {
+      if (operation.action === "add" && (ownershipResult.rowCount ?? 0) !== 1) {
         throw new Error(
           `Video collection state for watch-later operation ${input.operationId} does not exist`,
         );

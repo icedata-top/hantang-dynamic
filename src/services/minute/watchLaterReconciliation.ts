@@ -13,7 +13,7 @@ import {
   type WatchLaterSnapshot,
 } from "./watchLaterApi";
 
-export const WATCH_LATER_CAPACITY = 0;
+export const WATCH_LATER_CAPACITY = 1_000;
 const MAX_MUTATIONS_PER_RUN = 20;
 const MUTATION_DELAY_MS = 1_000;
 const POST_SETTLE_DELAY_MS = 3_000;
@@ -21,6 +21,11 @@ const CAPACITY_BLOCKED_CODE = 90001;
 const MAX_CONSECUTIVE_EMPIRICAL_ADD_ERRORS = 20;
 type Delay = (milliseconds: number) => Promise<void>;
 type ProgressWriter = (text: string) => void;
+
+interface ReconciliationInput {
+  desiredAids?: bigint[];
+  snapshot?: WatchLaterSnapshot;
+}
 
 export interface WatchLaterDatabase {
   getDesiredWatchLaterSet(targetCount: number): Promise<{
@@ -121,6 +126,17 @@ function describeWatchLaterRequestError(error: unknown): string {
     message,
   ].filter((part): part is string => Boolean(part));
   return parts.length > 0 ? parts.join(", ") : "request failed";
+}
+
+function getWatchLaterRequestErrorCode(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const record = error as Record<string, unknown>;
+  const data =
+    record.data && typeof record.data === "object"
+      ? (record.data as Record<string, unknown>)
+      : undefined;
+  if (typeof data?.code === "number") return data.code;
+  return typeof record.code === "number" ? record.code : undefined;
 }
 
 export function selectWatchLaterEmpiricalAccount<
@@ -230,11 +246,13 @@ export async function reconcileWatchLaterAccount(
   watchLaterAccount: WatchLaterAccount,
   delay: Delay = sleep,
   capacity: number = WATCH_LATER_CAPACITY,
+  input: ReconciliationInput = {},
 ): Promise<WatchLaterReconciliationResult> {
   return database.withWatchLaterAccountLease(
     watchLaterAccount.accountId,
     async () => {
-      const snapshot = await fetchWatchLaterSnapshot(account.toViewClient);
+      const snapshot =
+        input.snapshot ?? (await fetchWatchLaterSnapshot(account.toViewClient));
       if (!snapshot)
         return {
           reason: "snapshot_invalid",
@@ -263,7 +281,9 @@ export async function reconcileWatchLaterAccount(
         };
       }
 
-      const desired = await database.getDesiredWatchLaterSet(capacity);
+      const desired = input.desiredAids
+        ? { aids: input.desiredAids, overflow: false }
+        : await database.getDesiredWatchLaterSet(capacity);
       if (desired.overflow) {
         await database.recordWatchLaterCompleteSnapshot(
           watchLaterAccount.accountId,
@@ -297,20 +317,22 @@ export async function reconcileWatchLaterAccount(
       let capacityBlocked = false;
       let requiresRecoverySnapshot = false;
       const runRef = randomUUID();
-      const availableSlots = Math.max(0, capacity - snapshot.aids.size);
-      const additions = desired.aids
-        .filter((aid) => !snapshot.aids.has(aid.toString()))
-        .slice(0, availableSlots);
-      const deletions = owned.filter(
-        (aid) =>
-          snapshot.aids.has(aid.toString()) && !desiredIds.has(aid.toString()),
+      const additions = desired.aids.filter(
+        (aid) => !snapshot.aids.has(aid.toString()),
       );
-      const operations: Array<{ action: WatchLaterAction; aid: bigint }> = [
-        ...additions.map((aid) => ({ action: "add" as const, aid })),
+      const deletions = [...snapshot.aids]
+        .map((aid) => BigInt(aid))
+        .filter((aid) => !desiredIds.has(aid.toString()));
+      let remainingMutations = MAX_MUTATIONS_PER_RUN;
+      let availableSlots = Math.max(0, capacity - snapshot.aids.size);
+      const operations = [
         ...deletions.map((aid) => ({ action: "delete" as const, aid })),
-      ].slice(0, MAX_MUTATIONS_PER_RUN);
+        ...additions.map((aid) => ({ action: "add" as const, aid })),
+      ];
 
       for (const operation of operations) {
+        if (remainingMutations === 0) break;
+        if (operation.action === "add" && availableSlots === 0) continue;
         const outcome = await performOperation(
           database,
           account,
@@ -320,17 +342,18 @@ export async function reconcileWatchLaterAccount(
         );
         if (outcome === "succeeded") {
           if (operation.action === "add") added += 1;
-          else deleted += 1;
+          else {
+            deleted += 1;
+            availableSlots += 1;
+          }
         }
+        remainingMutations -= 1;
         if (outcome === "capacity_blocked" || outcome === "ambiguous") {
           capacityBlocked = outcome === "capacity_blocked";
           requiresRecoverySnapshot = true;
           break;
         }
-        if (
-          outcome === "succeeded" &&
-          operation !== operations[operations.length - 1]
-        ) {
+        if (outcome === "succeeded" && remainingMutations > 0) {
           await delay(MUTATION_DELAY_MS);
         }
       }
@@ -371,20 +394,40 @@ export async function runAutomaticWatchLaterManagement(
   const provisionedAccounts = await database.getWatchLaterAccounts([
     ...accountsById.keys(),
   ]);
-  const results: WatchLaterReconciliationResult[] = [];
+  const healthyAccounts: Array<{
+    account: WatchLaterAccountContext;
+    watchLaterAccount: WatchLaterAccount;
+    snapshot: WatchLaterSnapshot;
+  }> = [];
   for (const watchLaterAccount of provisionedAccounts) {
     const account = accountsById.get(watchLaterAccount.accountId);
     if (account) {
-      results.push(
-        await reconcileWatchLaterAccount(
-          database,
-          account,
-          watchLaterAccount,
-          sleep,
-          capacity,
-        ),
-      );
+      const snapshot = await fetchWatchLaterSnapshot(account.toViewClient);
+      if (snapshot) {
+        healthyAccounts.push({ account, watchLaterAccount, snapshot });
+      }
     }
+  }
+  if (healthyAccounts.length === 0) return [];
+
+  const desired = await database.getDesiredWatchLaterSet(
+    capacity * healthyAccounts.length,
+  );
+  const results: WatchLaterReconciliationResult[] = [];
+  for (const [index, healthyAccount] of healthyAccounts.entries()) {
+    const assignedAids = desired.aids.filter(
+      (_aid, aidIndex) => aidIndex % healthyAccounts.length === index,
+    );
+    results.push(
+      await reconcileWatchLaterAccount(
+        database,
+        healthyAccount.account,
+        healthyAccount.watchLaterAccount,
+        sleep,
+        capacity,
+        { desiredAids: assignedAids, snapshot: healthyAccount.snapshot },
+      ),
+    );
   }
   return results;
 }
@@ -451,15 +494,30 @@ export async function runWatchLaterEmpiricalAddTest(
     for (const aid of selected) {
       if (delayBeforeNextMutation) await delay(MUTATION_DELAY_MS);
       let error: string | undefined;
+      let errorCode: number | undefined;
       try {
         const code = await mutateWatchLater(account, aid, "add");
         if (code !== 0) {
           error = `bili code ${code}`;
+          errorCode = code;
         }
       } catch (cause) {
         error = describeWatchLaterRequestError(cause);
+        errorCode = getWatchLaterRequestErrorCode(cause);
       }
       if (error) {
+        if (errorCode === CAPACITY_BLOCKED_CODE) {
+          writeProgress?.(`request failed: ${error}\n`);
+          return {
+            reason: "request_failed",
+            selected: selectedTotal,
+            added: addedTotal,
+            skipped: skippedTotal,
+            preCount: initialSnapshot.aids.size,
+            postCount: preSnapshot.aids.size,
+            error,
+          };
+        }
         skippedTotal += 1;
         consecutiveAddErrors += 1;
         writeProgress?.(`x\nskipped add: ${error}\n`);
