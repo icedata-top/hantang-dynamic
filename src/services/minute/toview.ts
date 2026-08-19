@@ -111,19 +111,6 @@ async function fetchToViewSamples(
   }
 }
 
-export async function sampleWatchLaterToViewAccounts(
-  accounts: ToViewRequestAccount[],
-  selectedWatchLaterAccounts: WatchLaterToViewAccount[],
-  sampledAt: Date,
-): Promise<CompleteVideoMinuteTuple[]> {
-  const result = await sampleWatchLaterToViewAccountsWithStatus(
-    accounts,
-    selectedWatchLaterAccounts,
-    sampledAt,
-  );
-  return result.samples;
-}
-
 export async function sampleWatchLaterToViewAccountsWithStatus(
   accounts: ToViewRequestAccount[],
   selectedWatchLaterAccounts: WatchLaterToViewAccount[],

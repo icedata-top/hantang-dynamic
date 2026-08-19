@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  sampleWatchLaterToViewAccounts,
+  sampleWatchLaterToViewAccountsWithStatus,
   selectWatchLaterToViewAccounts,
   type ToViewClient,
 } from "./toview";
@@ -28,13 +28,13 @@ test("To View fetches once per configured account", async () => {
     { uid: "200", toViewClient: client },
   ];
 
-  const samples = await sampleWatchLaterToViewAccounts(
+  const result = await sampleWatchLaterToViewAccountsWithStatus(
     accounts,
     [{ accountId: 100n }, { accountId: 200n }],
     new Date(),
   );
 
-  assert.deepEqual(samples, []);
+  assert.deepEqual(result, { samples: [], failedAccountIds: [] });
   assert.equal(requestCount, 2);
 });
 
@@ -47,7 +47,7 @@ test("To View de-duplicates configured account IDs within a pass", async () => {
     },
   };
 
-  await sampleWatchLaterToViewAccounts(
+  await sampleWatchLaterToViewAccountsWithStatus(
     [{ uid: "100", toViewClient: client }],
     [{ accountId: 100n }, { accountId: 100n }],
     new Date(),
@@ -63,11 +63,11 @@ test("To View rejects an incomplete response before sampling", async () => {
     },
   };
 
-  const samples = await sampleWatchLaterToViewAccounts(
+  const result = await sampleWatchLaterToViewAccountsWithStatus(
     [{ uid: "100", toViewClient: client }],
     [{ accountId: 100n }],
     new Date(),
   );
 
-  assert.deepEqual(samples, []);
+  assert.deepEqual(result, { samples: [], failedAccountIds: [100n] });
 });
