@@ -2,6 +2,7 @@ import type { AxiosInstance } from "axios";
 import { isAccountAuthError } from "../api/client";
 import { getDynamic } from "../api/dynamic";
 import { fetchVideoFullDetail } from "../api/video";
+import type { VideoIdentity } from "../database";
 import { Database } from "../database";
 import type {
   BiliDynamicCard,
@@ -95,6 +96,7 @@ export class DetailsService {
       skipCacheCheck = false,
     } = options;
 
+    const identity = this.toVideoIdentity(id);
     try {
       let bvid: string | undefined;
       let aid: number | undefined;
@@ -153,7 +155,7 @@ export class DetailsService {
       if (isAccountAuthError(error)) {
         throw error;
       }
-      return await this.handleVideoProcessingError(id, error);
+      return await this.handleVideoProcessingError(identity, error);
     }
   }
 
@@ -312,7 +314,10 @@ export class DetailsService {
         processRelated,
       });
     } catch (error) {
-      return await this.handleVideoProcessingError(id, error);
+      return await this.handleVideoProcessingError(
+        this.toVideoIdentity(id),
+        error,
+      );
     }
   }
 
@@ -321,16 +326,17 @@ export class DetailsService {
     code: number,
     message: string,
   ): Promise<{ video: null; relatedVideos: [] }> {
+    const identity = this.toVideoIdentity(id);
     if (code === 404 || code === -404) {
       return await this.handleVideoProcessingError(
-        id,
+        identity,
         new Error(`VIDEO_DELETED:${id}`),
       );
     }
 
     if ([62002, 62004, 62012].includes(code)) {
       return await this.handleVideoProcessingError(
-        id,
+        identity,
         new Error(`VIDEO_UNAVAILABLE:${id}:${code}:${message}`),
       );
     }
@@ -381,15 +387,14 @@ export class DetailsService {
   }
 
   private async handleVideoProcessingError(
-    id: string | number,
+    identity: VideoIdentity,
     error: unknown,
   ): Promise<{ video: null; relatedVideos: [] }> {
     if (error instanceof Error && error.message.startsWith("VIDEO_DELETED:")) {
-      const bvidFromError = error.message.split(":")[1] || String(id);
       logger.debug(
-        `Video ${bvidFromError} has been deleted, marking as processed`,
+        `Video ${this.videoIdentityLabel(identity)} has been deleted, marking as processed`,
       );
-      await this.markVideoDeletedAndDisableCollectionState(bvidFromError);
+      await this.db.markVideoDeleted(identity);
       return { video: null, relatedVideos: [] };
     }
 
@@ -398,13 +403,12 @@ export class DetailsService {
       error.message.startsWith("VIDEO_UNAVAILABLE:")
     ) {
       const parts = error.message.split(":");
-      const bvidFromError = parts[1] || String(id);
       const apiCode = Number(parts[2]);
       const apiMessage = parts.slice(3).join(":") || "";
       logger.debug(
-        `Video ${bvidFromError} unavailable (code ${apiCode}: ${apiMessage}), marking as deleted`,
+        `Video ${this.videoIdentityLabel(identity)} unavailable (code ${apiCode}: ${apiMessage}), marking as deleted`,
       );
-      await this.markVideoDeletedAndDisableCollectionState(bvidFromError, {
+      await this.db.markVideoDeleted(identity, {
         api_code: apiCode,
         api_message: apiMessage,
       });
@@ -414,12 +418,24 @@ export class DetailsService {
     throw error;
   }
 
-  private async markVideoDeletedAndDisableCollectionState(
-    bvid: string,
-    notes?: { api_code?: number; api_message?: string },
-  ): Promise<void> {
-    const aid = await this.db.markVideoDeleted(bvid, notes);
-    await this.db.disableDeletedVideoCollectionState(aid);
+  private toVideoIdentity(id: string | number): VideoIdentity {
+    if (typeof id === "number") {
+      return { type: "aid", aid: BigInt(id) };
+    }
+    if (id.startsWith("BV")) {
+      return { type: "bvid", bvid: id };
+    }
+    if (id.toLowerCase().startsWith("av")) {
+      return { type: "aid", aid: BigInt(id.substring(2)) };
+    }
+    if (!Number.isNaN(Number(id))) {
+      return { type: "aid", aid: BigInt(id) };
+    }
+    return { type: "bvid", bvid: id };
+  }
+
+  private videoIdentityLabel(identity: VideoIdentity): string {
+    return identity.type === "aid" ? identity.aid.toString() : identity.bvid;
   }
 
   private async fetchVideoDetails(

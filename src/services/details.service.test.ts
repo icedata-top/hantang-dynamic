@@ -65,48 +65,65 @@ test("newly processed eligible videos upsert collection state after persistence"
   }
 });
 
-test("authoritative deleted and unavailable detail results disable active minute collection", async () => {
+test("authoritative detail results carry BVID and AID identities to terminal persistence", async () => {
   const database = Database.getInstance();
   const originalMarkVideoDeleted = database.markVideoDeleted;
-  const calls: string[] = [];
-  database.markVideoDeleted = async (bvid) => {
-    calls.push(`deleted:${bvid}`);
+  const identities: unknown[] = [];
+  database.markVideoDeleted = async (identity) => {
+    identities.push(identity);
     return 42n;
   };
-  Reflect.set(
-    database,
-    "disableDeletedVideoCollectionState",
-    async (aid: bigint) => {
-      calls.push(`disabled:${aid}`);
-    },
-  );
 
   try {
     const service = new DetailsService();
-    for (const [code, expectedBvid] of [
-      [404, "BV1deleted"],
-      [-404, "BV1negativeDeleted"],
-      [62002, "BV1invisible"],
-      [62004, "BV1review"],
-      [62012, "BV1private"],
-    ] as const) {
-      await service.processVideoApiCode(expectedBvid, code, "unavailable");
+    const authoritativeCodes = [404, -404, 62002, 62004, 62012];
+    for (const code of authoritativeCodes) {
+      await service.processVideoApiCode(
+        "BV1authoritative",
+        code,
+        "unavailable",
+      );
+      await service.processVideoApiCode(
+        113_646_663_373_638,
+        code,
+        "unavailable",
+      );
     }
 
-    assert.deepEqual(calls, [
-      "deleted:BV1deleted",
-      "disabled:42",
-      "deleted:BV1negativeDeleted",
-      "disabled:42",
-      "deleted:BV1invisible",
-      "disabled:42",
-      "deleted:BV1review",
-      "disabled:42",
-      "deleted:BV1private",
-      "disabled:42",
+    assert.deepEqual(identities, [
+      { type: "bvid", bvid: "BV1authoritative" },
+      { type: "aid", aid: 113_646_663_373_638n },
+      { type: "bvid", bvid: "BV1authoritative" },
+      { type: "aid", aid: 113_646_663_373_638n },
+      { type: "bvid", bvid: "BV1authoritative" },
+      { type: "aid", aid: 113_646_663_373_638n },
+      { type: "bvid", bvid: "BV1authoritative" },
+      { type: "aid", aid: 113_646_663_373_638n },
+      { type: "bvid", bvid: "BV1authoritative" },
+      { type: "aid", aid: 113_646_663_373_638n },
     ]);
   } finally {
     database.markVideoDeleted = originalMarkVideoDeleted;
-    Reflect.deleteProperty(database, "disableDeletedVideoCollectionState");
+  }
+});
+
+test("non-authoritative API codes do not enter terminal persistence", async () => {
+  const database = Database.getInstance();
+  const originalMarkVideoDeleted = database.markVideoDeleted;
+  let markedDeleted = false;
+  database.markVideoDeleted = async () => {
+    markedDeleted = true;
+    return 42n;
+  };
+
+  try {
+    const service = new DetailsService();
+    await assert.rejects(
+      service.processVideoApiCode("BV1transient", -412, "risk control"),
+      /API Error: code -412/,
+    );
+    assert.equal(markedDeleted, false);
+  } finally {
+    database.markVideoDeleted = originalMarkVideoDeleted;
   }
 });

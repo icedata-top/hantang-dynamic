@@ -103,22 +103,6 @@ export async function upsertCollectionStateFromProcessedVideo(
   return String(result.rows[0]?.result ?? "unknown");
 }
 
-export async function disableDeletedVideoCollectionState(
-  pool: Pool,
-  aid: bigint,
-): Promise<boolean> {
-  const result = await pool.query(
-    `UPDATE video_collection_state
-     SET priority = 0,
-         next_minute_due_at = NULL,
-         updated_at = NOW()
-     WHERE aid = $1::bigint
-       AND priority > 0`,
-    [aid.toString()],
-  );
-  return result.rowCount === 1;
-}
-
 export async function getNextMinuteDueAt(pool: Pool): Promise<Date | null> {
   const result = await pool.query("SELECT fn_next_minute_due_at() AS due");
   const due = result.rows[0]?.due;

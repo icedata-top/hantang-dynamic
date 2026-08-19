@@ -1,4 +1,4 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type { VideoSnapshot } from "../types/models/database.js";
 import type { VideoData } from "../types/models/video.js";
 
@@ -6,6 +6,15 @@ export interface BvidListQuery {
   where?: string;
   params?: unknown[];
   limit?: number;
+}
+
+export type VideoIdentity =
+  | { type: "aid"; aid: bigint }
+  | { type: "bvid"; bvid: string };
+
+export interface VideoDeletionNotes {
+  api_code?: number;
+  api_message?: string;
 }
 
 /**
@@ -168,19 +177,25 @@ export async function getProcessedVideos(
   }));
 }
 
-/**
- * Mark a video as deleted, preserving existing fields if the row already exists.
- * Sets aid to the value computed from bvid.
- * Note: if stale aid collisions exist, run `--repair --fix-aids` first.
- */
-export async function markVideoDeleted(
-  pool: Pool,
-  bvid: string,
-  notes?: { api_code?: number; api_message?: string },
-): Promise<bigint> {
-  const notesJson = notes ? JSON.stringify(notes) : null;
+function deletedVideoInsert(
+  client: PoolClient,
+  identity: VideoIdentity,
+  notesJson: string | null,
+) {
+  if (identity.type === "aid") {
+    return client.query<{ aid: string }>(
+      `INSERT INTO processed_videos (aid, bvid, is_filtered, is_deleted, notes)
+       VALUES ($1::bigint, av2bv($1::bigint), false, true, $2)
+       ON CONFLICT (aid) DO UPDATE SET
+         is_deleted = true,
+         notes = EXCLUDED.notes,
+         updated_at = NOW()
+       RETURNING aid`,
+      [identity.aid.toString(), notesJson],
+    );
+  }
 
-  const result = await pool.query<{ aid: string }>(
+  return client.query<{ aid: string }>(
     `INSERT INTO processed_videos (aid, bvid, is_filtered, is_deleted, notes)
      VALUES (bv2av($1), $1, false, true, $2)
      ON CONFLICT (bvid) DO UPDATE SET
@@ -189,10 +204,41 @@ export async function markVideoDeleted(
        notes = EXCLUDED.notes,
        updated_at = NOW()
      RETURNING aid`,
-    [bvid, notesJson],
+    [identity.bvid, notesJson],
   );
+}
 
-  return BigInt(result.rows[0].aid);
+/**
+ * Mark an authoritatively unavailable video as deleted and terminally disable
+ * any existing collection state in the same transaction.
+ */
+export async function markVideoDeleted(
+  pool: Pool,
+  identity: VideoIdentity,
+  notes?: VideoDeletionNotes,
+): Promise<bigint> {
+  const notesJson = notes ? JSON.stringify(notes) : null;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await deletedVideoInsert(client, identity, notesJson);
+    const aid = BigInt(result.rows[0].aid);
+    await client.query(
+      `UPDATE video_collection_state
+       SET priority = -1,
+           next_minute_due_at = NULL,
+           updated_at = NOW()
+       WHERE aid = $1::bigint`,
+      [aid.toString()],
+    );
+    await client.query("COMMIT");
+    return aid;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /**

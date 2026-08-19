@@ -29,7 +29,11 @@ import type {
 import type { VideoData } from "../types/models/video.js";
 import { logger } from "../utils/logger.js";
 
-export type { BvidListQuery } from "./videos.js";
+export type {
+  BvidListQuery,
+  VideoDeletionNotes,
+  VideoIdentity,
+} from "./videos.js";
 
 function quotePostgresIdentifier(identifier: string): string {
   return `"${identifier.replace(/"/g, '""')}"`;
@@ -68,7 +72,6 @@ function queryOperationLabel(query: unknown): string {
 import {
   advanceFailedMinuteVideos,
   advanceUnchangedMinuteVideos,
-  disableDeletedVideoCollectionState,
   getNextMinuteDueAt,
   refreshVideoCollectionStateFromDaily,
   selectDueMinuteVideos,
@@ -119,6 +122,8 @@ import {
   hasProcessedVideoById,
   markVideoDeleted,
   markVideoProcessed,
+  type VideoDeletionNotes,
+  type VideoIdentity,
 } from "./videos.js";
 import {
   createWatchLaterOperation,
@@ -307,10 +312,10 @@ export class Database {
    * Optionally records the API error code and message in notes.
    */
   public async markVideoDeleted(
-    bvid: string,
-    notes?: { api_code?: number; api_message?: string },
+    identity: VideoIdentity,
+    notes?: VideoDeletionNotes,
   ): Promise<bigint> {
-    return markVideoDeleted(this.ensurePool(), bvid, notes);
+    return markVideoDeleted(this.ensurePool(), identity, notes);
   }
 
   /**
@@ -551,12 +556,6 @@ export class Database {
           config.minute.processedBackfillNewVideoAgeDays,
       },
     );
-  }
-
-  public async disableDeletedVideoCollectionState(
-    aid: bigint,
-  ): Promise<boolean> {
-    return disableDeletedVideoCollectionState(this.ensurePool(), aid);
   }
 
   // ===== Queue-free minute collection =====

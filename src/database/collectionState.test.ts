@@ -1,24 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
-import { disableDeletedVideoCollectionState } from "./collectionState";
+import { initCollectionStateSchema } from "./schema/collection_state";
 
-test("deleted collection state disables only active minute scheduling", async () => {
-  let query = "";
-  let values: unknown[] | undefined;
+test("daily refresh and due selection preserve terminal deleted collection state", async () => {
+  const queries: string[] = [];
   const pool = {
-    async query(sql: string, parameters?: unknown[]) {
-      query = sql;
-      values = parameters;
-      return { rows: [], rowCount: 1 };
+    async query(sql: string) {
+      queries.push(sql);
+      return { rows: [], rowCount: 0 };
     },
   } as Pool;
 
-  const disabled = await disableDeletedVideoCollectionState(pool, 42n);
+  await initCollectionStateSchema(pool);
 
-  assert.equal(disabled, true);
-  assert.match(query, /SET priority = 0/);
-  assert.match(query, /next_minute_due_at = NULL/);
-  assert.match(query, /WHERE aid = \$1::bigint\s+AND priority > 0/);
-  assert.deepEqual(values, ["42"]);
+  const schemaSql = queries.join("\n");
+  assert.match(schemaSql, /WHEN video_collection_state\.priority = -1 THEN -1/);
+  assert.match(
+    schemaSql,
+    /WHEN video_collection_state\.priority = -1 THEN NULL/,
+  );
+  assert.match(schemaSql, /FROM video_collection_state\s+WHERE priority > 0/);
 });
