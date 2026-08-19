@@ -177,19 +177,22 @@ export async function markVideoDeleted(
   pool: Pool,
   bvid: string,
   notes?: { api_code?: number; api_message?: string },
-): Promise<void> {
+): Promise<bigint> {
   const notesJson = notes ? JSON.stringify(notes) : null;
 
-  await pool.query(
+  const result = await pool.query<{ aid: string }>(
     `INSERT INTO processed_videos (aid, bvid, is_filtered, is_deleted, notes)
      VALUES (bv2av($1), $1, false, true, $2)
      ON CONFLICT (bvid) DO UPDATE SET
        aid = bv2av(EXCLUDED.bvid),
        is_deleted = true,
        notes = EXCLUDED.notes,
-       updated_at = NOW()`,
+       updated_at = NOW()
+     RETURNING aid`,
     [bvid, notesJson],
   );
+
+  return BigInt(result.rows[0].aid);
 }
 
 /**

@@ -64,3 +64,49 @@ test("newly processed eligible videos upsert collection state after persistence"
       originalUpsertCollectionState;
   }
 });
+
+test("authoritative deleted and unavailable detail results disable active minute collection", async () => {
+  const database = Database.getInstance();
+  const originalMarkVideoDeleted = database.markVideoDeleted;
+  const calls: string[] = [];
+  database.markVideoDeleted = async (bvid) => {
+    calls.push(`deleted:${bvid}`);
+    return 42n;
+  };
+  Reflect.set(
+    database,
+    "disableDeletedVideoCollectionState",
+    async (aid: bigint) => {
+      calls.push(`disabled:${aid}`);
+    },
+  );
+
+  try {
+    const service = new DetailsService();
+    for (const [code, expectedBvid] of [
+      [404, "BV1deleted"],
+      [-404, "BV1negativeDeleted"],
+      [62002, "BV1invisible"],
+      [62004, "BV1review"],
+      [62012, "BV1private"],
+    ] as const) {
+      await service.processVideoApiCode(expectedBvid, code, "unavailable");
+    }
+
+    assert.deepEqual(calls, [
+      "deleted:BV1deleted",
+      "disabled:42",
+      "deleted:BV1negativeDeleted",
+      "disabled:42",
+      "deleted:BV1invisible",
+      "disabled:42",
+      "deleted:BV1review",
+      "disabled:42",
+      "deleted:BV1private",
+      "disabled:42",
+    ]);
+  } finally {
+    database.markVideoDeleted = originalMarkVideoDeleted;
+    Reflect.deleteProperty(database, "disableDeletedVideoCollectionState");
+  }
+});

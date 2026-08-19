@@ -68,6 +68,7 @@ function queryOperationLabel(query: unknown): string {
 import {
   advanceFailedMinuteVideos,
   advanceUnchangedMinuteVideos,
+  disableDeletedVideoCollectionState,
   getNextMinuteDueAt,
   refreshVideoCollectionStateFromDaily,
   selectDueMinuteVideos,
@@ -308,7 +309,7 @@ export class Database {
   public async markVideoDeleted(
     bvid: string,
     notes?: { api_code?: number; api_message?: string },
-  ): Promise<void> {
+  ): Promise<bigint> {
     return markVideoDeleted(this.ensurePool(), bvid, notes);
   }
 
@@ -550,6 +551,12 @@ export class Database {
           config.minute.processedBackfillNewVideoAgeDays,
       },
     );
+  }
+
+  public async disableDeletedVideoCollectionState(
+    aid: bigint,
+  ): Promise<boolean> {
+    return disableDeletedVideoCollectionState(this.ensurePool(), aid);
   }
 
   // ===== Queue-free minute collection =====

@@ -389,7 +389,7 @@ export class DetailsService {
       logger.debug(
         `Video ${bvidFromError} has been deleted, marking as processed`,
       );
-      await this.db.markVideoDeleted(bvidFromError);
+      await this.markVideoDeletedAndDisableCollectionState(bvidFromError);
       return { video: null, relatedVideos: [] };
     }
 
@@ -404,7 +404,7 @@ export class DetailsService {
       logger.debug(
         `Video ${bvidFromError} unavailable (code ${apiCode}: ${apiMessage}), marking as deleted`,
       );
-      await this.db.markVideoDeleted(bvidFromError, {
+      await this.markVideoDeletedAndDisableCollectionState(bvidFromError, {
         api_code: apiCode,
         api_message: apiMessage,
       });
@@ -412,6 +412,14 @@ export class DetailsService {
     }
 
     throw error;
+  }
+
+  private async markVideoDeletedAndDisableCollectionState(
+    bvid: string,
+    notes?: { api_code?: number; api_message?: string },
+  ): Promise<void> {
+    const aid = await this.db.markVideoDeleted(bvid, notes);
+    await this.db.disableDeletedVideoCollectionState(aid);
   }
 
   private async fetchVideoDetails(

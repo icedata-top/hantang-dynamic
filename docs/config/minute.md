@@ -9,8 +9,6 @@ enabled = false
 consumer_tick_ms = 60000
 claim_batch_size = 50
 batch_size = 50
-lock_duration_seconds = 30
-max_attempts = 5
 target_delta_per_sample = 100
 target_delta_lower = 50
 target_delta_upper = 200
@@ -57,21 +55,20 @@ Adaptive minute collection uses these tables and functions:
 
 1. `video_collection_state` stores per-video collection state, priority, and
    next due time.
-2. `fn_enqueue_video_collection_tasks()` creates due `minute` queue tasks from
-   `video_collection_state`.
-3. `video_collection_queue` stores pending, leased, completed, and abandoned
-   collection tasks.
-4. `MinuteHandler` claims queue tasks, samples video stats, inserts
-   `video_minute`, and acknowledges task IDs.
-5. The `video_minute` trigger updates `video_collection_state` after successful
+2. `MinuteHandler` selects due rows from `video_collection_state`, samples
+   video stats, and inserts `video_minute`.
+3. The `video_minute` trigger updates `video_collection_state` after successful
    inserts.
 
 `video_collection_state` is the center of scheduling state. It does not fetch
-videos by itself. Queue creation happens when the minute handler is enabled and
-ticks.
+videos by itself. Due-row selection happens when the minute handler ticks.
 
 Daily inserts also refresh state through the `video_daily` trigger. This updates
 priority and due time; it does not insert minute samples directly.
+
+When authoritative video detail handling confirms deletion or unavailability,
+an existing active row is made inactive with `priority = 0` and no next due
+time. Positive-priority minute and Watch Later selection queries exclude it.
 
 ## Fields
 
@@ -79,10 +76,8 @@ priority and due time; it does not insert minute samples directly.
 | --- | --- | --- | --- |
 | `enabled` | `MINUTE_ENABLED` | `false` | Start the minute handler. |
 | `consumer_tick_ms` | `MINUTE_CONSUMER_TICK_MS` | `60000` | Handler tick interval in milliseconds. |
-| `claim_batch_size` | `MINUTE_CLAIM_BATCH_SIZE` | `50` | Max queue tasks claimed per tick. |
+| `claim_batch_size` | `MINUTE_CLAIM_BATCH_SIZE` | `50` | Max due state rows selected per tick. |
 | `batch_size` | `MINUTE_BATCH_SIZE` | `50` | Max AIDs sampled per stats API batch. |
-| `lock_duration_seconds` | `MINUTE_LOCK_DURATION_SECONDS` | `30` | Queue lease duration. |
-| `max_attempts` | `MINUTE_MAX_ATTEMPTS` | `5` | Attempts before abandoning a task. |
 | `target_delta_per_sample` | `MINUTE_TARGET_DELTA_PER_SAMPLE` | `100` | Target view delta per sample. |
 | `target_delta_lower` | `MINUTE_TARGET_DELTA_LOWER` | `50` | Lower clamp for target delta. |
 | `target_delta_upper` | `MINUTE_TARGET_DELTA_UPPER` | `200` | Upper clamp for target delta. |
@@ -115,7 +110,7 @@ settings are not parsed from comma-separated environment strings.
 
 ## Quick checks
 
-Check whether the handler can create due queue tasks:
+Check whether the handler can select due rows:
 
 ```sql
 SELECT count(*) AS due_state_rows
@@ -123,15 +118,6 @@ FROM video_collection_state
 WHERE priority > 0
   AND next_minute_due_at IS NOT NULL
   AND next_minute_due_at <= now();
-```
-
-Check whether queue tasks exist:
-
-```sql
-SELECT task_type, status, count(*) AS rows
-FROM video_collection_queue
-GROUP BY task_type, status
-ORDER BY task_type, status;
 ```
 
 Check recent minute writes:
@@ -145,6 +131,6 @@ ORDER BY latest_minute_sample DESC
 LIMIT 50;
 ```
 
-If state rows are due but the queue stays empty, confirm that `enabled = true`
-is active in the running process and that schema initialization has installed
-the queue functions.
+If state rows are due but no minute samples are written, confirm that
+`enabled = true` is active in the running process and that schema
+initialization has installed the due-row selection function.
