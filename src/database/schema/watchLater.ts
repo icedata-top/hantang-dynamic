@@ -2,8 +2,8 @@ import type { Pool } from "pg";
 import { logger } from "../../utils/logger.js";
 
 /**
- * Upgrade the watch-later relations needed by minute sampling on every start.
- * The table and column statements deliberately precede dependent indexes.
+ * Create the watch-later relations needed by minute sampling on every start.
+ * Table creation deliberately precedes dependent indexes.
  */
 export async function initWatchLaterSchema(pool: Pool): Promise<void> {
   await pool.query(`
@@ -21,28 +21,6 @@ export async function initWatchLaterSchema(pool: Pool): Promise<void> {
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     )
-  `);
-
-  await pool.query(`
-    ALTER TABLE watch_later_account
-    DROP CONSTRAINT IF EXISTS chk_watch_later_account_target_count,
-    DROP CONSTRAINT IF EXISTS chk_watch_later_account_configured_capacity,
-    DROP CONSTRAINT IF EXISTS chk_watch_later_account_remote_capacity,
-    DROP COLUMN IF EXISTS target_count,
-    DROP COLUMN IF EXISTS configured_capacity,
-    DROP COLUMN IF EXISTS remote_capacity,
-    ADD COLUMN IF NOT EXISTS lease_token uuid,
-    ADD COLUMN IF NOT EXISTS lease_expires_at timestamptz,
-    ADD COLUMN IF NOT EXISTS capacity_blocked_at timestamptz,
-    ADD COLUMN IF NOT EXISTS last_complete_snapshot_at timestamptz,
-    ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now(),
-    ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()
-  `);
-
-  await pool.query(`
-    ALTER TABLE watch_later_account
-    DROP COLUMN IF EXISTS enabled,
-    DROP COLUMN IF EXISTS requires_complete_refetch
   `);
 
   await pool.query(`
