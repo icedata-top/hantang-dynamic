@@ -274,6 +274,33 @@ test("empirical add test stops on an add request failure", async () => {
   assert.equal(result.added, 1);
 });
 
+test("empirical add test reports the Bilibili response error", async () => {
+  const failingAccount = account([snapshot([])]);
+  failingAccount.toViewClient.post = async () => {
+    throw {
+      status: 400,
+      code: 400,
+      data: { code: -101, message: "账号未登录" },
+    };
+  };
+  let progress = "";
+  const result = await runWatchLaterEmpiricalAddTest(
+    {
+      async getWatchLaterEligibleAids() {
+        return [2n];
+      },
+    },
+    failingAccount,
+    async () => {},
+    (text) => {
+      progress += text;
+    },
+  );
+
+  assert.equal(result.error, "HTTP 400, bili code -101, 账号未登录");
+  assert.match(progress, /HTTP 400, bili code -101, 账号未登录/);
+});
+
 test("Watch Later transport failures dispatch each mutation once", async () => {
   const directory = mkdtempSync("/tmp/hantang-watch-later-");
   const cookieJar = new CookieJar();

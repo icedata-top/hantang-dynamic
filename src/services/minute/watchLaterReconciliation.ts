@@ -5,6 +5,7 @@ import type {
   WatchLaterOperation,
 } from "../../database/watchLater";
 import { sleep } from "../../utils/datetime";
+import { redactForLog } from "../../utils/redact";
 import {
   fetchWatchLaterSnapshot,
   mutateWatchLater,
@@ -89,6 +90,34 @@ export interface WatchLaterEmpiricalResult {
   added: number;
   preCount: number;
   postCount: number;
+  error?: string;
+}
+
+function describeWatchLaterRequestError(error: unknown): string {
+  if (!error || typeof error !== "object") return "request failed";
+  const record = error as Record<string, unknown>;
+  const data =
+    record.data && typeof record.data === "object"
+      ? (record.data as Record<string, unknown>)
+      : undefined;
+  const status = typeof record.status === "number" ? record.status : undefined;
+  const biliCode =
+    typeof data?.code === "number"
+      ? data.code
+      : status === undefined && typeof record.code === "number"
+        ? record.code
+        : undefined;
+  const messageValue = data?.message ?? data?.msg ?? record.message;
+  const message =
+    typeof messageValue === "string"
+      ? redactForLog(messageValue).replace(/\n/g, " ").slice(0, 300)
+      : undefined;
+  const parts = [
+    status === undefined ? undefined : `HTTP ${status}`,
+    biliCode === undefined ? undefined : `bili code ${biliCode}`,
+    message,
+  ].filter((part): part is string => Boolean(part));
+  return parts.length > 0 ? parts.join(", ") : "request failed";
 }
 
 export function selectWatchLaterEmpiricalAccount<
@@ -414,24 +443,29 @@ export async function runWatchLaterEmpiricalAddTest(
     for (const aid of selected) {
       if (delayBeforeNextMutation) await delay(MUTATION_DELAY_MS);
       try {
-        if ((await mutateWatchLater(account, aid, "add")) !== 0) {
-          writeProgress?.("\n");
+        const code = await mutateWatchLater(account, aid, "add");
+        if (code !== 0) {
+          const error = `bili code ${code}`;
+          writeProgress?.(`\nrequest failed: ${error}\n`);
           return {
             reason: "request_failed",
             selected: selectedTotal,
             added: addedTotal,
             preCount: initialSnapshot.aids.size,
             postCount: preSnapshot.aids.size,
+            error,
           };
         }
-      } catch {
-        writeProgress?.("\n");
+      } catch (cause) {
+        const error = describeWatchLaterRequestError(cause);
+        writeProgress?.(`\nrequest failed: ${error}\n`);
         return {
           reason: "request_failed",
           selected: selectedTotal,
           added: addedTotal,
           preCount: initialSnapshot.aids.size,
           postCount: preSnapshot.aids.size,
+          error,
         };
       }
       addedTotal += 1;

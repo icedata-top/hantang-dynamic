@@ -32,6 +32,7 @@ async function main(): Promise<void> {
     console.log(
       JSON.stringify({
         added: result.added,
+        error: result.error,
         postCount: result.postCount,
         preCount: result.preCount,
         reason: result.reason,

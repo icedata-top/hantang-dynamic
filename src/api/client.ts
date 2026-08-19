@@ -27,6 +27,7 @@ import { buildSignedQuery } from "./signatures/wbiSignature";
 
 export interface RequestConfig extends InternalAxiosRequestConfig {
   noRetry?: boolean;
+  rawApiErrors?: boolean;
   metadata?: {
     startTime: number;
     silent?: boolean;
@@ -323,6 +324,15 @@ function createClient(
             1000,
           )}`;
 
+        if ((response.config as RequestConfig).rawApiErrors) {
+          return Promise.reject({
+            message: `API Error: code ${response.data.code}`,
+            status: response.status,
+            code: response.data.code,
+            data: response.data,
+          });
+        }
+
         if (response.data.code === ApiErrorCode.CookieExpired) {
           if (skipCookie) {
             return Promise.reject(
@@ -421,6 +431,7 @@ function createClient(
       recordApiRequest(baseURL, errorConfig?.url, "error", durationMs);
       return Promise.reject({
         message: error.message,
+        status,
         code: error.response?.status,
         data: error.response?.data,
       });
