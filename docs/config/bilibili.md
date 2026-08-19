@@ -46,9 +46,19 @@ operations. `access_key` maps to app authentication.
 ## Watch-later minute sampling
 
 Set `enable_watch_later = true` on a cookie-file entry to sample that loaded
-account and provision its independent watch-later state. The global production
-capacity currently equals `0`, so enabled accounts make read-only To View GET
-requests and send no mutation POSTs. Environment cookie paths remain
+account and provision its independent Watch Later state. Each healthy enabled
+account contributes 1,000 slots at startup. The global target gives 60% of
+those slots to positive-priority videos, then gives the remaining 40% to the
+newest eligible processed videos. It is distributed deterministically across
+the healthy enabled accounts without assigning a video to more than one
+account.
+
+Enabled accounts are dedicated Watch Later lists. Reconciliation can delete
+non-target entries, including manually added entries, and add assigned target
+entries. If an account fails during a process, it is excluded for the rest of
+that process. Its assigned videos use the existing favorite/history fallback
+in 50-item batches. The next restart checks account health again and
+recomputes the distribution. Environment cookie paths remain
 authentication-only and do not enable Watch Later.
 
 `pnpm watch-later-empirical -- 60` is an explicitly invoked empirical mutation
@@ -58,7 +68,7 @@ It requires a database URL and exactly one successfully loaded cookie account
 with `enable_watch_later = true`. It continues through eligible videos below
 the selected priority limit in batches of ten, validates a complete snapshot
 after each batch, and prints aggregate counts only. It is not limited by the
-production capacity of `0`.
+startup Watch Later target distribution.
 
 ## Proxies
 
