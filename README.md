@@ -57,6 +57,14 @@ pnpm init-schema
 pnpm start
 ```
 
+For an authorized Watch Later empirical mutation run, configure a database URL
+and exactly one loaded cookie-file account with `enable_watch_later = true`,
+then run:
+
+```bash
+pnpm watch-later-empirical
+```
+
 `pnpm init-schema` runs database DDL. Run it during install or upgrade only.
 Normal startup and restarts do not create or alter database objects.
 

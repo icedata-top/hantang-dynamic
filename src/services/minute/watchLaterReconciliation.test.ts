@@ -7,6 +7,7 @@ import {
   reconcileWatchLaterAccount,
   runAutomaticWatchLaterManagement,
   runWatchLaterEmpiricalAddTest,
+  selectWatchLaterEmpiricalAccount,
   type WatchLaterDatabase,
   type WatchLaterEmpiricalDatabase,
 } from "./watchLaterReconciliation";
@@ -34,6 +35,7 @@ function account(
   }>,
   mutationCodes: number[] = [],
   uid = "7",
+  onGet?: () => void,
 ): WatchLaterAccountContext {
   const cookieJar = new CookieJar();
   cookieJar.setCookieSync("bili_jct=test", "https://www.bilibili.com/");
@@ -43,6 +45,7 @@ function account(
     enableWatchLater: true,
     toViewClient: {
       async get() {
+        onGet?.();
         const response = responses.shift();
         if (!response) throw new Error("missing snapshot");
         return { data: response };
@@ -52,6 +55,10 @@ function account(
       },
     },
   };
+}
+
+function snapshot(aids: number[]) {
+  return { code: 0, data: { count: aids.length, list: aids.map(item) } };
 }
 
 function database(
@@ -218,6 +225,30 @@ test("each account reserves capacity already used by its watch-later snapshot", 
   assert.deepEqual(attemptedAids, [2n]);
 });
 
+test("empirical account selection rejects zero or multiple enabled accounts", () => {
+  const disabled = account([snapshot([])]);
+  disabled.enableWatchLater = false;
+  assert.throws(
+    () => selectWatchLaterEmpiricalAccount([disabled]),
+    /found none/,
+  );
+  assert.throws(
+    () =>
+      selectWatchLaterEmpiricalAccount([
+        account([snapshot([])]),
+        account([snapshot([])], [], "8"),
+      ]),
+    /found multiple/,
+  );
+});
+
+test("empirical account selection returns the sole enabled loaded account", () => {
+  const disabled = account([snapshot([])]);
+  disabled.enableWatchLater = false;
+  const enabled = account([snapshot([])], [], "8");
+  assert.equal(selectWatchLaterEmpiricalAccount([disabled, enabled]), enabled);
+});
+
 test("empirical add test stops on an add request failure", async () => {
   const result = await runWatchLaterEmpiricalAddTest(
     {
@@ -226,6 +257,7 @@ test("empirical add test stops on an add request failure", async () => {
       },
     } satisfies WatchLaterEmpiricalDatabase,
     account([{ code: 0, data: { count: 0, list: [] } }], [0, -400]),
+    async () => {},
   );
   assert.equal(result.reason, "request_failed");
   assert.equal(result.added, 1);
@@ -274,6 +306,105 @@ test("empirical additions use the reconciliation delay between successful posts"
   );
   assert.equal(result.added, 2);
   assert.deepEqual(delays, [1000]);
+});
+
+test("empirical run processes two full batches and reuses each post snapshot", async () => {
+  let getCount = 0;
+  const initial = [1];
+  const firstBatch = Array.from({ length: 10 }, (_, index) => index + 2);
+  const secondBatch = Array.from({ length: 10 }, (_, index) => index + 12);
+  const exclusions: bigint[][] = [];
+  const result = await runWatchLaterEmpiricalAddTest(
+    {
+      async getWatchLaterEligibleAids(excluded) {
+        exclusions.push(excluded);
+        if (exclusions.length === 1) return firstBatch.map(BigInt);
+        if (exclusions.length === 2) return secondBatch.map(BigInt);
+        return [];
+      },
+    },
+    account(
+      [
+        snapshot(initial),
+        snapshot([...initial, ...firstBatch]),
+        snapshot([...initial, ...firstBatch, ...secondBatch]),
+      ],
+      [],
+      "7",
+      () => {
+        getCount += 1;
+      },
+    ),
+    async () => {},
+  );
+
+  assert.equal(result.reason, "eligible_exhausted");
+  assert.deepEqual(result, {
+    reason: "eligible_exhausted",
+    selected: 20,
+    added: 20,
+    preCount: 1,
+    postCount: 21,
+  });
+  assert.equal(getCount, 3);
+  assert.deepEqual(exclusions[1], [...initial, ...firstBatch].map(BigInt));
+});
+
+test("empirical run completes a partial final batch with aggregate pacing", async () => {
+  const firstBatch = Array.from({ length: 10 }, (_, index) => index + 1);
+  const finalBatch = [11, 12];
+  const delays: number[] = [];
+  let batch = 0;
+  const result = await runWatchLaterEmpiricalAddTest(
+    {
+      async getWatchLaterEligibleAids() {
+        batch += 1;
+        return batch === 1 ? firstBatch.map(BigInt) : finalBatch.map(BigInt);
+      },
+    },
+    account(
+      [
+        snapshot([]),
+        snapshot(firstBatch),
+        snapshot([...firstBatch, ...finalBatch]),
+      ],
+      [],
+    ),
+    async (milliseconds) => {
+      delays.push(milliseconds);
+    },
+  );
+
+  assert.deepEqual(result, {
+    reason: "eligible_exhausted",
+    selected: 12,
+    added: 12,
+    preCount: 0,
+    postCount: 12,
+  });
+  assert.deepEqual(delays, Array(11).fill(1000));
+});
+
+test("empirical run reports post-snapshot and verification failures", async () => {
+  const postSnapshotFailure = await runWatchLaterEmpiricalAddTest(
+    {
+      async getWatchLaterEligibleAids() {
+        return [1n];
+      },
+    },
+    account([snapshot([]), { code: -400 }], [0]),
+  );
+  const verificationFailure = await runWatchLaterEmpiricalAddTest(
+    {
+      async getWatchLaterEligibleAids() {
+        return [1n];
+      },
+    },
+    account([snapshot([]), snapshot([])], [0]),
+  );
+
+  assert.equal(postSnapshotFailure.reason, "post_snapshot_failed");
+  assert.equal(verificationFailure.reason, "verification_failed");
 });
 
 test("ambiguous mutation is retained and stops further operations", async () => {

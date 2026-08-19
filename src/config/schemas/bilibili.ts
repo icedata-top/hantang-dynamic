@@ -19,7 +19,6 @@ const bilibiliBaseSchema = z.object({
   accessKey: z.string().optional(),
   apiProxyUrl: z.string().optional(),
   dynamicProxyUrl: z.string().optional(),
-  watchLaterTestAccountId: z.string().regex(/^\d+$/).optional(),
   cookieFile: z.string().optional(), // Single-account authentication fallback
   cookieFiles: z.array(cookieFileSchema).default([]),
 });
@@ -93,10 +92,6 @@ export function createBilibiliConfig(
     dynamicProxyUrl: getConfigValue(
       ["bilibili", "dynamic_proxy_url"],
       "BILIBILI_DYNAMIC_PROXY_URL",
-    ),
-    watchLaterTestAccountId: getConfigValue(
-      ["bilibili", "watch_later_test_account_id"],
-      "BILIBILI_WATCH_LATER_TEST_ACCOUNT_ID",
     ),
     cookieFiles,
   });

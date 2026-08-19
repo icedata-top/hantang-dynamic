@@ -81,7 +81,6 @@ export interface WatchLaterEmpiricalDatabase {
 
 export interface WatchLaterEmpiricalResult {
   reason:
-    | "completed"
     | "eligible_exhausted"
     | "pre_snapshot_failed"
     | "request_failed"
@@ -91,6 +90,25 @@ export interface WatchLaterEmpiricalResult {
   added: number;
   preCount: number;
   postCount: number;
+}
+
+export function selectWatchLaterEmpiricalAccount<
+  T extends { enableWatchLater?: boolean },
+>(accounts: T[]): T {
+  const enabledAccounts = accounts.filter(
+    (account) => account.enableWatchLater,
+  );
+  if (enabledAccounts.length === 0) {
+    throw new Error(
+      "Empirical Watch Later run requires exactly one loaded account with enable_watch_later = true; found none.",
+    );
+  }
+  if (enabledAccounts.length > 1) {
+    throw new Error(
+      "Empirical Watch Later run requires exactly one loaded account with enable_watch_later = true; found multiple.",
+    );
+  }
+  return enabledAccounts[0];
 }
 
 function asAccountId(account: { uid: string }): bigint | null {
@@ -345,8 +363,8 @@ export async function runWatchLaterEmpiricalAddTest(
   account: WatchLaterAccountContext,
   delay: Delay = sleep,
 ): Promise<WatchLaterEmpiricalResult> {
-  const preSnapshot = await fetchWatchLaterSnapshot(account.toViewClient);
-  if (!preSnapshot) {
+  const initialSnapshot = await fetchWatchLaterSnapshot(account.toViewClient);
+  if (!initialSnapshot) {
     return {
       reason: "pre_snapshot_failed",
       selected: 0,
@@ -356,62 +374,82 @@ export async function runWatchLaterEmpiricalAddTest(
     };
   }
 
-  const selected = await database.getWatchLaterEligibleAids(
-    [...preSnapshot.aids].map((aid) => BigInt(aid)),
-    10,
-  );
-  let added = 0;
-  for (const aid of selected) {
-    try {
-      if ((await mutateWatchLater(account, aid, "add")) !== 0) {
+  let preSnapshot = initialSnapshot;
+  let selectedTotal = 0;
+  let addedTotal = 0;
+  let delayBeforeNextMutation = false;
+  for (;;) {
+    const selected = await database.getWatchLaterEligibleAids(
+      [...preSnapshot.aids].map((aid) => BigInt(aid)),
+      10,
+    );
+    selectedTotal += selected.length;
+    if (selected.length === 0) {
+      return {
+        reason: "eligible_exhausted",
+        selected: selectedTotal,
+        added: addedTotal,
+        preCount: initialSnapshot.aids.size,
+        postCount: preSnapshot.aids.size,
+      };
+    }
+
+    for (const aid of selected) {
+      if (delayBeforeNextMutation) await delay(MUTATION_DELAY_MS);
+      try {
+        if ((await mutateWatchLater(account, aid, "add")) !== 0) {
+          return {
+            reason: "request_failed",
+            selected: selectedTotal,
+            added: addedTotal,
+            preCount: initialSnapshot.aids.size,
+            postCount: preSnapshot.aids.size,
+          };
+        }
+      } catch {
         return {
           reason: "request_failed",
-          selected: selected.length,
-          added,
-          preCount: preSnapshot.aids.size,
-          postCount: 0,
+          selected: selectedTotal,
+          added: addedTotal,
+          preCount: initialSnapshot.aids.size,
+          postCount: preSnapshot.aids.size,
         };
       }
-      added += 1;
-      if (aid !== selected[selected.length - 1]) await delay(MUTATION_DELAY_MS);
-    } catch {
+      addedTotal += 1;
+      delayBeforeNextMutation = true;
+    }
+
+    const postSnapshot = await fetchWatchLaterSnapshot(account.toViewClient);
+    if (!postSnapshot) {
       return {
-        reason: "request_failed",
-        selected: selected.length,
-        added,
-        preCount: preSnapshot.aids.size,
-        postCount: 0,
+        reason: "post_snapshot_failed",
+        selected: selectedTotal,
+        added: addedTotal,
+        preCount: initialSnapshot.aids.size,
+        postCount: preSnapshot.aids.size,
+      };
+    }
+    const verified =
+      [...preSnapshot.aids].every((aid) => postSnapshot.aids.has(aid)) &&
+      selected.every((aid) => postSnapshot.aids.has(aid.toString()));
+    if (!verified) {
+      return {
+        reason: "verification_failed",
+        selected: selectedTotal,
+        added: addedTotal,
+        preCount: initialSnapshot.aids.size,
+        postCount: postSnapshot.aids.size,
+      };
+    }
+    preSnapshot = postSnapshot;
+    if (selected.length < 10) {
+      return {
+        reason: "eligible_exhausted",
+        selected: selectedTotal,
+        added: addedTotal,
+        preCount: initialSnapshot.aids.size,
+        postCount: postSnapshot.aids.size,
       };
     }
   }
-
-  const postSnapshot = await fetchWatchLaterSnapshot(account.toViewClient);
-  if (!postSnapshot) {
-    return {
-      reason: "post_snapshot_failed",
-      selected: selected.length,
-      added,
-      preCount: preSnapshot.aids.size,
-      postCount: 0,
-    };
-  }
-  const verified =
-    [...preSnapshot.aids].every((aid) => postSnapshot.aids.has(aid)) &&
-    selected.every((aid) => postSnapshot.aids.has(aid.toString()));
-  if (!verified) {
-    return {
-      reason: "verification_failed",
-      selected: selected.length,
-      added,
-      preCount: preSnapshot.aids.size,
-      postCount: postSnapshot.aids.size,
-    };
-  }
-  return {
-    reason: selected.length < 10 ? "eligible_exhausted" : "completed",
-    selected: selected.length,
-    added,
-    preCount: preSnapshot.aids.size,
-    postCount: postSnapshot.aids.size,
-  };
 }

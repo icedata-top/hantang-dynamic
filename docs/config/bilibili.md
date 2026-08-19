@@ -43,11 +43,6 @@ access_key = ""
 `csrf_token` maps to the `BILI_JCT` cookie and is needed for user relation
 operations. `access_key` maps to app authentication.
 
-`watch_later_test_account_id` selects one already authenticated account for the
-manual `watch-later-empirical` script. The script adds up to ten eligible items
-and verifies the snapshots, so leave this value unset unless running that
-authorized empirical check.
-
 ## Watch-later minute sampling
 
 Set `enable_watch_later = true` on a cookie-file entry to sample that loaded
@@ -55,6 +50,13 @@ account and provision its independent watch-later state. The global production
 capacity currently equals `0`, so enabled accounts make read-only To View GET
 requests and send no mutation POSTs. Environment cookie paths remain
 authentication-only and do not enable Watch Later.
+
+`pnpm watch-later-empirical` is an explicitly invoked empirical mutation run.
+It requires a database URL and exactly one successfully loaded cookie account
+with `enable_watch_later = true`. It continues through eligible priority 1-29
+videos in batches of ten, validates a complete snapshot after each batch, and
+prints aggregate counts only. It is not limited by the production capacity of
+`0`.
 
 ## Proxies
 
@@ -78,7 +80,6 @@ dynamic API calls.
 | `cookie_files` | `BILIBILI_COOKIE_FILES` | none |
 | `api_proxy_url` | `BILIBILI_API_PROXY_URL` | none |
 | `dynamic_proxy_url` | `BILIBILI_DYNAMIC_PROXY_URL` | none |
-| `watch_later_test_account_id` | `BILIBILI_WATCH_LATER_TEST_ACCOUNT_ID` | none |
 
 `BILIBILI_COOKIE_FILES` is a comma-separated list.
 
