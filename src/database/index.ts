@@ -126,6 +126,7 @@ import {
   getWatchLaterAccounts,
   getWatchLaterEligibleAids,
   getWatchLaterOwnedAids,
+  markWatchLaterEmpiricalFailedAid,
   provisionWatchLaterAccounts,
   recordWatchLaterCompleteSnapshot,
   recordWatchLaterOperationAttempt,
@@ -620,6 +621,10 @@ export class Database {
     maxPriorityExclusive: number,
   ): Promise<bigint[]> {
     return getWatchLaterEligibleAids(this.ensurePool(), maxPriorityExclusive);
+  }
+
+  public async markWatchLaterEmpiricalFailedAid(aid: bigint): Promise<boolean> {
+    return markWatchLaterEmpiricalFailedAid(this.ensurePool(), aid);
   }
 
   public async withWatchLaterAccountLease<T>(

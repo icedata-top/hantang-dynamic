@@ -18,6 +18,7 @@ const MAX_MUTATIONS_PER_RUN = 20;
 const MUTATION_DELAY_MS = 1_000;
 const POST_SETTLE_DELAY_MS = 3_000;
 const CAPACITY_BLOCKED_CODE = 90001;
+const MAX_CONSECUTIVE_EMPIRICAL_ADD_ERRORS = 20;
 type Delay = (milliseconds: number) => Promise<void>;
 type ProgressWriter = (text: string) => void;
 
@@ -77,6 +78,7 @@ export interface WatchLaterReconciliationResult {
 
 export interface WatchLaterEmpiricalDatabase {
   getWatchLaterEligibleAids(maxPriorityExclusive: number): Promise<bigint[]>;
+  markWatchLaterEmpiricalFailedAid?(aid: bigint): Promise<boolean>;
 }
 
 export interface WatchLaterEmpiricalResult {
@@ -88,6 +90,7 @@ export interface WatchLaterEmpiricalResult {
     | "verification_failed";
   selected: number;
   added: number;
+  skipped: number;
   preCount: number;
   postCount: number;
   error?: string;
@@ -406,6 +409,7 @@ export async function runWatchLaterEmpiricalAddTest(
       reason: "pre_snapshot_failed",
       selected: 0,
       added: 0,
+      skipped: 0,
       preCount: 0,
       postCount: 0,
     };
@@ -422,6 +426,8 @@ export async function runWatchLaterEmpiricalAddTest(
   );
   let selectedTotal = 0;
   let addedTotal = 0;
+  let skippedTotal = 0;
+  let consecutiveAddErrors = 0;
   let delayBeforeNextMutation = false;
   let nextMissingIndex = 0;
   for (;;) {
@@ -432,6 +438,7 @@ export async function runWatchLaterEmpiricalAddTest(
         reason: "eligible_exhausted",
         selected: selectedTotal,
         added: addedTotal,
+        skipped: skippedTotal,
         preCount: initialSnapshot.aids.size,
         postCount: preSnapshot.aids.size,
       };
@@ -440,35 +447,54 @@ export async function runWatchLaterEmpiricalAddTest(
     writeProgress?.(
       `adding ${addedTotal + 1} to ${addedTotal + selected.length}: `,
     );
+    const addedInBatch: bigint[] = [];
     for (const aid of selected) {
       if (delayBeforeNextMutation) await delay(MUTATION_DELAY_MS);
+      let error: string | undefined;
       try {
         const code = await mutateWatchLater(account, aid, "add");
         if (code !== 0) {
-          const error = `bili code ${code}`;
-          writeProgress?.(`\nrequest failed: ${error}\n`);
+          error = `bili code ${code}`;
+        }
+      } catch (cause) {
+        error = describeWatchLaterRequestError(cause);
+      }
+      if (error) {
+        skippedTotal += 1;
+        consecutiveAddErrors += 1;
+        writeProgress?.(`x\nskipped add: ${error}\n`);
+        const marked = await database.markWatchLaterEmpiricalFailedAid?.(aid);
+        if (!marked) {
+          const markingError = `failed to mark skipped aid after: ${error}`;
+          writeProgress?.(`request failed: ${markingError}\n`);
           return {
             reason: "request_failed",
             selected: selectedTotal,
             added: addedTotal,
+            skipped: skippedTotal,
+            preCount: initialSnapshot.aids.size,
+            postCount: preSnapshot.aids.size,
+            error: markingError,
+          };
+        }
+        if (consecutiveAddErrors === MAX_CONSECUTIVE_EMPIRICAL_ADD_ERRORS) {
+          writeProgress?.(`request failed: ${error}\n`);
+          return {
+            reason: "request_failed",
+            selected: selectedTotal,
+            added: addedTotal,
+            skipped: skippedTotal,
             preCount: initialSnapshot.aids.size,
             postCount: preSnapshot.aids.size,
             error,
           };
         }
-      } catch (cause) {
-        const error = describeWatchLaterRequestError(cause);
-        writeProgress?.(`\nrequest failed: ${error}\n`);
-        return {
-          reason: "request_failed",
-          selected: selectedTotal,
-          added: addedTotal,
-          preCount: initialSnapshot.aids.size,
-          postCount: preSnapshot.aids.size,
-          error,
-        };
+        delayBeforeNextMutation = true;
+        continue;
       }
+      consecutiveAddErrors = 0;
       addedTotal += 1;
+      addedInBatch.push(aid);
       delayBeforeNextMutation = true;
       writeProgress?.(".");
     }
@@ -482,18 +508,20 @@ export async function runWatchLaterEmpiricalAddTest(
         reason: "post_snapshot_failed",
         selected: selectedTotal,
         added: addedTotal,
+        skipped: skippedTotal,
         preCount: initialSnapshot.aids.size,
         postCount: preSnapshot.aids.size,
       };
     }
     const verified =
       [...preSnapshot.aids].every((aid) => postSnapshot.aids.has(aid)) &&
-      selected.every((aid) => postSnapshot.aids.has(aid.toString()));
+      addedInBatch.every((aid) => postSnapshot.aids.has(aid.toString()));
     if (!verified) {
       return {
         reason: "verification_failed",
         selected: selectedTotal,
         added: addedTotal,
+        skipped: skippedTotal,
         preCount: initialSnapshot.aids.size,
         postCount: postSnapshot.aids.size,
       };
@@ -505,6 +533,7 @@ export async function runWatchLaterEmpiricalAddTest(
         reason: "eligible_exhausted",
         selected: selectedTotal,
         added: addedTotal,
+        skipped: skippedTotal,
         preCount: initialSnapshot.aids.size,
         postCount: postSnapshot.aids.size,
       };

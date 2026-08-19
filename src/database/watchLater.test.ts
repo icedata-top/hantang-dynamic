@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
 import {
+  getDesiredWatchLaterSet,
   getWatchLaterAccounts,
   getWatchLaterEligibleAids,
+  markWatchLaterEmpiricalFailedAid,
   provisionWatchLaterAccounts,
   resolveWatchLaterOperation,
   withWatchLaterAccountLease,
@@ -61,8 +63,45 @@ test("empirical candidates include priority 29 and exclude priority 30", async (
   await getWatchLaterEligibleAids(pool, 30);
   assert.match(query, /priority >= 1/);
   assert.match(query, /priority < \$1/);
+  assert.match(query, /NOT \(-1 = ANY\(watch_later_managed_account_ids\)\)/);
   assert.doesNotMatch(query, /LIMIT/);
   assert.deepEqual(values, [30]);
+});
+
+test("managed Watch Later candidates exclude failed empirical adds", async () => {
+  let query = "";
+  const pool = {
+    async query(sql: string) {
+      query = sql;
+      return { rows: [] };
+    },
+  } as Pool;
+
+  await getDesiredWatchLaterSet(pool, 30);
+
+  assert.equal(
+    query.match(/NOT \(-1 = ANY\(watch_later_managed_account_ids\)\)/g)?.length,
+    2,
+  );
+});
+
+test("empirical failed candidates are marked with the global exclusion sentinel", async () => {
+  let query = "";
+  let values: unknown[] | undefined;
+  const pool = {
+    async query(sql: string, parameters?: unknown[]) {
+      query = sql;
+      values = parameters;
+      return { rows: [], rowCount: 1 };
+    },
+  } as Pool;
+
+  const marked = await markWatchLaterEmpiricalFailedAid(pool, 42n);
+
+  assert.equal(marked, true);
+  assert.match(query, /array_append\(watch_later_managed_account_ids, -1\)/);
+  assert.match(query, /WHERE aid = \$1::bigint/);
+  assert.deepEqual(values, ["42"]);
 });
 
 test("successful delete removes only the operation account from ownership", async () => {

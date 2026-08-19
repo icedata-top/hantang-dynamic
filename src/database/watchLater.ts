@@ -137,11 +137,13 @@ export async function getDesiredWatchLaterSet(
        SELECT aid, priority
        FROM video_collection_state
        WHERE priority BETWEEN 1 AND 30
+         AND NOT (-1 = ANY(watch_later_managed_account_ids))
      ),
      remainder AS (
        SELECT aid, priority
        FROM video_collection_state
        WHERE priority > 30
+         AND NOT (-1 = ANY(watch_later_managed_account_ids))
        ORDER BY priority ASC, aid ASC
        LIMIT GREATEST($1 - (SELECT count(*) FROM mandatory), 0)
      )
@@ -171,11 +173,29 @@ export async function getWatchLaterEligibleAids(
      FROM video_collection_state
      WHERE priority >= 1
        AND priority < $1
+       AND NOT (-1 = ANY(watch_later_managed_account_ids))
      ORDER BY priority ASC, aid ASC`,
     [maxPriorityExclusive],
   );
 
   return result.rows.map((row) => BigInt(row.aid));
+}
+
+export async function markWatchLaterEmpiricalFailedAid(
+  pool: Pool,
+  aid: bigint,
+): Promise<boolean> {
+  const result = await pool.query(
+    `UPDATE video_collection_state
+     SET watch_later_managed_account_ids = CASE
+       WHEN -1 = ANY(watch_later_managed_account_ids)
+         THEN watch_later_managed_account_ids
+       ELSE array_append(watch_later_managed_account_ids, -1)
+     END
+     WHERE aid = $1::bigint`,
+    [aid.toString()],
+  );
+  return result.rowCount === 1;
 }
 
 export async function getWatchLaterOwnedAids(

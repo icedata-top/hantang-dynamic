@@ -260,22 +260,137 @@ test("empirical account selection returns the sole enabled loaded account", () =
   assert.equal(selectWatchLaterEmpiricalAccount([disabled, enabled]), enabled);
 });
 
-test("empirical add test stops on an add request failure", async () => {
+test("empirical add test skips a failed add and marks its candidate", async () => {
+  const marked: bigint[] = [];
   const result = await runWatchLaterEmpiricalAddTest(
     {
       async getWatchLaterEligibleAids() {
         return [2n, 3n];
       },
+      async markWatchLaterEmpiricalFailedAid(aid) {
+        marked.push(aid);
+        return true;
+      },
     } satisfies WatchLaterEmpiricalDatabase,
-    account([{ code: 0, data: { count: 0, list: [] } }], [0, -400]),
+    account([snapshot([]), snapshot([2])], [0, -400]),
     async () => {},
   );
-  assert.equal(result.reason, "request_failed");
+  assert.equal(result.reason, "eligible_exhausted");
   assert.equal(result.added, 1);
+  assert.equal(result.skipped, 1);
+  assert.deepEqual(marked, [3n]);
 });
 
-test("empirical add test reports the Bilibili response error", async () => {
-  const failingAccount = account([snapshot([])]);
+test("empirical add test skips unsupported interactive videos", async () => {
+  let posts = 0;
+  const marked: bigint[] = [];
+  const skippedAccount = account([snapshot([]), snapshot([2, 3])]);
+  skippedAccount.toViewClient.post = async () => {
+    posts += 1;
+    if (posts === 1) {
+      throw {
+        status: 200,
+        data: { code: 90002, message: "interactive video is unsupported" },
+      };
+    }
+    return { data: { code: 0 } };
+  };
+  let progress = "";
+  const result = await runWatchLaterEmpiricalAddTest(
+    {
+      async getWatchLaterEligibleAids() {
+        return [1n, 2n, 3n];
+      },
+      async markWatchLaterEmpiricalFailedAid(aid) {
+        marked.push(aid);
+        return true;
+      },
+    } satisfies WatchLaterEmpiricalDatabase,
+    skippedAccount,
+    async () => {},
+    (text) => {
+      progress += text;
+    },
+  );
+
+  assert.deepEqual(result, {
+    reason: "eligible_exhausted",
+    selected: 3,
+    added: 2,
+    skipped: 1,
+    preCount: 0,
+    postCount: 2,
+  });
+  assert.equal(posts, 3);
+  assert.deepEqual(marked, [1n]);
+  assert.match(progress, /HTTP 200, bili code 90002/);
+});
+
+test("empirical add test stops after twenty consecutive failed adds", async () => {
+  const marked: bigint[] = [];
+  const failingAccount = account([snapshot([]), snapshot([])]);
+  failingAccount.toViewClient.post = async () => {
+    throw { status: 200, data: { code: -400, message: "rejected" } };
+  };
+  const result = await runWatchLaterEmpiricalAddTest(
+    {
+      async getWatchLaterEligibleAids() {
+        return Array.from({ length: 21 }, (_, index) => BigInt(index + 1));
+      },
+      async markWatchLaterEmpiricalFailedAid(aid) {
+        marked.push(aid);
+        return true;
+      },
+    },
+    failingAccount,
+    async () => {},
+  );
+
+  assert.equal(result.reason, "request_failed");
+  assert.equal(result.selected, 20);
+  assert.equal(result.added, 0);
+  assert.equal(result.skipped, 20);
+  assert.equal(marked.length, 20);
+  assert.equal(result.error, "HTTP 200, bili code -400, rejected");
+});
+
+test("empirical add test resets consecutive failures after a successful add", async () => {
+  let posts = 0;
+  const marked: bigint[] = [];
+  const resetAccount = account([
+    snapshot([]),
+    snapshot([]),
+    snapshot([20]),
+    snapshot([20]),
+  ]);
+  resetAccount.toViewClient.post = async () => {
+    posts += 1;
+    if (posts === 20) return { data: { code: 0 } };
+    throw { status: 200, data: { code: -400, message: "rejected" } };
+  };
+  const result = await runWatchLaterEmpiricalAddTest(
+    {
+      async getWatchLaterEligibleAids() {
+        return Array.from({ length: 21 }, (_, index) => BigInt(index + 1));
+      },
+      async markWatchLaterEmpiricalFailedAid(aid) {
+        marked.push(aid);
+        return true;
+      },
+    },
+    resetAccount,
+    async () => {},
+  );
+
+  assert.equal(result.reason, "eligible_exhausted");
+  assert.equal(result.added, 1);
+  assert.equal(result.skipped, 20);
+  assert.equal(posts, 21);
+  assert.equal(marked.length, 20);
+});
+
+test("empirical add test logs the Bilibili response error before skipping", async () => {
+  const failingAccount = account([snapshot([]), snapshot([])]);
   failingAccount.toViewClient.post = async () => {
     throw {
       status: 400,
@@ -289,6 +404,9 @@ test("empirical add test reports the Bilibili response error", async () => {
       async getWatchLaterEligibleAids() {
         return [2n];
       },
+      async markWatchLaterEmpiricalFailedAid() {
+        return true;
+      },
     },
     failingAccount,
     async () => {},
@@ -297,7 +415,8 @@ test("empirical add test reports the Bilibili response error", async () => {
     },
   );
 
-  assert.equal(result.error, "HTTP 400, bili code -101, 账号未登录");
+  assert.equal(result.reason, "eligible_exhausted");
+  assert.equal(result.skipped, 1);
   assert.match(progress, /HTTP 400, bili code -101, 账号未登录/);
 });
 
@@ -367,11 +486,15 @@ test("Watch Later transport failures dispatch each mutation once", async () => {
         async getWatchLaterEligibleAids() {
           return [2n];
         },
+        async markWatchLaterEmpiricalFailedAid() {
+          return true;
+        },
       },
       realClientAccount,
       async () => {},
     );
-    assert.equal(result.reason, "request_failed");
+    assert.equal(result.reason, "eligible_exhausted");
+    assert.equal(result.skipped, 1);
     assert.equal(dispatches.add, 1);
     await assert.rejects(() =>
       mutateWatchLater(realClientAccount, 3n, "delete"),
@@ -481,6 +604,7 @@ test("empirical run processes two full batches and reuses each post snapshot", a
     reason: "eligible_exhausted",
     selected: 20,
     added: 20,
+    skipped: 0,
     preCount: 1,
     postCount: 21,
   });
@@ -515,6 +639,7 @@ test("empirical run completes a partial final batch with aggregate pacing", asyn
     reason: "eligible_exhausted",
     selected: 12,
     added: 12,
+    skipped: 0,
     preCount: 0,
     postCount: 12,
   });

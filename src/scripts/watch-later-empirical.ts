@@ -37,6 +37,7 @@ async function main(): Promise<void> {
         preCount: result.preCount,
         reason: result.reason,
         selected: result.selected,
+        skipped: result.skipped,
       }),
     );
   } finally {
