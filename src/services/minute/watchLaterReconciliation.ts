@@ -15,8 +15,10 @@ import {
 export const WATCH_LATER_CAPACITY = 0;
 const MAX_MUTATIONS_PER_RUN = 20;
 const MUTATION_DELAY_MS = 1_000;
+const POST_SETTLE_DELAY_MS = 3_000;
 const CAPACITY_BLOCKED_CODE = 90001;
 type Delay = (milliseconds: number) => Promise<void>;
+type ProgressWriter = (text: string) => void;
 
 export interface WatchLaterDatabase {
   getDesiredWatchLaterSet(targetCount: number): Promise<{
@@ -362,6 +364,7 @@ export async function runWatchLaterEmpiricalAddTest(
   database: WatchLaterEmpiricalDatabase,
   account: WatchLaterAccountContext,
   delay: Delay = sleep,
+  writeProgress?: ProgressWriter,
 ): Promise<WatchLaterEmpiricalResult> {
   const initialSnapshot = await fetchWatchLaterSnapshot(account.toViewClient);
   if (!initialSnapshot) {
@@ -394,10 +397,14 @@ export async function runWatchLaterEmpiricalAddTest(
       };
     }
 
+    writeProgress?.(
+      `adding ${addedTotal + 1} to ${addedTotal + selected.length}: `,
+    );
     for (const aid of selected) {
       if (delayBeforeNextMutation) await delay(MUTATION_DELAY_MS);
       try {
         if ((await mutateWatchLater(account, aid, "add")) !== 0) {
+          writeProgress?.("\n");
           return {
             reason: "request_failed",
             selected: selectedTotal,
@@ -407,6 +414,7 @@ export async function runWatchLaterEmpiricalAddTest(
           };
         }
       } catch {
+        writeProgress?.("\n");
         return {
           reason: "request_failed",
           selected: selectedTotal,
@@ -417,8 +425,12 @@ export async function runWatchLaterEmpiricalAddTest(
       }
       addedTotal += 1;
       delayBeforeNextMutation = true;
+      writeProgress?.(".");
     }
+    writeProgress?.("\n");
 
+    await delay(POST_SETTLE_DELAY_MS);
+    delayBeforeNextMutation = false;
     const postSnapshot = await fetchWatchLaterSnapshot(account.toViewClient);
     if (!postSnapshot) {
       return {

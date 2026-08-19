@@ -11,7 +11,12 @@ async function main(): Promise<void> {
   const database = Database.getInstance();
   await database.init();
   try {
-    const result = await runWatchLaterEmpiricalAddTest(database, account);
+    const result = await runWatchLaterEmpiricalAddTest(
+      database,
+      account,
+      undefined,
+      (text) => process.stdout.write(text),
+    );
     console.log(
       JSON.stringify({
         added: result.added,

@@ -379,14 +379,16 @@ test("empirical add test reports eligible exhaustion after verifying the post sn
       ],
       [0],
     ),
+    async () => {},
   );
   assert.equal(result.reason, "eligible_exhausted");
   assert.equal(result.added, 1);
   assert.deepEqual(excludedAids, [1n]);
 });
 
-test("empirical additions use the reconciliation delay between successful posts", async () => {
+test("empirical additions settle after the final post before verification", async () => {
   const delays: number[] = [];
+  let progress = "";
   const result = await runWatchLaterEmpiricalAddTest(
     {
       async getWatchLaterEligibleAids() {
@@ -403,9 +405,13 @@ test("empirical additions use the reconciliation delay between successful posts"
     async (milliseconds) => {
       delays.push(milliseconds);
     },
+    (text) => {
+      progress += text;
+    },
   );
   assert.equal(result.added, 2);
-  assert.deepEqual(delays, [1000]);
+  assert.deepEqual(delays, [1000, 3000]);
+  assert.equal(progress, "adding 1 to 2: ..\n");
 });
 
 test("empirical run processes two full batches and reuses each post snapshot", async () => {
@@ -482,7 +488,7 @@ test("empirical run completes a partial final batch with aggregate pacing", asyn
     preCount: 0,
     postCount: 12,
   });
-  assert.deepEqual(delays, Array(11).fill(1000));
+  assert.deepEqual(delays, [...Array(9).fill(1000), 3000, 1000, 3000]);
 });
 
 test("empirical run reports post-snapshot and verification failures", async () => {
@@ -493,6 +499,7 @@ test("empirical run reports post-snapshot and verification failures", async () =
       },
     },
     account([snapshot([]), { code: -400 }], [0]),
+    async () => {},
   );
   const verificationFailure = await runWatchLaterEmpiricalAddTest(
     {
@@ -501,6 +508,7 @@ test("empirical run reports post-snapshot and verification failures", async () =
       },
     },
     account([snapshot([]), snapshot([])], [0]),
+    async () => {},
   );
 
   assert.equal(postSnapshotFailure.reason, "post_snapshot_failed");
