@@ -10,7 +10,7 @@ import { logger } from "../../utils/logger";
 import { isMinuteCounter } from "./completeSample";
 import { planFavoriteFallbackBatches } from "./samplingPlan";
 import {
-  sampleWatchLaterToViewAccounts,
+  sampleWatchLaterToViewAccountsWithStatus,
   type ToViewRequestAccount,
   type WatchLaterToViewAccount,
 } from "./toview";
@@ -93,6 +93,7 @@ export async function batchSampleVideoStats(
     sampledAt?: Date;
     toViewAccounts?: ToViewRequestAccount[];
     watchLaterToViewAccounts?: WatchLaterToViewAccount[];
+    onWatchLaterToViewAccountFailure?(accountId: bigint): void;
     dependencies?: Partial<BatchSampleDependencies>;
   },
 ): Promise<VideoMinuteSample[]> {
@@ -102,12 +103,15 @@ export async function batchSampleVideoStats(
   const samplesByAid = new Map<string, VideoMinuteSample>();
 
   if (options?.toViewAccounts && options.watchLaterToViewAccounts) {
-    const toViewSamples = await sampleWatchLaterToViewAccounts(
+    const toViewResult = await sampleWatchLaterToViewAccountsWithStatus(
       options.toViewAccounts,
       options.watchLaterToViewAccounts,
       sampledAt,
     );
-    for (const sample of toViewSamples) {
+    for (const accountId of toViewResult.failedAccountIds) {
+      options.onWatchLaterToViewAccountFailure?.(accountId);
+    }
+    for (const sample of toViewResult.samples) {
       if (requestedAids.has(sample.aid.toString())) {
         samplesByAid.set(sample.aid.toString(), sample);
       }

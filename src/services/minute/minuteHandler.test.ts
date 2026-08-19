@@ -153,6 +153,80 @@ test("MinuteHandler advances unchanged tuples and marks a sampler failure", asyn
   assert.ok(calls.includes("failed:2"));
 });
 
+test("MinuteHandler keeps a failed To View account unavailable across later batches", async () => {
+  const calls: string[] = [];
+  const sampledAccountIds: bigint[][] = [];
+  const fallbackBatches: bigint[][] = [];
+  let toViewGetRequests = 0;
+  let failedAccountUnavailable = false;
+  const account = (uid: string): AccountContext => ({
+    uid,
+    cookieJar: new CookieJar(),
+    cookieFilePath: null,
+    enableWatchLater: true,
+    stateManager: {} as StateManager,
+    dynamicClient: {} as AxiosInstance,
+    webInterfaceClient: {} as AxiosInstance,
+    playerClient: {} as AxiosInstance,
+    relationClient: {} as AxiosInstance,
+    toViewClient: axios.create({
+      adapter: async (request) => {
+        if (uid === "7") throw new Error("To View GET failed");
+        return {
+          data: { code: 0, data: { count: 0, list: [] } },
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          config: request,
+        };
+      },
+    }),
+  });
+  const accounts = [account("7"), account("8")];
+  const handler = new MinuteHandler({
+    database: {
+      ...database(calls),
+      async getWatchLaterAccounts() {
+        calls.push("watch-later-accounts");
+        return [configuredAccount, { ...configuredAccount, accountId: 8n }];
+      },
+    },
+    loadAccounts: () => accounts,
+    async sampleVideoStats(aids, options) {
+      const selectedIds = options?.watchLaterToViewAccounts?.map(
+        (configured) => configured.accountId,
+      );
+      sampledAccountIds.push(selectedIds ?? []);
+      if (selectedIds?.includes(7n)) {
+        try {
+          toViewGetRequests += 1;
+          await accounts[0]?.toViewClient.get("/web");
+        } catch {
+          options?.onWatchLaterToViewAccountFailure?.(7n);
+          failedAccountUnavailable = true;
+        }
+      }
+      if (failedAccountUnavailable) {
+        fallbackBatches.push(aids);
+      }
+      return aids.map(sample);
+    },
+  });
+
+  await handler.processBatch([{ aid: 1n, lastView: null }]);
+  await handler.processBatch([{ aid: 2n, lastView: null }]);
+
+  assert.equal(toViewGetRequests, 1);
+  assert.deepEqual(sampledAccountIds, [[7n, 8n], [8n]]);
+  assert.deepEqual(fallbackBatches, [[1n], [2n]]);
+  assert.deepEqual(calls, [
+    "watch-later-accounts",
+    "insert:1",
+    "watch-later-accounts",
+    "insert:2",
+  ]);
+});
+
 test("MinuteHandler samples a zero-capacity enabled account without mutations", async () => {
   const calls: string[] = [];
   let getRequests = 0;

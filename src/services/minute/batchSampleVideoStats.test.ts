@@ -76,6 +76,7 @@ test("batch sampler requests each configured To View account and falls back only
 
 test("batch sampler conservatively falls back after an invalid To View snapshot", async () => {
   const favoriteBatches: bigint[][] = [];
+  const unavailableAccountIds: bigint[] = [];
   await batchSampleVideoStats([1n], {
     toViewAccounts: [
       {
@@ -88,6 +89,9 @@ test("batch sampler conservatively falls back after an invalid To View snapshot"
       },
     ],
     watchLaterToViewAccounts: [{ accountId: 10n }],
+    onWatchLaterToViewAccountFailure(accountId) {
+      unavailableAccountIds.push(accountId);
+    },
     dependencies: {
       async fetchStatsBatch(aids) {
         favoriteBatches.push(aids);
@@ -96,4 +100,5 @@ test("batch sampler conservatively falls back after an invalid To View snapshot"
     },
   });
   assert.deepEqual(favoriteBatches, [[1n]]);
+  assert.deepEqual(unavailableAccountIds, [10n]);
 });

@@ -68,6 +68,7 @@ export class MinuteHandler {
   private isRunning = false;
   private loopPromise: Promise<void> | null = null;
   private abortController: AbortController | null = null;
+  private readonly unavailableWatchLaterAccountIds = new Set<bigint>();
 
   constructor(dependencies: MinuteHandlerDependencies = {}) {
     this.db = dependencies.database ?? Database.getInstance();
@@ -108,7 +109,16 @@ export class MinuteHandler {
    */
   private async loop(signal: AbortSignal): Promise<void> {
     try {
-      await runAutomaticWatchLaterManagement(this.db, this.accounts());
+      await runAutomaticWatchLaterManagement(
+        this.db,
+        this.accounts(),
+        undefined,
+        {
+          onUnavailableAccount: (accountId) => {
+            this.unavailableWatchLaterAccountIds.add(accountId);
+          },
+        },
+      );
     } catch (error) {
       logger.error("Watch-later management failed:", error);
     }
@@ -206,7 +216,13 @@ export class MinuteHandler {
         samples = await this.sampleVideoStats(aids, {
           batchSize: config.minute.batchSize,
           toViewAccounts: accounts,
-          watchLaterToViewAccounts,
+          watchLaterToViewAccounts: watchLaterToViewAccounts.filter(
+            (account) =>
+              !this.unavailableWatchLaterAccountIds.has(account.accountId),
+          ),
+          onWatchLaterToViewAccountFailure: (accountId) => {
+            this.unavailableWatchLaterAccountIds.add(accountId);
+          },
         });
       } catch (error) {
         logger.error("Minute stats batch request failed:", error);

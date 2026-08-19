@@ -15,6 +15,7 @@ import {
   type WatchLaterAccountContext,
 } from "./watchLaterApi";
 import {
+  partitionDesiredWatchLaterAids,
   reconcileWatchLaterAccount,
   runAutomaticWatchLaterManagement,
   runWatchLaterEmpiricalAddTest,
@@ -185,8 +186,38 @@ test("enabled accounts reconcile independently with the shared injected capacity
   ]);
 });
 
+test("desired Watch Later aids have deterministic deduplicated assignments for two and three accounts", () => {
+  const desired = [1n, 2n, 2n, 3n, 4n, 5n, 6n, 7n];
+
+  assert.deepEqual(partitionDesiredWatchLaterAids(desired, 2, 3), [
+    [1n, 3n, 5n],
+    [2n, 4n, 6n],
+  ]);
+  assert.deepEqual(partitionDesiredWatchLaterAids(desired, 3, 3), [
+    [1n, 4n, 7n],
+    [2n, 5n],
+    [3n, 6n],
+  ]);
+});
+
+test("desired Watch Later assignments cap global and per-account cardinality", () => {
+  const assignments = partitionDesiredWatchLaterAids(
+    Array.from({ length: 3_005 }, (_, index) => BigInt(index + 1)),
+    3,
+  );
+  const assigned = assignments.flat();
+
+  assert.equal(assigned.length, 3_000);
+  assert.equal(new Set(assigned).size, 3_000);
+  assert.deepEqual(
+    assignments.map((aids) => aids.length),
+    [1_000, 1_000, 1_000],
+  );
+});
+
 test("startup health excludes invalid accounts from capacity and assignment", async () => {
   let desiredTarget = -1;
+  const unavailableAccountIds: bigint[] = [];
   const healthy = account([snapshot([])]);
   const invalid = account([{ code: -101 }], [], "8");
   const result = await runAutomaticWatchLaterManagement(
@@ -203,10 +234,16 @@ test("startup health excludes invalid accounts from capacity and assignment", as
     },
     [healthy, invalid],
     2,
+    {
+      onUnavailableAccount(accountId) {
+        unavailableAccountIds.push(accountId);
+      },
+    },
   );
 
   assert.equal(desiredTarget, 2);
   assert.equal(result.length, 1);
+  assert.deepEqual(unavailableAccountIds, [8n]);
 });
 
 test("zero injected capacity samples the remote snapshot without posting mutations", async () => {

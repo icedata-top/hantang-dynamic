@@ -33,6 +33,11 @@ export interface ToViewRequestAccount extends ToViewAccountIdentity {
   toViewClient: ToViewClient;
 }
 
+export interface ToViewSamplesResult {
+  samples: CompleteVideoMinuteTuple[];
+  failedAccountIds: bigint[];
+}
+
 export type ToViewAccount = AccountContext;
 
 function accountId(account: ToViewAccountIdentity): bigint | null {
@@ -66,7 +71,7 @@ export function selectWatchLaterToViewAccounts<T extends ToViewAccountIdentity>(
 async function fetchToViewSamples(
   account: ToViewRequestAccount,
   sampledAt: Date,
-): Promise<CompleteVideoMinuteTuple[]> {
+): Promise<CompleteVideoMinuteTuple[] | null> {
   const release = await sharedApiRateLimiter.acquire();
   try {
     const response = await account.toViewClient.get("/web", {
@@ -86,7 +91,7 @@ async function fetchToViewSamples(
       response.data.data?.count === response.data.data?.list.length;
     if (!isComplete) {
       logger.warn("To View API response was incomplete or invalid");
-      return [];
+      return null;
     }
     if (result.responseCode !== 0) {
       logger.warn("To View API returned a non-success response");
@@ -100,7 +105,7 @@ async function fetchToViewSamples(
   } catch (error) {
     logger.warn("To View API request failed");
     logger.debug(error);
-    return [];
+    return null;
   } finally {
     release();
   }
@@ -111,18 +116,37 @@ export async function sampleWatchLaterToViewAccounts(
   selectedWatchLaterAccounts: WatchLaterToViewAccount[],
   sampledAt: Date,
 ): Promise<CompleteVideoMinuteTuple[]> {
+  const result = await sampleWatchLaterToViewAccountsWithStatus(
+    accounts,
+    selectedWatchLaterAccounts,
+    sampledAt,
+  );
+  return result.samples;
+}
+
+export async function sampleWatchLaterToViewAccountsWithStatus(
+  accounts: ToViewRequestAccount[],
+  selectedWatchLaterAccounts: WatchLaterToViewAccount[],
+  sampledAt: Date,
+): Promise<ToViewSamplesResult> {
   const selectedAccounts = selectWatchLaterToViewAccounts(
     accounts,
     selectedWatchLaterAccounts,
   );
   const samplesByAid = new Map<string, CompleteVideoMinuteTuple>();
+  const failedAccountIds: bigint[] = [];
 
   for (const account of selectedAccounts) {
     const samples = await fetchToViewSamples(account, sampledAt);
+    if (samples === null) {
+      const id = accountId(account);
+      if (id !== null) failedAccountIds.push(id);
+      continue;
+    }
     for (const sample of samples) {
       samplesByAid.set(sample.aid.toString(), sample);
     }
   }
 
-  return [...samplesByAid.values()];
+  return { samples: [...samplesByAid.values()], failedAccountIds };
 }

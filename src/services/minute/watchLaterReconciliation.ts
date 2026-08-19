@@ -81,6 +81,10 @@ export interface WatchLaterReconciliationResult {
   capacityBlocked: boolean;
 }
 
+export interface WatchLaterManagementOptions {
+  onUnavailableAccount?(accountId: bigint): void;
+}
+
 export interface WatchLaterEmpiricalDatabase {
   getWatchLaterEligibleAids(maxPriorityExclusive: number): Promise<bigint[]>;
   markWatchLaterEmpiricalFailedAid?(aid: bigint): Promise<boolean>;
@@ -381,6 +385,7 @@ export async function runAutomaticWatchLaterManagement(
   },
   accounts: WatchLaterAccountContext[],
   capacity: number = WATCH_LATER_CAPACITY,
+  options: WatchLaterManagementOptions = {},
 ): Promise<WatchLaterReconciliationResult[]> {
   const enabledAccounts = accounts.filter(
     (account) => account.enableWatchLater,
@@ -405,6 +410,8 @@ export async function runAutomaticWatchLaterManagement(
       const snapshot = await fetchWatchLaterSnapshot(account.toViewClient);
       if (snapshot) {
         healthyAccounts.push({ account, watchLaterAccount, snapshot });
+      } else {
+        options.onUnavailableAccount?.(watchLaterAccount.accountId);
       }
     }
   }
@@ -414,10 +421,13 @@ export async function runAutomaticWatchLaterManagement(
     capacity * healthyAccounts.length,
   );
   const results: WatchLaterReconciliationResult[] = [];
+  const assignments = partitionDesiredWatchLaterAids(
+    desired.aids,
+    healthyAccounts.length,
+    capacity,
+  );
   for (const [index, healthyAccount] of healthyAccounts.entries()) {
-    const assignedAids = desired.aids.filter(
-      (_aid, aidIndex) => aidIndex % healthyAccounts.length === index,
-    );
+    const assignedAids = assignments[index] ?? [];
     results.push(
       await reconcileWatchLaterAccount(
         database,
@@ -430,6 +440,34 @@ export async function runAutomaticWatchLaterManagement(
     );
   }
   return results;
+}
+
+export function partitionDesiredWatchLaterAids(
+  desiredAids: bigint[],
+  accountCount: number,
+  capacity: number = WATCH_LATER_CAPACITY,
+): bigint[][] {
+  if (accountCount <= 0 || capacity <= 0) return [];
+
+  const uniqueAids: bigint[] = [];
+  const seen = new Set<string>();
+  for (const aid of desiredAids) {
+    const key = aid.toString();
+    if (seen.has(key) || uniqueAids.length === accountCount * capacity) {
+      continue;
+    }
+    seen.add(key);
+    uniqueAids.push(aid);
+  }
+
+  const assignments = Array.from(
+    { length: accountCount },
+    () => [] as bigint[],
+  );
+  for (const [index, aid] of uniqueAids.entries()) {
+    assignments[index % accountCount]?.push(aid);
+  }
+  return assignments;
 }
 
 export async function runWatchLaterEmpiricalAddTest(
