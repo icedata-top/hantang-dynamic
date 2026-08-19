@@ -75,7 +75,7 @@ export interface WatchLaterReconciliationResult {
 }
 
 export interface WatchLaterEmpiricalDatabase {
-  getWatchLaterEligibleAids(): Promise<bigint[]>;
+  getWatchLaterEligibleAids(maxPriorityExclusive: number): Promise<bigint[]>;
 }
 
 export interface WatchLaterEmpiricalResult {
@@ -362,7 +362,15 @@ export async function runWatchLaterEmpiricalAddTest(
   account: WatchLaterAccountContext,
   delay: Delay = sleep,
   writeProgress?: ProgressWriter,
+  maxPriorityExclusive = 30,
 ): Promise<WatchLaterEmpiricalResult> {
+  if (
+    !Number.isInteger(maxPriorityExclusive) ||
+    maxPriorityExclusive <= 1 ||
+    maxPriorityExclusive > 721
+  ) {
+    throw new Error("Priority limit must be an integer from 2 through 721");
+  }
   const initialSnapshot = await fetchWatchLaterSnapshot(account.toViewClient);
   if (!initialSnapshot) {
     return {
@@ -375,12 +383,14 @@ export async function runWatchLaterEmpiricalAddTest(
   }
 
   let preSnapshot = initialSnapshot;
-  const eligibleAids = await database.getWatchLaterEligibleAids();
+  const eligibleAids = await database.getWatchLaterEligibleAids(
+    maxPriorityExclusive,
+  );
   const missingAids = eligibleAids.filter(
     (aid) => !initialSnapshot.aids.has(aid.toString()),
   );
   writeProgress?.(
-    `priority<30 targets: ${eligibleAids.length}, present: ${eligibleAids.length - missingAids.length}, missing: ${missingAids.length}, watch-later total: ${initialSnapshot.aids.size}\n`,
+    `priority<${maxPriorityExclusive} targets: ${eligibleAids.length}, present: ${eligibleAids.length - missingAids.length}, missing: ${missingAids.length}, watch-later total: ${initialSnapshot.aids.size}\n`,
   );
   let selectedTotal = 0;
   let addedTotal = 0;

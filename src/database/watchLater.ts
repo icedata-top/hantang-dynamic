@@ -162,13 +162,17 @@ export async function getDesiredWatchLaterSet(
   };
 }
 
-export async function getWatchLaterEligibleAids(pool: Pool): Promise<bigint[]> {
+export async function getWatchLaterEligibleAids(
+  pool: Pool,
+  maxPriorityExclusive: number,
+): Promise<bigint[]> {
   const result = await pool.query<{ aid: string }>(
     `SELECT aid
      FROM video_collection_state
      WHERE priority >= 1
-       AND priority < 30
+       AND priority < $1
      ORDER BY priority ASC, aid ASC`,
+    [maxPriorityExclusive],
   );
 
   return result.rows.map((row) => BigInt(row.aid));

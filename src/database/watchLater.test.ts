@@ -50,16 +50,19 @@ test("provisioning uses only loaded enabled account identities", async () => {
 
 test("empirical candidates include priority 29 and exclude priority 30", async () => {
   let query = "";
+  let values: unknown[] | undefined;
   const pool = {
-    async query(sql: string) {
+    async query(sql: string, parameters?: unknown[]) {
       query = sql;
+      values = parameters;
       return { rows: [] };
     },
   } as Pool;
-  await getWatchLaterEligibleAids(pool);
+  await getWatchLaterEligibleAids(pool, 30);
   assert.match(query, /priority >= 1/);
-  assert.match(query, /priority < 30/);
+  assert.match(query, /priority < \$1/);
   assert.doesNotMatch(query, /LIMIT/);
+  assert.deepEqual(values, [30]);
 });
 
 test("successful delete removes only the operation account from ownership", async () => {

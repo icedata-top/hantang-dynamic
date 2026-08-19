@@ -389,9 +389,11 @@ test("empirical add test reports eligible exhaustion after verifying the post sn
 test("empirical additions settle after the final post before verification", async () => {
   const delays: number[] = [];
   let progress = "";
+  let maxPriorityExclusive = 0;
   const result = await runWatchLaterEmpiricalAddTest(
     {
-      async getWatchLaterEligibleAids() {
+      async getWatchLaterEligibleAids(maxPriority) {
+        maxPriorityExclusive = maxPriority;
         return [2n, 3n];
       },
     },
@@ -408,12 +410,14 @@ test("empirical additions settle after the final post before verification", asyn
     (text) => {
       progress += text;
     },
+    20,
   );
   assert.equal(result.added, 2);
+  assert.equal(maxPriorityExclusive, 20);
   assert.deepEqual(delays, [1000, 3000]);
   assert.equal(
     progress,
-    "priority<30 targets: 2, present: 0, missing: 2, watch-later total: 0\nadding 1 to 2: ..\n",
+    "priority<20 targets: 2, present: 0, missing: 2, watch-later total: 0\nadding 1 to 2: ..\n",
   );
 });
 

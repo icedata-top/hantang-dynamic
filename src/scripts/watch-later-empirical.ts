@@ -6,6 +6,14 @@ import {
 } from "../services/minute/watchLaterReconciliation";
 
 async function main(): Promise<void> {
+  const maxPriorityExclusive = Number(process.argv[2] ?? 30);
+  if (
+    !Number.isInteger(maxPriorityExclusive) ||
+    maxPriorityExclusive <= 1 ||
+    maxPriorityExclusive > 721
+  ) {
+    throw new Error("Priority limit must be an integer from 2 through 721");
+  }
   const account = selectWatchLaterEmpiricalAccount(loadAccounts());
 
   const database = Database.getInstance();
@@ -16,6 +24,7 @@ async function main(): Promise<void> {
       account,
       undefined,
       (text) => process.stdout.write(text),
+      maxPriorityExclusive,
     );
     console.log(
       JSON.stringify({

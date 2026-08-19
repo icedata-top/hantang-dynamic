@@ -51,12 +51,14 @@ capacity currently equals `0`, so enabled accounts make read-only To View GET
 requests and send no mutation POSTs. Environment cookie paths remain
 authentication-only and do not enable Watch Later.
 
-`pnpm watch-later-empirical` is an explicitly invoked empirical mutation run.
+`pnpm watch-later-empirical -- 60` is an explicitly invoked empirical mutation
+run. The optional argument is the exclusive priority limit and defaults to
+`30`.
 It requires a database URL and exactly one successfully loaded cookie account
-with `enable_watch_later = true`. It continues through eligible priority 1-29
-videos in batches of ten, validates a complete snapshot after each batch, and
-prints aggregate counts only. It is not limited by the production capacity of
-`0`.
+with `enable_watch_later = true`. It continues through eligible videos below
+the selected priority limit in batches of ten, validates a complete snapshot
+after each batch, and prints aggregate counts only. It is not limited by the
+production capacity of `0`.
 
 ## Proxies
 
