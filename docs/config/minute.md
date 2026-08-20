@@ -81,6 +81,13 @@ When authoritative video detail handling confirms deletion or unavailability,
 an existing active row is made inactive with `priority = 0` and no next due
 time. Positive-priority minute and Watch Later selection queries exclude it.
 
+For every minute batch, a due AID is covered by a complete current To View
+tuple or is sent once through the existing favorite-resource path in
+`batch_size` chunks. Watch Later assignment and reconciliation state do not
+remove AIDs from that fallback. A partial or malformed favorite response leaves
+the AID failed for rescheduling and increments
+`bili_tracker_minute_fallback_response_misses_total` with a bounded reason.
+
 ## Fields
 
 | TOML key | Environment variable | Default | Meaning |

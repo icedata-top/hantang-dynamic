@@ -1,11 +1,34 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  minuteFallbackResponseMissesTotal,
   watchLaterFallbackBatchesTotal,
   watchLaterFallbackVideosTotal,
 } from "../../metrics/registry";
 import { batchSampleVideoStats } from "./batchSampleVideoStats";
 import type { ToViewRequestAccount } from "./toview";
+
+function aids(count: number): bigint[] {
+  return Array.from({ length: count }, (_, index) => BigInt(index + 1));
+}
+
+function completeFavoriteResponse(requested: bigint[]) {
+  return {
+    code: 0,
+    data: requested.map((id) => ({
+      id: Number(id),
+      cnt_info: {
+        coin: 1,
+        collect: 1,
+        danmaku: 1,
+        play: 1,
+        reply: 1,
+        share: 1,
+        thumb_up: 1,
+      },
+    })),
+  };
+}
 
 function toViewAccount(
   uid: string,
@@ -192,5 +215,132 @@ test("batch sampler does not count unrelated fallback gaps for unavailable accou
   ]);
   assert.deepEqual((await watchLaterFallbackVideosTotal.get()).values, [
     { labels: {}, value: 0 },
+  ]);
+});
+
+test("batch sampler sends a 55-AID due batch with no To View targets through the old 50-item path", async () => {
+  const favoriteBatches: bigint[][] = [];
+  const dueAids = aids(55);
+  await batchSampleVideoStats(dueAids, {
+    batchSize: 50,
+    toViewAccounts: [toViewAccount("10", [], [])],
+    watchLaterToViewAccounts: [{ accountId: 10n }],
+    desiredWatchLaterAidsByAccountId: new Map([[10n, dueAids]]),
+    dependencies: {
+      async fetchStatsBatch(batch) {
+        favoriteBatches.push(batch);
+        return completeFavoriteResponse(batch);
+      },
+    },
+  });
+
+  assert.deepEqual(favoriteBatches, [dueAids.slice(0, 50), dueAids.slice(50)]);
+});
+
+test("batch sampler dispatches every To View-uncovered AID once across 50-item old-path chunks", async () => {
+  const favoriteBatches: bigint[][] = [];
+  const dueAids = aids(55);
+  await batchSampleVideoStats(dueAids, {
+    batchSize: 50,
+    toViewAccounts: [toViewAccount("10", [1, 2], [])],
+    watchLaterToViewAccounts: [{ accountId: 10n }],
+    dependencies: {
+      async fetchStatsBatch(batch) {
+        favoriteBatches.push(batch);
+        return completeFavoriteResponse(batch);
+      },
+    },
+  });
+
+  const uncoveredAids = dueAids.slice(2);
+  assert.deepEqual(favoriteBatches, [
+    uncoveredAids.slice(0, 50),
+    uncoveredAids.slice(50),
+  ]);
+  assert.deepEqual(favoriteBatches.flat(), uncoveredAids);
+});
+
+test("batch sampler skips the old path only when To View supplies every requested valid tuple", async () => {
+  const favoriteBatches: bigint[][] = [];
+  const dueAids = aids(55);
+  await batchSampleVideoStats(dueAids, {
+    batchSize: 50,
+    toViewAccounts: [toViewAccount("10", dueAids.map(Number), [])],
+    watchLaterToViewAccounts: [{ accountId: 10n }],
+    dependencies: {
+      async fetchStatsBatch(batch) {
+        favoriteBatches.push(batch);
+        return completeFavoriteResponse(batch);
+      },
+    },
+  });
+
+  assert.deepEqual(favoriteBatches, []);
+});
+
+test("batch sampler sends an invalid To View snapshot through the old path", async () => {
+  const favoriteBatches: bigint[][] = [];
+  const dueAids = aids(55);
+  await batchSampleVideoStats(dueAids, {
+    batchSize: 50,
+    toViewAccounts: [
+      {
+        uid: "10",
+        toViewClient: {
+          async get() {
+            return { data: { code: 0, data: { count: 1, list: [] } } };
+          },
+        },
+      },
+    ],
+    watchLaterToViewAccounts: [{ accountId: 10n }],
+    dependencies: {
+      async fetchStatsBatch(batch) {
+        favoriteBatches.push(batch);
+        return completeFavoriteResponse(batch);
+      },
+    },
+  });
+
+  assert.deepEqual(favoriteBatches, [dueAids.slice(0, 50), dueAids.slice(50)]);
+});
+
+test("batch sampler dispatches requested AIDs before rejecting malformed old-path response identifiers", async () => {
+  const dueAids = aids(55);
+  const favoriteBatches: bigint[][] = [];
+  minuteFallbackResponseMissesTotal.reset();
+  const samples = await batchSampleVideoStats(dueAids, {
+    batchSize: 50,
+    dependencies: {
+      async fetchStatsBatch(batch) {
+        favoriteBatches.push(batch);
+        return {
+          code: 0,
+          data: [
+            {
+              id: "1" as unknown as number,
+              cnt_info: {
+                coin: 1,
+                collect: 1,
+                danmaku: 1,
+                play: 1,
+                reply: 1,
+                share: 1,
+                thumb_up: 1,
+              },
+            },
+          ],
+        };
+      },
+    },
+  });
+
+  assert.deepEqual(favoriteBatches, [dueAids.slice(0, 50), dueAids.slice(50)]);
+  assert.deepEqual(samples, []);
+  assert.deepEqual((await minuteFallbackResponseMissesTotal.get()).values, [
+    {
+      labels: { reason: "unusable_response_item" },
+      value: 55,
+    },
   ]);
 });

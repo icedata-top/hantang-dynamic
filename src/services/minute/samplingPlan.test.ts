@@ -22,3 +22,24 @@ test("favorite fallback batches only requested AIDs absent from To View", () => 
   );
   assert.deepEqual(batches, [[2n, 3n, 4n]]);
 });
+
+test("favorite fallback retains requested AIDs with invalid To View tuples", () => {
+  const batches = planFavoriteFallbackBatches(
+    [1n],
+    [
+      {
+        aid: 1n,
+        time: new Date(),
+        coin: 1,
+        favorite: 1,
+        danmaku: 1,
+        view: 1,
+        reply: 1,
+        share: 1,
+      },
+    ],
+    50,
+  );
+
+  assert.deepEqual(batches, [[1n]]);
+});

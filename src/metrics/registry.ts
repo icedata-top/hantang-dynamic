@@ -139,6 +139,13 @@ export const minuteSamplesTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+export const minuteFallbackResponseMissesTotal = new Counter({
+  name: `${PREFIX}minute_fallback_response_misses_total`,
+  help: "Requested AIDs without a usable old-path favorite response by reason.",
+  labelNames: ["reason"] as const,
+  registers: [metricsRegistry],
+});
+
 export const minuteBatchDurationSeconds = new Histogram({
   name: `${PREFIX}minute_batch_duration_seconds`,
   help: "Adaptive minute batch duration in seconds.",

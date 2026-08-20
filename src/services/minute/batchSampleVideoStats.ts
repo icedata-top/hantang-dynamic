@@ -5,6 +5,7 @@ import {
 } from "../../api/client";
 import { config } from "../../config";
 import {
+  minuteFallbackResponseMissesTotal,
   watchLaterFallbackBatchesTotal,
   watchLaterFallbackVideosTotal,
 } from "../../metrics/registry";
@@ -12,7 +13,10 @@ import type { VideoMinuteSample } from "../../types/models/minute";
 import { sharedApiRateLimiter } from "../../utils/apiRateLimiter";
 import { logger } from "../../utils/logger";
 import { isMinuteCounter } from "./completeSample";
-import { planFavoriteFallbackBatches } from "./samplingPlan";
+import {
+  partitionMinuteSamplingCoverage,
+  planFavoriteFallbackBatches,
+} from "./samplingPlan";
 import {
   sampleWatchLaterToViewAccountsWithStatus,
   type ToViewRequestAccount,
@@ -107,6 +111,7 @@ export async function batchSampleVideoStats(
   const batchSize = options?.batchSize ?? config.minute.batchSize;
   const requestedAids = new Set(aids.map((aid) => aid.toString()));
   const samplesByAid = new Map<string, VideoMinuteSample>();
+  let toViewSamples: VideoMinuteSample[] = [];
 
   if (options?.toViewAccounts && options.watchLaterToViewAccounts) {
     const toViewResult = await sampleWatchLaterToViewAccountsWithStatus(
@@ -117,10 +122,13 @@ export async function batchSampleVideoStats(
     for (const accountId of toViewResult.failedAccountIds) {
       options.onWatchLaterToViewAccountFailure?.(accountId);
     }
-    for (const sample of toViewResult.samples) {
-      if (requestedAids.has(sample.aid.toString())) {
-        samplesByAid.set(sample.aid.toString(), sample);
-      }
+    toViewSamples = toViewResult.samples;
+  }
+
+  const coverage = partitionMinuteSamplingCoverage(aids, toViewSamples);
+  for (const sample of coverage.toViewSamples) {
+    if (requestedAids.has(sample.aid.toString())) {
+      samplesByAid.set(sample.aid.toString(), sample);
     }
   }
 
@@ -135,7 +143,7 @@ export async function batchSampleVideoStats(
 
   for (const aidBatch of planFavoriteFallbackBatches(
     aids,
-    [...samplesByAid.values()],
+    coverage.toViewSamples,
     batchSize,
   )) {
     const attributableAids = aidBatch.filter((aid) =>
@@ -153,14 +161,38 @@ export async function batchSampleVideoStats(
 
       if (data.code !== 0 || !Array.isArray(data.data)) {
         logger.warn(`Minute stats API failed with code ${data.code}`);
+        minuteFallbackResponseMissesTotal.inc(
+          { reason: "api_failure" },
+          aidBatch.length,
+        );
         continue;
       }
 
+      const returnedAids = new Set<string>();
+      const requestedBatchAids = new Set(aidBatch.map((aid) => aid.toString()));
       for (const item of data.data) {
         const sample = toMinuteSample(item, sampledAt);
-        if (sample && requestedAids.has(sample.aid.toString())) {
-          samplesByAid.set(sample.aid.toString(), sample);
+        const key = sample?.aid.toString();
+        if (
+          sample &&
+          key &&
+          requestedAids.has(key) &&
+          requestedBatchAids.has(key)
+        ) {
+          samplesByAid.set(key, sample);
+          returnedAids.add(key);
         }
+      }
+
+      const missingCount = aidBatch.length - returnedAids.size;
+      if (missingCount > 0) {
+        logger.warn(
+          `Minute stats favorite fallback returned no usable sample for ${missingCount} aid(s)`,
+        );
+        minuteFallbackResponseMissesTotal.inc(
+          { reason: "unusable_response_item" },
+          missingCount,
+        );
       }
     } finally {
       release();
