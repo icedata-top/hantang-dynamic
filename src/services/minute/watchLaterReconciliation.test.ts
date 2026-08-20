@@ -87,6 +87,19 @@ function snapshot(aids: number[]) {
   return { code: 0, data: { count: aids.length, list: aids.map(item) } };
 }
 
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve(value: T): void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function database(
   overrides: Partial<WatchLaterDatabase> = {},
 ): WatchLaterDatabase {
@@ -423,6 +436,180 @@ test("cancelling an account while its mutation is queued sends no POST", async (
   } finally {
     if (sharedApiRateLimiter.getActiveCount() > 0) releaseLimiter();
   }
+  assert.equal(sharedApiRateLimiter.getQueueLength(), 0);
+  assert.equal(sharedApiRateLimiter.getActiveCount(), 0);
+});
+
+test("cancelling during CSRF request preparation sends no POST", async () => {
+  const csrfLookupStarted = deferred<void>();
+  const releaseCsrfLookup = deferred<void>();
+  const originalCsrfToken = config.bilibili.csrfToken;
+  const guardedAccount = account([snapshot([])]);
+  const cookieJar = guardedAccount.cookieJar;
+  assert.ok(cookieJar);
+  const getCookies = cookieJar.getCookies.bind(cookieJar);
+  cookieJar.getCookies = async (url: string) => {
+    csrfLookupStarted.resolve();
+    await releaseCsrfLookup.promise;
+    return getCookies(url);
+  };
+  config.bilibili.csrfToken = undefined;
+
+  let continueRunning = true;
+  let posts = 0;
+  let renewals = 0;
+  let attempts = 0;
+  guardedAccount.toViewClient.post = async () => {
+    posts += 1;
+    return { data: { code: 0 } };
+  };
+
+  try {
+    const reconciliation = reconcileWatchLaterAccount(
+      database({
+        async getDesiredWatchLaterSet() {
+          return { aids: [1n], overflow: false };
+        },
+        async recordWatchLaterOperationAttempt() {
+          attempts += 1;
+          return true;
+        },
+        async withWatchLaterAccountLease<T>(
+          _accountId: bigint,
+          callback: (lease: WatchLaterAccountLease) => Promise<T>,
+        ) {
+          return callback({
+            async renew() {
+              renewals += 1;
+              return true;
+            },
+          });
+        },
+      }),
+      guardedAccount,
+      configured,
+      async () => {},
+      1,
+      {
+        snapshot: { aids: new Set(), completedAt: new Date() },
+        shouldContinue: () => continueRunning,
+      },
+    );
+    await csrfLookupStarted.promise;
+    continueRunning = false;
+    releaseCsrfLookup.resolve();
+
+    assert.equal((await reconciliation).reason, "stopped");
+    assert.equal(posts, 0);
+    assert.equal(renewals, 0);
+    assert.equal(attempts, 0);
+  } finally {
+    config.bilibili.csrfToken = originalCsrfToken;
+  }
+  assert.equal(sharedApiRateLimiter.getQueueLength(), 0);
+  assert.equal(sharedApiRateLimiter.getActiveCount(), 0);
+});
+
+test("cancelling during lease renewal sends no POST", async () => {
+  const renewalStarted = deferred<void>();
+  const releaseRenewal = deferred<void>();
+  let continueRunning = true;
+  let posts = 0;
+  let attempts = 0;
+  const guardedAccount = account([snapshot([])]);
+  guardedAccount.toViewClient.post = async () => {
+    posts += 1;
+    return { data: { code: 0 } };
+  };
+
+  const reconciliation = reconcileWatchLaterAccount(
+    database({
+      async getDesiredWatchLaterSet() {
+        return { aids: [1n], overflow: false };
+      },
+      async recordWatchLaterOperationAttempt() {
+        attempts += 1;
+        return true;
+      },
+      async withWatchLaterAccountLease<T>(
+        _accountId: bigint,
+        callback: (lease: WatchLaterAccountLease) => Promise<T>,
+      ) {
+        return callback({
+          async renew() {
+            renewalStarted.resolve();
+            await releaseRenewal.promise;
+            return true;
+          },
+        });
+      },
+    }),
+    guardedAccount,
+    configured,
+    async () => {},
+    1,
+    {
+      snapshot: { aids: new Set(), completedAt: new Date() },
+      shouldContinue: () => continueRunning,
+    },
+  );
+  await renewalStarted.promise;
+  continueRunning = false;
+  releaseRenewal.resolve();
+
+  assert.equal((await reconciliation).reason, "stopped");
+  assert.equal(posts, 0);
+  assert.equal(attempts, 0);
+  assert.equal(sharedApiRateLimiter.getQueueLength(), 0);
+  assert.equal(sharedApiRateLimiter.getActiveCount(), 0);
+});
+
+test("cancelling after durable attempt marking sends no POST and retains recovery intent", async () => {
+  const attemptStarted = deferred<void>();
+  const releaseAttempt = deferred<void>();
+  let continueRunning = true;
+  let posts = 0;
+  let attempts = 0;
+  let resolved = 0;
+  const guardedAccount = account([snapshot([])]);
+  guardedAccount.toViewClient.post = async () => {
+    posts += 1;
+    return { data: { code: 0 } };
+  };
+
+  const reconciliation = reconcileWatchLaterAccount(
+    database({
+      async getDesiredWatchLaterSet() {
+        return { aids: [1n], overflow: false };
+      },
+      async recordWatchLaterOperationAttempt() {
+        attempts += 1;
+        attemptStarted.resolve();
+        await releaseAttempt.promise;
+        return true;
+      },
+      async resolveWatchLaterOperation() {
+        resolved += 1;
+        return true;
+      },
+    }),
+    guardedAccount,
+    configured,
+    async () => {},
+    1,
+    {
+      snapshot: { aids: new Set(), completedAt: new Date() },
+      shouldContinue: () => continueRunning,
+    },
+  );
+  await attemptStarted.promise;
+  continueRunning = false;
+  releaseAttempt.resolve();
+
+  assert.equal((await reconciliation).reason, "stopped");
+  assert.equal(posts, 0);
+  assert.equal(attempts, 1);
+  assert.equal(resolved, 0);
   assert.equal(sharedApiRateLimiter.getQueueLength(), 0);
   assert.equal(sharedApiRateLimiter.getActiveCount(), 0);
 });

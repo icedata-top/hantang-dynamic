@@ -110,6 +110,11 @@ export async function mutateWatchLater(
   action: WatchLaterAction,
   options: WatchLaterMutationOptions = {},
 ): Promise<number> {
+  // Prepare all request data before the final cancellation/lease fence.
+  const body = new URLSearchParams({
+    aid: aid.toString(),
+    csrf: await csrfToken(account),
+  });
   const release = await sharedApiRateLimiter.acquire();
   try {
     let abortReason: WatchLaterMutationPrePostAbortReason | undefined;
@@ -121,10 +126,6 @@ export async function mutateWatchLater(
     if (abortReason) {
       throw new WatchLaterMutationPrePostAbortError(abortReason);
     }
-    const body = new URLSearchParams({
-      aid: aid.toString(),
-      csrf: await csrfToken(account),
-    });
     const response = await account.toViewClient.post(
       action === "add" ? "/add" : "/del",
       body,

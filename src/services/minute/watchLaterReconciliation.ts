@@ -289,6 +289,7 @@ async function performOperation(
           return "lease_lost";
         }
         if (!ownsLease) return "lease_lost";
+        if (shouldContinue && !shouldContinue()) return "stopped";
 
         try {
           const attemptRecorded =
@@ -300,6 +301,8 @@ async function performOperation(
         } catch {
           return "attempt_unavailable";
         }
+        // This final synchronous check is immediately followed by the POST.
+        if (shouldContinue && !shouldContinue()) return "stopped";
       },
     });
     if (code === 0) {
