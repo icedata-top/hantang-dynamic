@@ -14,7 +14,7 @@ import { logger } from "../../utils/logger";
 import { batchSampleVideoStats } from "./batchSampleVideoStats";
 import { isCompleteVideoMinuteSample } from "./completeSample";
 import { shouldPersistMinuteSample } from "./persistencePolicy";
-import { startAutomaticWatchLaterManagement } from "./watchLaterReconciliation";
+import { runAutomaticWatchLaterManagement } from "./watchLaterReconciliation";
 
 const MAX_SLEEP_MS = 60_000;
 const MIN_SLEEP_MS = 100;
@@ -39,7 +39,7 @@ export interface MinuteHandlerDependencies {
   database?: MinuteDatabase;
   loadAccounts?: typeof loadAccounts;
   sampleVideoStats?: typeof batchSampleVideoStats;
-  startWatchLaterManagement?: typeof startAutomaticWatchLaterManagement;
+  runWatchLaterManagement?: typeof runAutomaticWatchLaterManagement;
 }
 
 function cancellableSleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -60,7 +60,7 @@ export class MinuteHandler {
   private db: MinuteDatabase;
   private readonly accounts: typeof loadAccounts;
   private readonly sampleVideoStats: typeof batchSampleVideoStats;
-  private readonly startWatchLaterManagement: typeof startAutomaticWatchLaterManagement;
+  private readonly runWatchLaterManagement: typeof runAutomaticWatchLaterManagement;
   private isRunning = false;
   private loopPromise: Promise<void> | null = null;
   private abortController: AbortController | null = null;
@@ -72,9 +72,8 @@ export class MinuteHandler {
     this.accounts = dependencies.loadAccounts ?? loadAccounts;
     this.sampleVideoStats =
       dependencies.sampleVideoStats ?? batchSampleVideoStats;
-    this.startWatchLaterManagement =
-      dependencies.startWatchLaterManagement ??
-      startAutomaticWatchLaterManagement;
+    this.runWatchLaterManagement =
+      dependencies.runWatchLaterManagement ?? runAutomaticWatchLaterManagement;
   }
 
   start(): void {
@@ -189,7 +188,7 @@ export class MinuteHandler {
     while (this.isRunning) {
       const startedAt = Date.now();
       try {
-        const run = await this.startWatchLaterManagement(
+        await this.runWatchLaterManagement(
           this.db,
           this.accounts(),
           undefined,
@@ -203,23 +202,11 @@ export class MinuteHandler {
             },
           },
         );
-        await this.observeWatchLaterConvergence(run);
       } catch (error) {
         logger.error("Watch-later management failed:", error);
       }
       const nextDelay = Math.max(0, 15 * 60_000 - (Date.now() - startedAt));
       await cancellableSleep(nextDelay, signal);
-    }
-  }
-
-  private async observeWatchLaterConvergence(managementRun: {
-    convergence: Promise<unknown>;
-  }): Promise<void> {
-    try {
-      await managementRun.convergence;
-      logger.info("Watch Later reconciliation cycle completed");
-    } catch (error) {
-      logger.error("Watch Later background convergence failed:", error);
     }
   }
 

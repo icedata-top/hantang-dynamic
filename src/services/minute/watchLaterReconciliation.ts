@@ -137,14 +137,17 @@ async function reconcileAccount(
         await pace(async () => {
           code = await mutateWatchLater(account, aid, action, {
             async beforePost() {
+              if (now() >= deadline) return "deadline";
               if (shouldContinue && !shouldContinue()) return "stopped";
               return (await lease.renew()) ? undefined : "lease_lost";
             },
           });
         });
       } catch (error) {
-        if (error instanceof WatchLaterMutationPrePostAbortError)
+        if (error instanceof WatchLaterMutationPrePostAbortError) {
+          if (error.reason === "deadline") return "deadline";
           return error.reason === "stopped" ? "stopped" : "lease_lost";
+        }
         watchLaterMutationsTotal.inc({ action, outcome: "ambiguous" });
         return "ambiguous";
       }
@@ -247,8 +250,8 @@ export async function runAutomaticWatchLaterManagement(
   );
   const delay = options.delay ?? sleep;
   const now = options.now ?? Date.now;
-  const pace = createPacer(delay);
   const deadline = now() + CYCLE_DEADLINE_MS;
+  const pace = createPacer(delay);
   const results: WatchLaterReconciliationResult[] = [];
   for (const phase of ["delete", "add"] as const) {
     for (const [index, item] of healthy.entries()) {
@@ -275,12 +278,6 @@ export async function runAutomaticWatchLaterManagement(
     }
   }
   return results;
-}
-
-export async function startAutomaticWatchLaterManagement(
-  ...args: Parameters<typeof runAutomaticWatchLaterManagement>
-): Promise<{ convergence: Promise<WatchLaterReconciliationResult[]> }> {
-  return { convergence: runAutomaticWatchLaterManagement(...args) };
 }
 
 export function selectWatchLaterEmpiricalAccount<
@@ -319,14 +316,21 @@ export async function runWatchLaterEmpiricalAddTest(
     (aid) => !initial.aids.has(aid.toString()),
   )) {
     if (added + skipped > 0) await delay(MUTATION_DELAY_MS);
+    let shouldMarkFailed = false;
     try {
-      if ((await mutateWatchLater(account, aid, "add")) === 0) {
+      const code = await mutateWatchLater(account, aid, "add");
+      if (code === 0) {
         added += 1;
         continue;
       }
-    } catch {}
+      shouldMarkFailed = code !== CAPACITY_BLOCKED_CODE;
+    } catch {
+      shouldMarkFailed = true;
+    }
     skipped += 1;
-    await database.markWatchLaterEmpiricalFailedAid?.(aid);
+    if (shouldMarkFailed) {
+      await database.markWatchLaterEmpiricalFailedAid?.(aid);
+    }
   }
   return {
     reason: "eligible_exhausted",

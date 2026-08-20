@@ -35,6 +35,7 @@ export interface WatchLaterSnapshot {
 }
 
 export type WatchLaterMutationPrePostAbortReason =
+  | "deadline"
   | "stopped"
   | "lease_lost"
   | "attempt_unavailable";
