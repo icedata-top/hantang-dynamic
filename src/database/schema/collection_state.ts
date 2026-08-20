@@ -55,6 +55,13 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     )
   `);
 
+  // This column must exist before fn_select_due_minute_videos is replaced
+  // with its five-column return signature below.
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD COLUMN IF NOT EXISTS watch_later_managed_account_ids bigint[] NOT NULL DEFAULT '{}'
+  `);
+
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_video_collection_state_minute_due
     ON video_collection_state(next_minute_due_at, aid)

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
+import { selectDueMinuteVideos } from "./collectionState";
 import {
   initCollectionStateSchema,
   repairDeletedVideoCollectionStates,
@@ -75,4 +76,72 @@ test("daily refresh terminals deleted state and minute predicates exclude it", a
     /WHEN video_collection_state\.priority = -1 OR EXCLUDED\.priority = -1 THEN NULL/,
   );
   assert.match(schemaSql, /FROM video_collection_state\s+WHERE priority > 0/);
+});
+
+test("collection-state schema adds Watch Later state before replacing the due-video function signature", async () => {
+  const queries: string[] = [];
+  const pool = {
+    async query(sql: string) {
+      queries.push(sql);
+      return { rows: [], rowCount: 0 };
+    },
+  } as Pool;
+
+  await initCollectionStateSchema(pool);
+
+  const managedAccountColumn = queries.findIndex((sql) =>
+    sql.includes("ADD COLUMN IF NOT EXISTS watch_later_managed_account_ids"),
+  );
+  const dropDueFunction = queries.findIndex((sql) =>
+    sql.includes("DROP FUNCTION IF EXISTS fn_select_due_minute_videos"),
+  );
+  const createDueFunction = queries.findIndex((sql) =>
+    sql.includes("CREATE OR REPLACE FUNCTION fn_select_due_minute_videos"),
+  );
+
+  assert.ok(managedAccountColumn >= 0);
+  assert.ok(dropDueFunction > managedAccountColumn);
+  assert.ok(createDueFunction > dropDueFunction);
+  assert.match(
+    queries[createDueFunction] ?? "",
+    /RETURNS TABLE \(aid bigint, last_view bigint, near_gate boolean, due_at timestamptz, watch_later_managed_account_ids bigint\[\]\)/,
+  );
+});
+
+test("due minute video decoding preserves the function Watch Later array", async () => {
+  const queries: { sql: string; values: unknown[] | undefined }[] = [];
+  const now = new Date("2026-08-20T13:45:00.000Z");
+  const pool = {
+    async query(sql: string, values?: unknown[]) {
+      queries.push({ sql, values });
+      return {
+        rows: [
+          {
+            aid: "722988196",
+            last_view: "10880",
+            near_gate: false,
+            due_at: "2026-08-20T13:45:00.000Z",
+            watch_later_managed_account_ids: ["3691008040634728"],
+          },
+        ],
+      };
+    },
+  } as unknown as Pool;
+
+  const due = await selectDueMinuteVideos(pool, 50, now);
+
+  assert.deepEqual(due, [
+    {
+      aid: 722988196n,
+      lastView: 10880n,
+      nearGate: false,
+      dueAt: now,
+      watchLaterManagedAccountIds: [3691008040634728n],
+    },
+  ]);
+  assert.match(
+    queries[0]?.sql ?? "",
+    /SELECT aid, last_view, near_gate, due_at, watch_later_managed_account_ids FROM fn_select_due_minute_videos/,
+  );
+  assert.deepEqual(queries[0]?.values, [now, 50]);
 });
