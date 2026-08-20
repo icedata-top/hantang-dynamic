@@ -51,6 +51,10 @@ export interface WatchLaterOperationResolution {
   resolvedAt?: Date;
 }
 
+export interface WatchLaterAccountLease {
+  renew(): Promise<boolean>;
+}
+
 interface WatchLaterAccountRow {
   account_id: string;
   capacity_blocked_at: Date | null;
@@ -381,7 +385,7 @@ export async function resolveWatchLaterOperation(
 export async function withWatchLaterAccountLease<T>(
   pool: Pool,
   accountId: bigint,
-  callback: () => Promise<T>,
+  callback: (lease: WatchLaterAccountLease) => Promise<T>,
 ): Promise<T> {
   const leaseToken = randomUUID();
   const acquired = await pool.query(
@@ -397,8 +401,22 @@ export async function withWatchLaterAccountLease<T>(
   if ((acquired.rowCount ?? 0) !== 1) {
     throw new Error(`Watch-later account ${accountId} is already leased`);
   }
+  const lease: WatchLaterAccountLease = {
+    async renew(): Promise<boolean> {
+      const renewed = await pool.query(
+        `UPDATE watch_later_account
+         SET lease_expires_at = now() + interval '5 minutes',
+             updated_at = now()
+         WHERE account_id = $1
+           AND lease_token = $2::uuid
+           AND lease_expires_at > now()`,
+        [accountId.toString(), leaseToken],
+      );
+      return (renewed.rowCount ?? 0) === 1;
+    },
+  };
   try {
-    return await callback();
+    return await callback(lease);
   } finally {
     await pool.query(
       `UPDATE watch_later_account

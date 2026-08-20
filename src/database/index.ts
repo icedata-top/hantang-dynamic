@@ -139,6 +139,7 @@ import {
   removeWatchLaterOwnershipAfterCompleteSnapshot,
   resolveWatchLaterOperation,
   type WatchLaterAccount,
+  type WatchLaterAccountLease,
   type WatchLaterDesiredSet,
   type WatchLaterOperation,
   type WatchLaterOperationIntent,
@@ -635,7 +636,7 @@ export class Database {
 
   public async withWatchLaterAccountLease<T>(
     accountId: bigint,
-    callback: () => Promise<T>,
+    callback: (lease: WatchLaterAccountLease) => Promise<T>,
   ): Promise<T> {
     return withWatchLaterAccountLease(this.ensurePool(), accountId, callback);
   }

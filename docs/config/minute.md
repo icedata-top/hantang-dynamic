@@ -70,9 +70,12 @@ snapshot and creates the deterministic account layout before minute sampling
 begins. Reconciliation then continues in a managed background task. It deletes
 non-target remote entries before adding targets, yields after internal chunks,
 and does not fetch a new snapshot for each chunk. Mutation POSTs remain at
-least one second apart. An ambiguous request, invalid snapshot, or `90001`
-capacity result stops that account's convergence until a restart obtains a
-fresh complete snapshot and recovers durable pending operations.
+least one second apart globally across every configured account and internal
+chunk boundary. Each POST is preceded by a durable attempt marker and a fenced
+lease renewal. If either step fails, that account stops without another POST;
+a restart obtains a fresh complete snapshot and recovers durable pending
+operations. An ambiguous request, invalid snapshot, or `90001` capacity result
+also stops that account's convergence.
 
 Daily inserts also refresh state through the `video_daily` trigger. This updates
 priority and due time; it does not insert minute samples directly.

@@ -9,7 +9,10 @@ import {
 } from "../../api/client";
 import { config } from "../../config";
 import { StateManager } from "../../core/state";
-import type { WatchLaterAccount } from "../../database/watchLater";
+import type {
+  WatchLaterAccount,
+  WatchLaterAccountLease,
+} from "../../database/watchLater";
 import {
   watchLaterAccountSlotItems,
   watchLaterCapacity,
@@ -108,9 +111,13 @@ function database(
     async recordWatchLaterCompleteSnapshot() {},
     async withWatchLaterAccountLease<T>(
       _accountId: bigint,
-      callback: () => Promise<T>,
+      callback: (lease: WatchLaterAccountLease) => Promise<T>,
     ) {
-      return callback();
+      return callback({
+        async renew() {
+          return true;
+        },
+      });
     },
     ...overrides,
   };
@@ -243,6 +250,189 @@ test("background convergence completes multiple chunks from one startup snapshot
     { labels: { account_slot: "0", kind: "remaining_delete" }, value: 0 },
     { labels: { account_slot: "0", kind: "remaining_add" }, value: 0 },
   ]);
+});
+
+test("background convergence serializes mutation pacing globally across account chunks", async () => {
+  const posts: string[] = [];
+  const delays: number[] = [];
+  const first = account([snapshot([])], [], "7");
+  const second = account([snapshot([])], [], "8");
+  first.toViewClient.post = async () => {
+    posts.push("7");
+    return { data: { code: 0 } };
+  };
+  second.toViewClient.post = async () => {
+    posts.push("8");
+    return { data: { code: 0 } };
+  };
+
+  const run = await startAutomaticWatchLaterManagement(
+    {
+      ...database({
+        async getDesiredWatchLaterSet() {
+          return { aids: [1n, 2n, 3n, 4n], overflow: false };
+        },
+      }),
+      async getWatchLaterAccounts() {
+        return [configured, { ...configured, accountId: 8n }];
+      },
+    },
+    [first, second],
+    2,
+    {
+      delay: async (milliseconds) => {
+        delays.push(milliseconds);
+      },
+      mutationChunkSize: 1,
+    },
+  );
+
+  await run.convergence;
+  assert.deepEqual(posts, ["7", "8", "7", "8"]);
+  assert.deepEqual(delays, [1_000, 1_000, 1_000]);
+});
+
+test("lease renewal retains a multi-chunk convergence lease beyond five minutes", async () => {
+  let now = 0;
+  let leaseExpiresAt = 300_000;
+  let competingAcquisitionSucceeded = false;
+  const operationAids: bigint[] = [];
+  const result = await reconcileWatchLaterAccount(
+    database({
+      async getDesiredWatchLaterSet() {
+        return {
+          aids: Array.from({ length: 7 }, (_, index) => BigInt(index + 1)),
+          overflow: false,
+        };
+      },
+      async createWatchLaterOperation(input) {
+        operationAids.push(input.aid);
+      },
+      async withWatchLaterAccountLease<T>(
+        _accountId: bigint,
+        callback: (lease: WatchLaterAccountLease) => Promise<T>,
+      ) {
+        return callback({
+          async renew() {
+            if (now >= leaseExpiresAt) return false;
+            leaseExpiresAt = now + 300_000;
+            return true;
+          },
+        });
+      },
+    }),
+    account([snapshot([])]),
+    configured,
+    async () => {
+      now += 60_001;
+      if (now > 300_000 && now >= leaseExpiresAt) {
+        competingAcquisitionSucceeded = true;
+      }
+    },
+    7,
+  );
+
+  assert.equal(result.reason, "completed");
+  assert.equal(now > 300_000, true);
+  assert.equal(competingAcquisitionSucceeded, false);
+  assert.equal(leaseExpiresAt > now, true);
+  assert.equal(operationAids.length, 7);
+});
+
+test("lease renewal failure stops an account before its next mutation", async () => {
+  let posts = 0;
+  const guardedAccount = account([snapshot([])]);
+  guardedAccount.toViewClient.post = async () => {
+    posts += 1;
+    return { data: { code: 0 } };
+  };
+  const result = await reconcileWatchLaterAccount(
+    database({
+      async getDesiredWatchLaterSet() {
+        return { aids: [1n, 2n], overflow: false };
+      },
+      async withWatchLaterAccountLease<T>(
+        _accountId: bigint,
+        callback: (lease: WatchLaterAccountLease) => Promise<T>,
+      ) {
+        return callback({
+          async renew() {
+            return false;
+          },
+        });
+      },
+    }),
+    guardedAccount,
+    configured,
+    async () => {},
+    2,
+  );
+
+  assert.equal(result.reason, "lease_lost");
+  assert.equal(posts, 0);
+});
+
+test("an unavailable durable attempt marker stops the account without posting", async () => {
+  let posts = 0;
+  const guardedAccount = account([snapshot([])]);
+  guardedAccount.toViewClient.post = async () => {
+    posts += 1;
+    return { data: { code: 0 } };
+  };
+  const result = await reconcileWatchLaterAccount(
+    database({
+      async getDesiredWatchLaterSet() {
+        return { aids: [1n], overflow: false };
+      },
+      async recordWatchLaterOperationAttempt() {
+        return false;
+      },
+    }),
+    guardedAccount,
+    configured,
+    async () => {},
+    1,
+  );
+
+  assert.equal(result.reason, "attempt_unavailable");
+  assert.equal(posts, 0);
+});
+
+test("background convergence settles every account after an isolated branch failure", async () => {
+  let releaseSecondAccount: (() => void) | undefined;
+  const secondAccountReady = new Promise<void>((resolve) => {
+    releaseSecondAccount = resolve;
+  });
+  const run = await startAutomaticWatchLaterManagement(
+    {
+      ...database(),
+      async getWatchLaterAccounts() {
+        return [configured, { ...configured, accountId: 8n }];
+      },
+      async withWatchLaterAccountLease<T>(
+        accountId: bigint,
+        callback: (lease: WatchLaterAccountLease) => Promise<T>,
+      ) {
+        if (accountId === 7n) throw new Error("lease acquisition failed");
+        await secondAccountReady;
+        return callback({
+          async renew() {
+            return true;
+          },
+        });
+      },
+    },
+    [account([snapshot([])]), account([snapshot([])], [], "8")],
+  );
+  let settled = false;
+  void run.convergence.then(() => {
+    settled = true;
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  releaseSecondAccount?.();
+  assert.equal((await run.convergence).length, 1);
 });
 
 test("desired Watch Later aids have deterministic deduplicated assignments for two and three accounts", () => {

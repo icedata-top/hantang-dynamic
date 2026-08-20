@@ -243,3 +243,62 @@ test("account lease is persisted before work and released afterward", async () =
   assert.match(queries[0]?.sql ?? "", /SET lease_token = \$2::uuid/);
   assert.match(queries[1]?.sql ?? "", /SET lease_token = NULL/);
 });
+
+test("account lease renewal is fenced by the current token and expiry", async () => {
+  const queries: Array<{ sql: string; values?: unknown[] }> = [];
+  const pool = {
+    async query(sql: string, values?: unknown[]) {
+      queries.push({ sql, values });
+      return { rows: [], rowCount: 1 };
+    },
+  } as Pool;
+  let renewed = false;
+
+  await withWatchLaterAccountLease(pool, 42n, async (lease) => {
+    renewed = await lease.renew();
+  });
+
+  assert.equal(renewed, true);
+  assert.match(queries[1]?.sql ?? "", /lease_token = \$2::uuid/);
+  assert.match(queries[1]?.sql ?? "", /lease_expires_at > now\(\)/);
+});
+
+test("renewed account leases reject a competing acquisition after five minutes", async () => {
+  let now = 0;
+  let holder: string | null = null;
+  let expiresAt = 0;
+  const pool = {
+    async query(sql: string, values?: unknown[]) {
+      const token = values?.[1] as string | undefined;
+      if (sql.includes("SET lease_token = $2::uuid")) {
+        if (holder !== null && expiresAt >= now) {
+          return { rows: [], rowCount: 0 };
+        }
+        holder = token ?? null;
+        expiresAt = now + 300_000;
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes("SET lease_expires_at")) {
+        if (holder !== token || expiresAt <= now) {
+          return { rows: [], rowCount: 0 };
+        }
+        expiresAt = now + 300_000;
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes("SET lease_token = NULL")) {
+        if (holder === token) holder = null;
+        return { rows: [], rowCount: 1 };
+      }
+      throw new Error("unexpected query");
+    },
+  } as Pool;
+
+  await withWatchLaterAccountLease(pool, 42n, async (lease) => {
+    now = 240_000;
+    assert.equal(await lease.renew(), true);
+    now = 360_000;
+    await assert.rejects(() =>
+      withWatchLaterAccountLease(pool, 42n, async () => "competing"),
+    );
+  });
+});

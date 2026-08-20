@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   WatchLaterAccount,
+  WatchLaterAccountLease,
   WatchLaterAction,
   WatchLaterOperation,
 } from "../../database/watchLater";
@@ -104,12 +105,18 @@ export interface WatchLaterDatabase {
   ): Promise<void>;
   withWatchLaterAccountLease<T>(
     accountId: bigint,
-    callback: () => Promise<T>,
+    callback: (lease: WatchLaterAccountLease) => Promise<T>,
   ): Promise<T>;
 }
 
 export interface WatchLaterReconciliationResult {
-  reason: "snapshot_invalid" | "desired_overflow" | "completed";
+  reason:
+    | "snapshot_invalid"
+    | "desired_overflow"
+    | "completed"
+    | "lease_lost"
+    | "attempt_unavailable"
+    | "stopped";
   added: number;
   deleted: number;
   recovered: number;
@@ -247,27 +254,49 @@ async function performOperation(
   aid: bigint,
   runRef: string,
   mutationPacer: MutationPacer,
+  lease: WatchLaterAccountLease,
   shouldContinue?: () => boolean,
 ): Promise<
-  "succeeded" | "failed" | "ambiguous" | "capacity_blocked" | "stopped"
+  | "succeeded"
+  | "failed"
+  | "ambiguous"
+  | "capacity_blocked"
+  | "lease_lost"
+  | "attempt_unavailable"
+  | "stopped"
 > {
   const releaseMutation = await mutationPacer.beforeMutation();
-  if (shouldContinue && !shouldContinue()) {
-    releaseMutation();
-    return "stopped";
-  }
   const operationId = randomUUID();
-  await database.createWatchLaterOperation({
-    operationId,
-    accountId: BigInt(account.uid),
-    aid,
-    action,
-    intentAt: new Date(),
-    provenanceRunRef: runRef,
-  });
-
-  await database.recordWatchLaterOperationAttempt(operationId, new Date());
   try {
+    if (shouldContinue && !shouldContinue()) return "stopped";
+    await database.createWatchLaterOperation({
+      operationId,
+      accountId: BigInt(account.uid),
+      aid,
+      action,
+      intentAt: new Date(),
+      provenanceRunRef: runRef,
+    });
+    let attemptRecorded: boolean;
+    try {
+      attemptRecorded = await database.recordWatchLaterOperationAttempt(
+        operationId,
+        new Date(),
+      );
+    } catch {
+      return "attempt_unavailable";
+    }
+    if (!attemptRecorded) return "attempt_unavailable";
+
+    let ownsLease: boolean;
+    try {
+      ownsLease = await lease.renew();
+    } catch {
+      return "lease_lost";
+    }
+    if (!ownsLease) return "lease_lost";
+    if (shouldContinue && !shouldContinue()) return "stopped";
+
     const code = await mutateWatchLater(account, aid, action);
     if (code === 0) {
       await database.resolveWatchLaterOperation({
@@ -310,7 +339,7 @@ export async function reconcileWatchLaterAccount(
 ): Promise<WatchLaterReconciliationResult> {
   return database.withWatchLaterAccountLease(
     watchLaterAccount.accountId,
-    async () => {
+    async (lease) => {
       const snapshot =
         input.snapshot ?? (await fetchWatchLaterSnapshot(account.toViewClient));
       if (!snapshot) {
@@ -383,6 +412,7 @@ export async function reconcileWatchLaterAccount(
       let deleted = 0;
       let capacityBlocked = false;
       let requiresRecoverySnapshot = false;
+      let reason: WatchLaterReconciliationResult["reason"] = "completed";
       const runRef = randomUUID();
       const additions = desired.aids.filter(
         (aid) => !snapshot.aids.has(aid.toString()),
@@ -408,9 +438,14 @@ export async function reconcileWatchLaterAccount(
           operation.aid,
           runRef,
           mutationPacer,
+          lease,
           input.shouldContinue,
         );
-        if (outcome === "stopped") break;
+        if (outcome === "stopped") {
+          reason = "stopped";
+          requiresRecoverySnapshot = true;
+          break;
+        }
         mutationsInChunk += 1;
         if (outcome === "succeeded") {
           if (operation.action === "add") {
@@ -433,6 +468,11 @@ export async function reconcileWatchLaterAccount(
           requiresRecoverySnapshot = true;
           break;
         }
+        if (outcome === "lease_lost" || outcome === "attempt_unavailable") {
+          reason = outcome;
+          requiresRecoverySnapshot = true;
+          break;
+        }
         if (
           mutationsInChunk ===
           (input.mutationChunkSize ?? MAX_MUTATIONS_PER_RUN)
@@ -449,7 +489,7 @@ export async function reconcileWatchLaterAccount(
         );
       }
       const result: WatchLaterReconciliationResult = {
-        reason: "completed",
+        reason,
         added,
         deleted,
         recovered,
@@ -580,7 +620,7 @@ export async function startAutomaticWatchLaterManagement(
 
   const delay = options.delay ?? sleep;
   const mutationPacer = createMutationPacer(delay);
-  const convergence = Promise.all(
+  const convergence = Promise.allSettled(
     healthyAccounts.map((healthyAccount, index) => {
       const assignedAids =
         assignedAidsByAccountId.get(
@@ -610,6 +650,13 @@ export async function startAutomaticWatchLaterManagement(
           mutationChunkSize: options.mutationChunkSize,
         },
       );
+    }),
+  ).then((settled) =>
+    settled.flatMap((outcome, index) => {
+      if (outcome.status === "fulfilled") return [outcome.value];
+      logger.error(`Watch Later convergence account_slot=${index} failed`);
+      watchLaterReconciliationsTotal.inc({ outcome: "branch_failed" });
+      return [];
     }),
   );
   return { convergence };

@@ -4,7 +4,10 @@ import axios, { type AxiosInstance } from "axios";
 import { CookieJar } from "tough-cookie";
 import type { AccountContext } from "../../core/account";
 import type { StateManager } from "../../core/state";
-import type { WatchLaterAccount } from "../../database/watchLater";
+import type {
+  WatchLaterAccount,
+  WatchLaterAccountLease,
+} from "../../database/watchLater";
 import {
   watchLaterAccountExclusionsTotal,
   watchLaterUnavailableAccounts,
@@ -86,9 +89,13 @@ function database(calls: string[]): MinuteDatabase {
     async recordWatchLaterCompleteSnapshot() {},
     async withWatchLaterAccountLease<T>(
       _accountId: bigint,
-      callback: () => Promise<T>,
+      callback: (lease: WatchLaterAccountLease) => Promise<T>,
     ) {
-      return callback();
+      return callback({
+        async renew() {
+          return true;
+        },
+      });
     },
     async getLatestCompleteVideoMinuteTuple() {
       return null;
@@ -325,9 +332,13 @@ test("MinuteHandler samples a zero-capacity enabled account without mutations", 
 test("MinuteHandler begins sampling while Watch Later convergence remains active", async () => {
   const calls: string[] = [];
   let resolveConvergence: (() => void) | undefined;
-  const convergence = new Promise<void>((resolve) => {
+  const activeAccount = new Promise<void>((resolve) => {
     resolveConvergence = resolve;
   });
+  const convergence = Promise.allSettled([
+    Promise.reject(new Error("account branch failed")),
+    activeAccount,
+  ]);
   const handler = new MinuteHandler({
     database: {
       ...database(calls),
@@ -346,6 +357,13 @@ test("MinuteHandler begins sampling while Watch Later convergence remains active
   handler.start();
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(calls, ["watch-later-started", "select-due"]);
+  const stopping = handler.stop();
+  let stopped = false;
+  void stopping.then(() => {
+    stopped = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(stopped, false);
   resolveConvergence?.();
-  await handler.stop();
+  await stopping;
 });
