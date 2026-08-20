@@ -16,7 +16,6 @@ import {
 import {
   sampleWatchLaterToViewAccountsWithStatus,
   type ToViewRequestAccount,
-  type WatchLaterToViewAccount,
 } from "./toview";
 
 interface BiliFavoriteResourceInfo {
@@ -56,6 +55,28 @@ export interface BiliFavoriteResponse {
 
 export interface BatchSampleDependencies {
   fetchStatsBatch(aids: bigint[]): Promise<BiliFavoriteResponse>;
+}
+
+export function selectWatchLaterRouting(
+  aids: readonly bigint[],
+  observedAccountIdsByAid: ReadonlyMap<string, readonly bigint[]>,
+  healthyAccountIds: ReadonlySet<bigint>,
+): Map<bigint, bigint[]> {
+  const selected = new Map<bigint, bigint[]>();
+  const seen = new Set<string>();
+  for (const aid of aids) {
+    const key = aid.toString();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const accountId = [...(observedAccountIdsByAid.get(key) ?? [])]
+      .filter((id) => id > 0n && healthyAccountIds.has(id))
+      .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))[0];
+    if (accountId === undefined) continue;
+    const accountAids = selected.get(accountId) ?? [];
+    accountAids.push(aid);
+    selected.set(accountId, accountAids);
+  }
+  return selected;
 }
 
 function toMinuteSample(
@@ -149,7 +170,8 @@ export async function batchSampleVideoStats(
     batchSize?: number;
     sampledAt?: Date;
     toViewAccounts?: ToViewRequestAccount[];
-    watchLaterToViewAccounts?: WatchLaterToViewAccount[];
+    observedWatchLaterAccountIdsByAid?: ReadonlyMap<string, readonly bigint[]>;
+    healthyWatchLaterAccountIds?: ReadonlySet<bigint>;
     onWatchLaterToViewAccountFailure?(accountId: bigint): void;
     dependencies?: Partial<BatchSampleDependencies>;
   },
@@ -158,18 +180,30 @@ export async function batchSampleVideoStats(
   const batchSize = options?.batchSize ?? config.minute.batchSize;
   const requestedAids = new Set(aids.map((aid) => aid.toString()));
   const samplesByAid = new Map<string, VideoMinuteSample>();
-  let toViewSamples: VideoMinuteSample[] = [];
+  const toViewSamples: VideoMinuteSample[] = [];
 
-  if (options?.toViewAccounts && options.watchLaterToViewAccounts) {
+  const routing = selectWatchLaterRouting(
+    aids,
+    options?.observedWatchLaterAccountIdsByAid ?? new Map(),
+    options?.healthyWatchLaterAccountIds ?? new Set(),
+  );
+  if (options?.toViewAccounts && routing.size > 0) {
     const toViewResult = await sampleWatchLaterToViewAccountsWithStatus(
       options.toViewAccounts,
-      options.watchLaterToViewAccounts,
+      [...routing.keys()].map((accountId) => ({ accountId })),
       sampledAt,
     );
     for (const accountId of toViewResult.failedAccountIds) {
       options.onWatchLaterToViewAccountFailure?.(accountId);
     }
-    toViewSamples = toViewResult.samples;
+    for (const [accountId, accountAids] of routing) {
+      const accountSamples =
+        toViewResult.samplesByAccountId.get(accountId) ?? [];
+      toViewSamples.push(
+        ...partitionMinuteSamplingCoverage(accountAids, accountSamples)
+          .toViewSamples,
+      );
+    }
   }
 
   const coverage = partitionMinuteSamplingCoverage(aids, toViewSamples);

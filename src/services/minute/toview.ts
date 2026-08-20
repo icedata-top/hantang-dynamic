@@ -36,6 +36,7 @@ export interface ToViewRequestAccount extends ToViewAccountIdentity {
 export interface ToViewSamplesResult {
   samples: CompleteVideoMinuteTuple[];
   failedAccountIds: bigint[];
+  samplesByAccountId: ReadonlyMap<bigint, CompleteVideoMinuteTuple[]>;
 }
 
 export type ToViewAccount = AccountContext;
@@ -122,6 +123,7 @@ export async function sampleWatchLaterToViewAccountsWithStatus(
   );
   const samples: CompleteVideoMinuteTuple[] = [];
   const failedAccountIds: bigint[] = [];
+  const samplesByAccountId = new Map<bigint, CompleteVideoMinuteTuple[]>();
 
   for (const account of selectedAccounts) {
     const accountSamples = await fetchToViewSamples(account, sampledAt);
@@ -130,10 +132,12 @@ export async function sampleWatchLaterToViewAccountsWithStatus(
       if (id !== null) failedAccountIds.push(id);
       continue;
     }
+    const id = accountId(account);
+    if (id !== null) samplesByAccountId.set(id, accountSamples);
     for (const sample of accountSamples) {
       samples.push(sample);
     }
   }
 
-  return { samples, failedAccountIds };
+  return { samples, failedAccountIds, samplesByAccountId };
 }

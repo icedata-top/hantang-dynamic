@@ -681,7 +681,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
   // ── Minute collection scheduling ──────────────────────────────────
 
   // Select videos due for minute sampling.
-  // Returns (aid, last_view, near_gate, due_at) — the handler uses near_gate
+  // Returns observed Watch Later membership with each due row. The handler uses near_gate
   // and due_at to implement batch-accumulation: non-gate videos are held
   // until the batch is full (50), 30 s have elapsed, or a gate video appears.
   // Single-consumer architecture: no row locking needed.
@@ -692,7 +692,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     CREATE OR REPLACE FUNCTION fn_select_due_minute_videos(
       p_now timestamptz DEFAULT now(),
       p_limit integer DEFAULT 50
-    ) RETURNS TABLE (aid bigint, last_view bigint, near_gate boolean, due_at timestamptz) AS $$
+    ) RETURNS TABLE (aid bigint, last_view bigint, near_gate boolean, due_at timestamptz, watch_later_managed_account_ids bigint[]) AS $$
     BEGIN
       -- Expire bootstrap entries that never got daily data
       UPDATE video_collection_state
@@ -724,7 +724,8 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           AND extract(epoch from s.next_minute_due_at - s.last_minute_success_at)
               BETWEEN 0 AND 74
         ) AS near_gate,
-        s.next_minute_due_at AS due_at
+        s.next_minute_due_at AS due_at,
+        s.watch_later_managed_account_ids
       FROM video_collection_state s
       WHERE s.priority > 0
         AND s.next_minute_due_at IS NOT NULL

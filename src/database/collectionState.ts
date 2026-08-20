@@ -114,10 +114,16 @@ export async function selectDueMinuteVideos(
   limit = 50,
   now = new Date(),
 ): Promise<
-  { aid: bigint; lastView: bigint | null; nearGate: boolean; dueAt: Date }[]
+  {
+    aid: bigint;
+    lastView: bigint | null;
+    nearGate: boolean;
+    dueAt: Date;
+    watchLaterManagedAccountIds: bigint[];
+  }[]
 > {
   const result = await pool.query(
-    "SELECT aid, last_view, near_gate, due_at FROM fn_select_due_minute_videos($1, $2)",
+    "SELECT aid, last_view, near_gate, due_at, watch_later_managed_account_ids FROM fn_select_due_minute_videos($1, $2)",
     [now, limit],
   );
   return result.rows.map((row: Record<string, unknown>) => ({
@@ -128,6 +134,13 @@ export async function selectDueMinuteVideos(
         : BigInt(row.last_view as string | number),
     nearGate: row.near_gate as boolean,
     dueAt: new Date(row.due_at as string | number),
+    watchLaterManagedAccountIds: Array.isArray(
+      row.watch_later_managed_account_ids,
+    )
+      ? row.watch_later_managed_account_ids.map((value) =>
+          BigInt(value as string | number),
+        )
+      : [],
   }));
 }
 

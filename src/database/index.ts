@@ -560,7 +560,13 @@ export class Database {
     limit?: number,
     now?: Date,
   ): Promise<
-    { aid: bigint; lastView: bigint | null; nearGate: boolean; dueAt: Date }[]
+    {
+      aid: bigint;
+      lastView: bigint | null;
+      nearGate: boolean;
+      dueAt: Date;
+      watchLaterManagedAccountIds: bigint[];
+    }[]
   > {
     return selectDueMinuteVideos(this.ensurePool(), limit, now);
   }

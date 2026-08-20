@@ -34,7 +34,14 @@ test("To View fetches once per configured account", async () => {
     new Date(),
   );
 
-  assert.deepEqual(result, { samples: [], failedAccountIds: [] });
+  assert.deepEqual(result, {
+    samples: [],
+    failedAccountIds: [],
+    samplesByAccountId: new Map([
+      [100n, []],
+      [200n, []],
+    ]),
+  });
   assert.equal(requestCount, 2);
 });
 
@@ -69,5 +76,9 @@ test("To View rejects an incomplete response before sampling", async () => {
     new Date(),
   );
 
-  assert.deepEqual(result, { samples: [], failedAccountIds: [100n] });
+  assert.deepEqual(result, {
+    samples: [],
+    failedAccountIds: [100n],
+    samplesByAccountId: new Map(),
+  });
 });

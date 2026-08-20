@@ -55,6 +55,7 @@ export interface WatchLaterManagementOptions {
   shouldContinue?(): boolean;
   delay?: Delay;
   now?(): number;
+  onHealthyAccounts?(accountIds: ReadonlySet<bigint>): void;
 }
 
 export interface WatchLaterEmpiricalDatabase {
@@ -112,6 +113,7 @@ async function reconcileAccount(
   pace: (action: () => Promise<void>) => Promise<void>,
   deadline: number,
   now: () => number,
+  phase: "delete" | "add" | "all" = "all",
   shouldContinue?: () => boolean,
 ): Promise<WatchLaterReconciliationResult> {
   return database.withWatchLaterAccountLease(row.accountId, async (lease) => {
@@ -160,11 +162,11 @@ async function reconcileAccount(
       });
       return reason;
     };
-    for (const aid of deletes) {
+    for (const aid of phase === "add" ? [] : deletes) {
       const reason = await mutate("delete", aid);
       if (reason) return { reason, added, deleted };
     }
-    for (const aid of adds) {
+    for (const aid of phase === "delete" ? [] : adds) {
       const reason = await mutate("add", aid);
       if (reason) return { reason, added, deleted };
     }
@@ -230,6 +232,9 @@ export async function runAutomaticWatchLaterManagement(
     { state: "unhealthy" },
     rows.length - healthy.length,
   );
+  options.onHealthyAccounts?.(
+    new Set(healthy.map((item) => item.row.accountId)),
+  );
   if (healthy.length === 0) return [];
   const desired = await database.getDesiredWatchLaterSet(
     healthy.length * capacity,
@@ -245,24 +250,28 @@ export async function runAutomaticWatchLaterManagement(
   const pace = createPacer(delay);
   const deadline = now() + CYCLE_DEADLINE_MS;
   const results: WatchLaterReconciliationResult[] = [];
-  for (const [index, item] of healthy.entries()) {
-    try {
-      const result = await reconcileAccount(
-        database,
-        item.account,
-        item.row,
-        assignments[index] ?? [],
-        item.snapshot,
-        pace,
-        deadline,
-        now,
-        options.shouldContinue,
-      );
-      results.push(result);
-      watchLaterReconciliationsTotal.inc({ outcome: result.reason });
-      if (result.reason !== "completed" && result.reason !== "deadline") break;
-    } catch {
-      watchLaterReconciliationsTotal.inc({ outcome: "lease_lost" });
+  for (const phase of ["delete", "add"] as const) {
+    for (const [index, item] of healthy.entries()) {
+      try {
+        const result = await reconcileAccount(
+          database,
+          item.account,
+          item.row,
+          assignments[index] ?? [],
+          item.snapshot,
+          pace,
+          deadline,
+          now,
+          phase,
+          options.shouldContinue,
+        );
+        results.push(result);
+        watchLaterReconciliationsTotal.inc({ outcome: result.reason });
+        if (result.reason !== "completed") return results;
+      } catch {
+        watchLaterReconciliationsTotal.inc({ outcome: "lease_lost" });
+        return results;
+      }
     }
   }
   return results;

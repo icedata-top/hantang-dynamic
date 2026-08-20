@@ -65,6 +65,7 @@ export class MinuteHandler {
   private loopPromise: Promise<void> | null = null;
   private abortController: AbortController | null = null;
   private watchLaterManagementPromise: Promise<void> | null = null;
+  private readonly healthyWatchLaterAccountIds = new Set<bigint>();
 
   constructor(dependencies: MinuteHandlerDependencies = {}) {
     this.db = dependencies.database ?? Database.getInstance();
@@ -79,6 +80,7 @@ export class MinuteHandler {
   start(): void {
     if (this.loopPromise) return;
     this.isRunning = true;
+    this.healthyWatchLaterAccountIds.clear();
     this.abortController = new AbortController();
     this.loopPromise = this.loop(this.abortController.signal);
     this.watchLaterManagementPromise = this.runWatchLaterController(
@@ -191,7 +193,15 @@ export class MinuteHandler {
           this.db,
           this.accounts(),
           undefined,
-          { shouldContinue: () => this.isRunning },
+          {
+            shouldContinue: () => this.isRunning,
+            onHealthyAccounts: (accountIds) => {
+              this.healthyWatchLaterAccountIds.clear();
+              for (const accountId of accountIds) {
+                this.healthyWatchLaterAccountIds.add(accountId);
+              }
+            },
+          },
         );
         await this.observeWatchLaterConvergence(run);
       } catch (error) {
@@ -218,7 +228,11 @@ export class MinuteHandler {
    * counter-aware minute policy and advance all remaining valid coverage.
    */
   async processBatch(
-    due: { aid: bigint; lastView: bigint | null }[],
+    due: {
+      aid: bigint;
+      lastView: bigint | null;
+      watchLaterManagedAccountIds: bigint[];
+    }[],
   ): Promise<number> {
     if (due.length === 0) return 0;
     const endBatch = minuteBatchDurationSeconds.startTimer();
@@ -227,16 +241,18 @@ export class MinuteHandler {
     let samples: VideoMinuteSample[] = [];
     try {
       const accounts = this.accounts();
-      const watchLaterToViewAccounts = await this.db.getWatchLaterAccounts(
-        accounts
-          .filter((account) => account.enableWatchLater)
-          .map((account) => BigInt(account.uid)),
+      const observedWatchLaterAccountIdsByAid = new Map(
+        due.map(
+          (item) =>
+            [item.aid.toString(), item.watchLaterManagedAccountIds] as const,
+        ),
       );
       try {
         samples = await this.sampleVideoStats(aids, {
           batchSize: config.minute.batchSize,
           toViewAccounts: accounts,
-          watchLaterToViewAccounts,
+          observedWatchLaterAccountIdsByAid,
+          healthyWatchLaterAccountIds: this.healthyWatchLaterAccountIds,
         });
       } catch (error) {
         logger.error("Minute stats batch request failed:", error);

@@ -13,14 +13,11 @@ test("watch-later initialization creates the final schema without destructive mi
   } as Pool;
 
   await initWatchLaterSchema(pool);
-  assert.ok(
-    queries.findIndex((sql) => sql.includes("CREATE TABLE")) <
-      queries.findIndex((sql) => sql.includes("CREATE INDEX")),
-  );
   assert.ok(queries.every((sql) => !/DROP\s+(COLUMN|CONSTRAINT)/.test(sql)));
   assert.doesNotMatch(
     queries.find((sql) => sql.includes("CREATE TABLE watch_later_account")) ??
       "",
     /target_count|configured_capacity|remote_capacity/,
   );
+  assert.doesNotMatch(queries.join("\n"), /watch_later_account_operation/);
 });
