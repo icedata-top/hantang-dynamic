@@ -155,7 +155,7 @@ export const minuteBatchDurationSeconds = new Histogram({
 
 export const watchLaterEnabledAccounts = new Gauge({
   name: `${PREFIX}watch_later_enabled_accounts`,
-  help: "Enabled Watch Later accounts observed at startup by availability state.",
+  help: "Enabled Watch Later accounts in the latest periodic snapshot-health cycle by state.",
   labelNames: ["state"] as const,
   registers: [metricsRegistry],
 });
