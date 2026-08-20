@@ -18,12 +18,6 @@ import {
   type ToViewRequestAccount,
 } from "./toview";
 
-interface BiliFavoriteResourceInfo {
-  id?: unknown;
-  bvid?: unknown;
-  cnt_info?: unknown;
-}
-
 interface BiliFavoriteCounterInfo {
   coin: number;
   collect: number;
@@ -36,8 +30,8 @@ interface BiliFavoriteCounterInfo {
 
 type UnknownRecord = { [key: string]: unknown };
 
-interface ValidatedBiliFavoriteResourceInfo extends BiliFavoriteResourceInfo {
-  id: number;
+interface ValidatedBiliFavoriteResourceInfo {
+  aid: bigint;
   cnt_info: BiliFavoriteCounterInfo;
 }
 
@@ -83,20 +77,19 @@ function toMinuteSample(
   item: unknown,
   sampledAt: Date,
 ): VideoMinuteSample | null {
-  if (!isBiliFavoriteResourceInfo(item) || !Number.isSafeInteger(item.id)) {
-    return null;
-  }
+  const resource = parseBiliFavoriteResourceInfo(item);
+  if (resource === null) return null;
 
   return {
-    aid: BigInt(item.id),
+    aid: resource.aid,
     time: sampledAt,
-    coin: item.cnt_info.coin,
-    favorite: item.cnt_info.collect,
-    danmaku: item.cnt_info.danmaku,
-    view: item.cnt_info.play,
-    reply: item.cnt_info.reply,
-    share: item.cnt_info.share,
-    like: item.cnt_info.thumb_up,
+    coin: resource.cnt_info.coin,
+    favorite: resource.cnt_info.collect,
+    danmaku: resource.cnt_info.danmaku,
+    view: resource.cnt_info.play,
+    reply: resource.cnt_info.reply,
+    share: resource.cnt_info.share,
+    like: resource.cnt_info.thumb_up,
   };
 }
 
@@ -104,43 +97,69 @@ function isUnknownRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null;
 }
 
-function isBiliFavoriteCounterInfo(
+function parseBiliFavoriteCounterInfo(
   value: unknown,
-): value is BiliFavoriteCounterInfo {
-  if (!isUnknownRecord(value)) return false;
-  return (
-    isMinuteCounter(value.coin) &&
-    isMinuteCounter(value.collect) &&
-    isMinuteCounter(value.danmaku) &&
-    isMinuteCounter(value.play) &&
-    isMinuteCounter(value.reply) &&
-    isMinuteCounter(value.share) &&
-    isMinuteCounter(value.thumb_up)
-  );
-}
-
-function isBiliFavoriteResourceInfo(
-  value: unknown,
-): value is ValidatedBiliFavoriteResourceInfo {
-  return (
-    isUnknownRecord(value) &&
-    Number.isSafeInteger(value.id) &&
-    typeof value.id === "number" &&
-    value.id > 0 &&
-    isBiliFavoriteCounterInfo(value.cnt_info)
-  );
-}
-
-function requestedAidKey(item: unknown): string | null {
+): BiliFavoriteCounterInfo | null {
+  if (!isUnknownRecord(value)) return null;
+  const coin = parseMinuteCounter(value.coin);
+  const collect = parseMinuteCounter(value.collect);
+  const danmaku = parseMinuteCounter(value.danmaku);
+  const play = parseMinuteCounter(value.play);
+  const reply = parseMinuteCounter(value.reply);
+  const share = parseMinuteCounter(value.share);
+  const thumbUp = parseMinuteCounter(value.thumb_up);
   if (
-    !isUnknownRecord(item) ||
-    typeof item.id !== "number" ||
-    !Number.isSafeInteger(item.id) ||
-    item.id <= 0
+    coin === null ||
+    collect === null ||
+    danmaku === null ||
+    play === null ||
+    reply === null ||
+    share === null ||
+    thumbUp === null
   ) {
     return null;
   }
-  return BigInt(item.id).toString();
+  return {
+    coin,
+    collect,
+    danmaku,
+    play,
+    reply,
+    share,
+    thumb_up: thumbUp,
+  };
+}
+
+function parseBiliFavoriteResourceInfo(
+  value: unknown,
+): ValidatedBiliFavoriteResourceInfo | null {
+  if (!isUnknownRecord(value)) return null;
+  const aid = parsePositiveAid(value.id);
+  const cntInfo = parseBiliFavoriteCounterInfo(value.cnt_info);
+  if (aid === null || cntInfo === null) return null;
+  return { aid, cnt_info: cntInfo };
+}
+
+function requestedAidKey(item: unknown): string | null {
+  return isUnknownRecord(item)
+    ? (parsePositiveAid(item.id)?.toString() ?? null)
+    : null;
+}
+
+function parsePositiveAid(value: unknown): bigint | null {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value > 0 ? BigInt(value) : null;
+  }
+  if (typeof value !== "string" || !/^\d+$/.test(value)) return null;
+  const aid = BigInt(value);
+  return aid > 0n ? aid : null;
+}
+
+function parseMinuteCounter(value: unknown): number | null {
+  if (isMinuteCounter(value)) return value;
+  if (typeof value !== "string" || !/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return isMinuteCounter(parsed) ? parsed : null;
 }
 
 function recordFallbackResponseMiss(

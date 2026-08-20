@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { minuteFallbackResponseMissesTotal } from "../../metrics/registry";
 import {
   batchSampleVideoStats,
   selectWatchLaterRouting,
@@ -42,6 +43,24 @@ function favoriteResponse(aids: bigint[]) {
         reply: 1,
         share: 1,
         thumb_up: 1,
+      },
+    })),
+  };
+}
+
+function favoriteResponseWithStringTuples(aids: bigint[]) {
+  return {
+    code: 0,
+    data: aids.map((aid) => ({
+      id: aid.toString(),
+      cnt_info: {
+        coin: "0",
+        collect: "1",
+        danmaku: "2",
+        play: "3",
+        reply: "4",
+        share: "5",
+        thumb_up: "6",
       },
     })),
   };
@@ -155,6 +174,76 @@ test("fallback conserves unique large bigint AIDs in fifty-item chunks", async (
     [50, 1],
   );
   assert.equal(batches[0]?.[0], aids[0]);
+});
+
+test("favorite fallback normalizes legacy string tuples without accepting invalid or incomplete items", async () => {
+  const requestedAids = Array.from({ length: 50 }, (_, index) =>
+    BigInt(index + 1),
+  );
+  minuteFallbackResponseMissesTotal.reset();
+  const samples = await batchSampleVideoStats(requestedAids, {
+    dependencies: {
+      async fetchStatsBatch(aids) {
+        const response: { code: number; data: unknown[] } =
+          favoriteResponseWithStringTuples(aids);
+        response.data[0] = {
+          id: "1",
+          cnt_info: {
+            coin: "0",
+            collect: "1",
+            danmaku: "2",
+            play: "3",
+            reply: "4",
+            share: "5",
+          },
+        };
+        response.data[1] = {
+          id: "2",
+          cnt_info: {
+            coin: "0",
+            collect: "1",
+            danmaku: "2",
+            play: "3",
+            reply: "4",
+            share: "5",
+            thumb_up: "-1",
+          },
+        };
+        response.data.push({
+          id: "51",
+          cnt_info: {
+            coin: "0",
+            collect: "1",
+            danmaku: "2",
+            play: "3",
+            reply: "4",
+            share: "5",
+            thumb_up: "6",
+          },
+        });
+        return response;
+      },
+    },
+  });
+
+  assert.deepEqual(
+    samples.map((sample) => sample.aid),
+    requestedAids.slice(2),
+  );
+  assert.deepEqual(samples[0], {
+    aid: 3n,
+    time: samples[0]?.time,
+    coin: 0,
+    favorite: 1,
+    danmaku: 2,
+    view: 3,
+    reply: 4,
+    share: 5,
+    like: 6,
+  });
+  assert.deepEqual((await minuteFallbackResponseMissesTotal.get()).values, [
+    { labels: { reason: "invalid_response_item" }, value: 2 },
+  ]);
 });
 
 test("a stale UID is not queried when current health is empty and falls back in fifty-item batches", async () => {
