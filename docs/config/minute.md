@@ -86,7 +86,9 @@ tuple or is sent once through the existing favorite-resource path in
 `batch_size` chunks. Watch Later assignment and reconciliation state do not
 remove AIDs from that fallback. A partial or malformed favorite response leaves
 the AID failed for rescheduling and increments
-`bili_tracker_minute_fallback_response_misses_total` with a bounded reason.
+`bili_tracker_minute_fallback_response_misses_total` with one bounded reason:
+`api_failure`, `invalid_response`, `missing_response_item`, or
+`invalid_response_item`.
 
 ## Fields
 

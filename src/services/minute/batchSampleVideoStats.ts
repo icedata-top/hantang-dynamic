@@ -24,23 +24,38 @@ import {
 } from "./toview";
 
 interface BiliFavoriteResourceInfo {
-  id: number;
-  bvid?: string;
-  cnt_info?: {
-    coin?: number;
-    collect?: number;
-    danmaku?: number;
-    play?: number;
-    reply?: number;
-    share?: number;
-    thumb_up?: number;
-  };
+  id?: unknown;
+  bvid?: unknown;
+  cnt_info?: unknown;
 }
+
+interface BiliFavoriteCounterInfo {
+  coin: number;
+  collect: number;
+  danmaku: number;
+  play: number;
+  reply: number;
+  share: number;
+  thumb_up: number;
+}
+
+type UnknownRecord = { [key: string]: unknown };
+
+interface ValidatedBiliFavoriteResourceInfo extends BiliFavoriteResourceInfo {
+  id: number;
+  cnt_info: BiliFavoriteCounterInfo;
+}
+
+type MinuteFallbackResponseMissReason =
+  | "api_failure"
+  | "invalid_response"
+  | "missing_response_item"
+  | "invalid_response_item";
 
 export interface BiliFavoriteResponse {
   code: number;
   message?: string;
-  data?: BiliFavoriteResourceInfo[];
+  data?: unknown;
 }
 
 export interface BatchSampleDependencies {
@@ -48,23 +63,10 @@ export interface BatchSampleDependencies {
 }
 
 function toMinuteSample(
-  item: BiliFavoriteResourceInfo,
+  item: unknown,
   sampledAt: Date,
 ): VideoMinuteSample | null {
-  if (!Number.isSafeInteger(item.id) || item.id <= 0 || !item.cnt_info) {
-    return null;
-  }
-
-  const counters = [
-    item.cnt_info.coin,
-    item.cnt_info.collect,
-    item.cnt_info.danmaku,
-    item.cnt_info.play,
-    item.cnt_info.reply,
-    item.cnt_info.share,
-    item.cnt_info.thumb_up,
-  ];
-  if (counters.some((counter) => !isMinuteCounter(counter))) {
+  if (!isBiliFavoriteResourceInfo(item) || !Number.isSafeInteger(item.id)) {
     return null;
   }
 
@@ -79,6 +81,57 @@ function toMinuteSample(
     share: item.cnt_info.share,
     like: item.cnt_info.thumb_up,
   };
+}
+
+function isUnknownRecord(value: unknown): value is UnknownRecord {
+  return typeof value === "object" && value !== null;
+}
+
+function isBiliFavoriteCounterInfo(
+  value: unknown,
+): value is BiliFavoriteCounterInfo {
+  if (!isUnknownRecord(value)) return false;
+  return (
+    isMinuteCounter(value.coin) &&
+    isMinuteCounter(value.collect) &&
+    isMinuteCounter(value.danmaku) &&
+    isMinuteCounter(value.play) &&
+    isMinuteCounter(value.reply) &&
+    isMinuteCounter(value.share) &&
+    isMinuteCounter(value.thumb_up)
+  );
+}
+
+function isBiliFavoriteResourceInfo(
+  value: unknown,
+): value is ValidatedBiliFavoriteResourceInfo {
+  return (
+    isUnknownRecord(value) &&
+    Number.isSafeInteger(value.id) &&
+    typeof value.id === "number" &&
+    value.id > 0 &&
+    isBiliFavoriteCounterInfo(value.cnt_info)
+  );
+}
+
+function requestedAidKey(item: unknown): string | null {
+  if (
+    !isUnknownRecord(item) ||
+    typeof item.id !== "number" ||
+    !Number.isSafeInteger(item.id) ||
+    item.id <= 0
+  ) {
+    return null;
+  }
+  return BigInt(item.id).toString();
+}
+
+function recordFallbackResponseMiss(
+  reason: MinuteFallbackResponseMissReason,
+  count: number,
+): void {
+  if (count === 0) return;
+  minuteFallbackResponseMissesTotal.inc({ reason }, count);
 }
 
 async function fetchStatsBatch(
@@ -143,7 +196,7 @@ export async function batchSampleVideoStats(
 
   for (const aidBatch of planFavoriteFallbackBatches(
     aids,
-    coverage.toViewSamples,
+    toViewSamples,
     batchSize,
   )) {
     const attributableAids = aidBatch.filter((aid) =>
@@ -159,18 +212,23 @@ export async function batchSampleVideoStats(
         ? await options.dependencies.fetchStatsBatch(aidBatch)
         : await fetchStatsBatchWithFallback(aidBatch);
 
-      if (data.code !== 0 || !Array.isArray(data.data)) {
+      if (data.code !== 0) {
         logger.warn(`Minute stats API failed with code ${data.code}`);
-        minuteFallbackResponseMissesTotal.inc(
-          { reason: "api_failure" },
-          aidBatch.length,
-        );
+        recordFallbackResponseMiss("api_failure", aidBatch.length);
         continue;
       }
 
-      const returnedAids = new Set<string>();
+      if (!Array.isArray(data.data)) {
+        logger.warn("Minute stats API returned an invalid response payload");
+        recordFallbackResponseMiss("invalid_response", aidBatch.length);
+        continue;
+      }
+
+      const validAids = new Set<string>();
+      const invalidAids = new Set<string>();
       const requestedBatchAids = new Set(aidBatch.map((aid) => aid.toString()));
       for (const item of data.data) {
+        const itemAidKey = requestedAidKey(item);
         const sample = toMinuteSample(item, sampledAt);
         const key = sample?.aid.toString();
         if (
@@ -180,19 +238,31 @@ export async function batchSampleVideoStats(
           requestedBatchAids.has(key)
         ) {
           samplesByAid.set(key, sample);
-          returnedAids.add(key);
+          validAids.add(key);
+        } else if (
+          itemAidKey &&
+          requestedBatchAids.has(itemAidKey) &&
+          !validAids.has(itemAidKey)
+        ) {
+          invalidAids.add(itemAidKey);
         }
       }
 
-      const missingCount = aidBatch.length - returnedAids.size;
+      for (const aidKey of validAids) {
+        invalidAids.delete(aidKey);
+      }
+      const missingCount = aidBatch.length - validAids.size - invalidAids.size;
       if (missingCount > 0) {
         logger.warn(
-          `Minute stats favorite fallback returned no usable sample for ${missingCount} aid(s)`,
+          `Minute stats favorite fallback missed ${missingCount} requested aid(s)`,
         );
-        minuteFallbackResponseMissesTotal.inc(
-          { reason: "unusable_response_item" },
-          missingCount,
+        recordFallbackResponseMiss("missing_response_item", missingCount);
+      }
+      if (invalidAids.size > 0) {
+        logger.warn(
+          `Minute stats favorite fallback returned invalid tuples for ${invalidAids.size} aid(s)`,
         );
+        recordFallbackResponseMiss("invalid_response_item", invalidAids.size);
       }
     } finally {
       release();

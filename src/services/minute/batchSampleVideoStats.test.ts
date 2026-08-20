@@ -101,6 +101,71 @@ test("batch sampler requests each configured To View account and falls back only
   assert.deepEqual(samples.map((sample) => sample.aid).sort(), [1n, 2n, 3n]);
 });
 
+test("batch sampler sends a duplicate complete To View candidate through the old path once", async () => {
+  const favoriteBatches: bigint[][] = [];
+  const samples = await batchSampleVideoStats([1n, 2n], {
+    toViewAccounts: [
+      toViewAccount("10", [1], []),
+      toViewAccount("20", [1], []),
+    ],
+    watchLaterToViewAccounts: [{ accountId: 10n }, { accountId: 20n }],
+    dependencies: {
+      async fetchStatsBatch(batch) {
+        favoriteBatches.push(batch);
+        return completeFavoriteResponse(batch);
+      },
+    },
+  });
+
+  assert.deepEqual(favoriteBatches, [[1n, 2n]]);
+  assert.deepEqual(samples.map((sample) => sample.aid).sort(), [1n, 2n]);
+});
+
+test("batch sampler conserves due AIDs across duplicate, malformed, and unrequested To View candidates", async () => {
+  const favoriteBatches: bigint[][] = [];
+  await batchSampleVideoStats([1n, 2n, 3n], {
+    toViewAccounts: [
+      toViewAccount("10", [1, 99], []),
+      toViewAccount("20", [1], []),
+      {
+        uid: "30",
+        toViewClient: {
+          async get() {
+            return { data: { code: 0, data: { count: 1, list: [] } } };
+          },
+        },
+      },
+    ],
+    watchLaterToViewAccounts: [
+      { accountId: 10n },
+      { accountId: 20n },
+      { accountId: 30n },
+    ],
+    dependencies: {
+      async fetchStatsBatch(batch) {
+        favoriteBatches.push(batch);
+        return completeFavoriteResponse(batch);
+      },
+    },
+  });
+
+  assert.deepEqual(favoriteBatches, [[1n, 2n, 3n]]);
+});
+
+test("batch sampler de-duplicates due AIDs before the old-path dispatch", async () => {
+  const favoriteBatches: bigint[][] = [];
+  await batchSampleVideoStats([1n, 1n, 2n, 2n], {
+    dependencies: {
+      async fetchStatsBatch(batch) {
+        favoriteBatches.push(batch);
+        return completeFavoriteResponse(batch);
+      },
+    },
+  });
+
+  assert.deepEqual(favoriteBatches, [[1n, 2n]]);
+});
+
 test("batch sampler excludes healthy reassignment from startup-unavailable ownership fallback", async () => {
   const favoriteBatches: bigint[][] = [];
   const unavailableAccountIds = new Set<bigint>();
@@ -305,7 +370,7 @@ test("batch sampler sends an invalid To View snapshot through the old path", asy
   assert.deepEqual(favoriteBatches, [dueAids.slice(0, 50), dueAids.slice(50)]);
 });
 
-test("batch sampler dispatches requested AIDs before rejecting malformed old-path response identifiers", async () => {
+test("batch sampler distinguishes missing and invalid old-path response tuples", async () => {
   const dueAids = aids(55);
   const favoriteBatches: bigint[][] = [];
   minuteFallbackResponseMissesTotal.reset();
@@ -318,9 +383,9 @@ test("batch sampler dispatches requested AIDs before rejecting malformed old-pat
           code: 0,
           data: [
             {
-              id: "1" as unknown as number,
+              id: 1,
               cnt_info: {
-                coin: 1,
+                coin: -1,
                 collect: 1,
                 danmaku: 1,
                 play: 1,
@@ -339,8 +404,38 @@ test("batch sampler dispatches requested AIDs before rejecting malformed old-pat
   assert.deepEqual(samples, []);
   assert.deepEqual((await minuteFallbackResponseMissesTotal.get()).values, [
     {
-      labels: { reason: "unusable_response_item" },
-      value: 55,
+      labels: { reason: "missing_response_item" },
+      value: 54,
     },
+    {
+      labels: { reason: "invalid_response_item" },
+      value: 1,
+    },
+  ]);
+});
+
+test("batch sampler classifies API failures separately from code-zero invalid payloads", async () => {
+  minuteFallbackResponseMissesTotal.reset();
+  await batchSampleVideoStats([1n, 2n], {
+    dependencies: {
+      async fetchStatsBatch() {
+        return { code: -400, data: [] };
+      },
+    },
+  });
+  assert.deepEqual((await minuteFallbackResponseMissesTotal.get()).values, [
+    { labels: { reason: "api_failure" }, value: 2 },
+  ]);
+
+  minuteFallbackResponseMissesTotal.reset();
+  await batchSampleVideoStats([1n, 2n], {
+    dependencies: {
+      async fetchStatsBatch() {
+        return { code: 0, data: {} };
+      },
+    },
+  });
+  assert.deepEqual((await minuteFallbackResponseMissesTotal.get()).values, [
+    { labels: { reason: "invalid_response" }, value: 2 },
   ]);
 });

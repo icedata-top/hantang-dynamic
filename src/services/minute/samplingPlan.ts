@@ -30,16 +30,21 @@ export function partitionMinuteSamplingCoverage(
   const uniqueAids = uniqueRequestedAids(requestedAids);
   const requestedAidKeys = new Set(uniqueAids.map((aid) => aid.toString()));
   const toViewSamplesByAid = new Map<string, VideoMinuteSample>();
+  const duplicateToViewAids = new Set<string>();
 
   for (const sample of toViewSamples) {
     const key = sample.aid.toString();
-    if (
-      requestedAidKeys.has(key) &&
-      isCompleteVideoMinuteSample(sample) &&
-      !toViewSamplesByAid.has(key)
-    ) {
+    if (requestedAidKeys.has(key) && isCompleteVideoMinuteSample(sample)) {
+      if (toViewSamplesByAid.has(key)) {
+        duplicateToViewAids.add(key);
+        continue;
+      }
       toViewSamplesByAid.set(key, sample);
     }
+  }
+
+  for (const key of duplicateToViewAids) {
+    toViewSamplesByAid.delete(key);
   }
 
   return {

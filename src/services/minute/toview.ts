@@ -120,20 +120,20 @@ export async function sampleWatchLaterToViewAccountsWithStatus(
     accounts,
     selectedWatchLaterAccounts,
   );
-  const samplesByAid = new Map<string, CompleteVideoMinuteTuple>();
+  const samples: CompleteVideoMinuteTuple[] = [];
   const failedAccountIds: bigint[] = [];
 
   for (const account of selectedAccounts) {
-    const samples = await fetchToViewSamples(account, sampledAt);
-    if (samples === null) {
+    const accountSamples = await fetchToViewSamples(account, sampledAt);
+    if (accountSamples === null) {
       const id = accountId(account);
       if (id !== null) failedAccountIds.push(id);
       continue;
     }
-    for (const sample of samples) {
-      samplesByAid.set(sample.aid.toString(), sample);
+    for (const sample of accountSamples) {
+      samples.push(sample);
     }
   }
 
-  return { samples: [...samplesByAid.values()], failedAccountIds };
+  return { samples, failedAccountIds };
 }
