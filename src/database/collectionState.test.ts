@@ -87,8 +87,11 @@ test("collection-state schema adds Watch Later state before replacing the due-vi
     },
   } as Pool;
 
-  await initCollectionStateSchema(pool);
+  await initializeSchema(pool, "public");
 
+  const collectionStateTable = queries.findIndex((sql) =>
+    sql.includes("CREATE TABLE IF NOT EXISTS video_collection_state"),
+  );
   const managedAccountColumn = queries.findIndex((sql) =>
     sql.includes("ADD COLUMN IF NOT EXISTS watch_later_managed_account_ids"),
   );
@@ -99,9 +102,22 @@ test("collection-state schema adds Watch Later state before replacing the due-vi
     sql.includes("CREATE OR REPLACE FUNCTION fn_select_due_minute_videos"),
   );
 
-  assert.ok(managedAccountColumn >= 0);
+  assert.ok(collectionStateTable >= 0);
+  assert.ok(managedAccountColumn > collectionStateTable);
   assert.ok(dropDueFunction > managedAccountColumn);
   assert.ok(createDueFunction > dropDueFunction);
+  assert.equal(
+    queries.filter((sql) =>
+      sql.includes("DROP FUNCTION IF EXISTS fn_select_due_minute_videos"),
+    ).length,
+    1,
+  );
+  assert.equal(
+    queries.filter((sql) =>
+      sql.includes("CREATE OR REPLACE FUNCTION fn_select_due_minute_videos"),
+    ).length,
+    1,
+  );
   assert.match(
     queries[createDueFunction] ?? "",
     /RETURNS TABLE \(aid bigint, last_view bigint, near_gate boolean, due_at timestamptz, watch_later_managed_account_ids bigint\[\]\)/,
