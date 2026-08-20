@@ -177,16 +177,17 @@ test("fallback conserves unique large bigint AIDs in fifty-item chunks", async (
 });
 
 test("favorite fallback normalizes legacy string tuples without accepting invalid or incomplete items", async () => {
-  const requestedAids = Array.from({ length: 50 }, (_, index) =>
-    BigInt(index + 1),
-  );
+  const requestedAids = [
+    9_007_199_254_740_993n,
+    ...Array.from({ length: 49 }, (_, index) => BigInt(index + 1)),
+  ];
   minuteFallbackResponseMissesTotal.reset();
   const samples = await batchSampleVideoStats(requestedAids, {
     dependencies: {
       async fetchStatsBatch(aids) {
         const response: { code: number; data: unknown[] } =
           favoriteResponseWithStringTuples(aids);
-        response.data[0] = {
+        response.data[1] = {
           id: "1",
           cnt_info: {
             coin: "0",
@@ -197,7 +198,7 @@ test("favorite fallback normalizes legacy string tuples without accepting invali
             share: "5",
           },
         };
-        response.data[1] = {
+        response.data[2] = {
           id: "2",
           cnt_info: {
             coin: "0",
@@ -228,10 +229,10 @@ test("favorite fallback normalizes legacy string tuples without accepting invali
 
   assert.deepEqual(
     samples.map((sample) => sample.aid),
-    requestedAids.slice(2),
+    requestedAids.filter((aid) => aid !== 1n && aid !== 2n),
   );
   assert.deepEqual(samples[0], {
-    aid: 3n,
+    aid: 9_007_199_254_740_993n,
     time: samples[0]?.time,
     coin: 0,
     favorite: 1,
