@@ -4,11 +4,7 @@ import {
   type RequestConfig,
 } from "../../api/client";
 import { config } from "../../config";
-import {
-  minuteFallbackResponseMissesTotal,
-  watchLaterFallbackBatchesTotal,
-  watchLaterFallbackVideosTotal,
-} from "../../metrics/registry";
+import { minuteFallbackResponseMissesTotal } from "../../metrics/registry";
 import type { VideoMinuteSample } from "../../types/models/minute";
 import { sharedApiRateLimiter } from "../../utils/apiRateLimiter";
 import { logger } from "../../utils/logger";
@@ -154,8 +150,6 @@ export async function batchSampleVideoStats(
     sampledAt?: Date;
     toViewAccounts?: ToViewRequestAccount[];
     watchLaterToViewAccounts?: WatchLaterToViewAccount[];
-    unavailableWatchLaterAccountIds?: ReadonlySet<bigint>;
-    desiredWatchLaterAidsByAccountId?: ReadonlyMap<bigint, readonly bigint[]>;
     onWatchLaterToViewAccountFailure?(accountId: bigint): void;
     dependencies?: Partial<BatchSampleDependencies>;
   },
@@ -185,27 +179,11 @@ export async function batchSampleVideoStats(
     }
   }
 
-  const unavailableDesiredAids = new Set<string>();
-  for (const accountId of options?.unavailableWatchLaterAccountIds ?? []) {
-    for (const aid of options?.desiredWatchLaterAidsByAccountId?.get(
-      accountId,
-    ) ?? []) {
-      unavailableDesiredAids.add(aid.toString());
-    }
-  }
-
   for (const aidBatch of planFavoriteFallbackBatches(
     aids,
     toViewSamples,
     batchSize,
   )) {
-    const attributableAids = aidBatch.filter((aid) =>
-      unavailableDesiredAids.has(aid.toString()),
-    );
-    if (attributableAids.length > 0) {
-      watchLaterFallbackBatchesTotal.inc();
-      watchLaterFallbackVideosTotal.inc(attributableAids.length);
-    }
     const release = await sharedApiRateLimiter.acquire();
     try {
       const data = options?.dependencies?.fetchStatsBatch

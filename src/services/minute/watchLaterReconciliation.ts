@@ -1,20 +1,14 @@
-import { randomUUID } from "node:crypto";
 import type {
   WatchLaterAccount,
   WatchLaterAccountLease,
   WatchLaterAction,
-  WatchLaterOperation,
 } from "../../database/watchLater";
 import {
-  watchLaterAccountSlotItems,
-  watchLaterCapacity,
   watchLaterEnabledAccounts,
   watchLaterMutationsTotal,
   watchLaterReconciliationsTotal,
 } from "../../metrics/registry";
 import { sleep } from "../../utils/datetime";
-import { logger } from "../../utils/logger";
-import { redactForLog } from "../../utils/redact";
 import {
   fetchWatchLaterSnapshot,
   mutateWatchLater,
@@ -24,86 +18,20 @@ import {
 } from "./watchLaterApi";
 
 export const WATCH_LATER_CAPACITY = 1_000;
-// A chunk yields control to the minute loop; it does not limit process-lifetime convergence.
-const MAX_MUTATIONS_PER_RUN = 20;
 const MUTATION_DELAY_MS = 1_000;
-const POST_SETTLE_DELAY_MS = 3_000;
+const CYCLE_DEADLINE_MS = 14 * 60_000;
 const CAPACITY_BLOCKED_CODE = 90001;
-const MAX_CONSECUTIVE_EMPIRICAL_ADD_ERRORS = 20;
 type Delay = (milliseconds: number) => Promise<void>;
-type ProgressWriter = (text: string) => void;
-
-interface ReconciliationInput {
-  desiredAids?: readonly bigint[];
-  snapshot?: WatchLaterSnapshot;
-  accountSlot?: string;
-  mutationPacer?: MutationPacer;
-  shouldContinue?(): boolean;
-  mutationChunkSize?: number;
-}
-
-interface MutationPacer {
-  beforeMutation(): Promise<() => void>;
-}
-
-function createMutationPacer(delay: Delay): MutationPacer {
-  let firstMutation = true;
-  let tail = Promise.resolve();
-  return {
-    async beforeMutation() {
-      let release: () => void = () => {};
-      const previous = tail;
-      tail = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      await previous;
-      if (!firstMutation) await delay(MUTATION_DELAY_MS);
-      firstMutation = false;
-      return release;
-    },
-  };
-}
 
 export interface WatchLaterDatabase {
-  getDesiredWatchLaterSet(targetCount: number): Promise<{
-    aids: bigint[];
-    overflow: boolean;
-  }>;
-  getWatchLaterOwnedAids(accountId: bigint): Promise<bigint[]>;
-  getRecoverableWatchLaterOperations(
-    accountId: bigint,
-  ): Promise<WatchLaterOperation[]>;
-  createWatchLaterOperation(input: {
-    operationId: string;
-    accountId: bigint;
-    aid: bigint;
-    action: WatchLaterAction;
-    intentAt: Date;
-    provenanceRunRef: string | null;
-  }): Promise<void>;
-  recordWatchLaterOperationAttempt(
-    operationId: string,
-    attemptedAt: Date,
-  ): Promise<boolean>;
-  resolveWatchLaterOperation(input: {
-    operationId: string;
-    resultClassification:
-      | "succeeded"
-      | "failed"
-      | "ambiguous"
-      | "capacity_blocked";
-    resultCode: number | null;
-    resolvedAt?: Date;
-  }): Promise<boolean>;
-  removeWatchLaterOwnershipAfterCompleteSnapshot(
+  getDesiredWatchLaterSet(
+    targetCount: number,
+  ): Promise<{ aids: bigint[]; overflow: boolean }>;
+  syncWatchLaterSnapshot(
     accountId: bigint,
     aids: bigint[],
     completedAt: Date,
   ): Promise<number>;
-  recordWatchLaterCompleteSnapshot(
-    accountId: bigint,
-    completedAt: Date,
-  ): Promise<void>;
   withWatchLaterAccountLease<T>(
     accountId: bigint,
     callback: (lease: WatchLaterAccountLease) => Promise<T>,
@@ -112,26 +40,21 @@ export interface WatchLaterDatabase {
 
 export interface WatchLaterReconciliationResult {
   reason:
-    | "snapshot_invalid"
-    | "desired_overflow"
     | "completed"
+    | "snapshot_invalid"
+    | "deadline"
     | "lease_lost"
-    | "attempt_unavailable"
-    | "stopped";
+    | "stopped"
+    | "capacity_blocked"
+    | "ambiguous";
   added: number;
   deleted: number;
-  recovered: number;
-  capacityBlocked: boolean;
 }
 
 export interface WatchLaterManagementOptions {
-  onUnavailableAccount?(accountId: bigint): void;
-  onDesiredAssignments?(
-    assignments: ReadonlyMap<bigint, readonly bigint[]>,
-  ): void;
   shouldContinue?(): boolean;
   delay?: Delay;
-  mutationChunkSize?: number;
+  now?(): number;
 }
 
 export interface WatchLaterEmpiricalDatabase {
@@ -154,522 +77,118 @@ export interface WatchLaterEmpiricalResult {
   error?: string;
 }
 
-function describeWatchLaterRequestError(error: unknown): string {
-  if (!error || typeof error !== "object") return "request failed";
-  const record = error as Record<string, unknown>;
-  const data =
-    record.data && typeof record.data === "object"
-      ? (record.data as Record<string, unknown>)
-      : undefined;
-  const status = typeof record.status === "number" ? record.status : undefined;
-  const biliCode =
-    typeof data?.code === "number"
-      ? data.code
-      : status === undefined && typeof record.code === "number"
-        ? record.code
-        : undefined;
-  const messageValue = data?.message ?? data?.msg ?? record.message;
-  const message =
-    typeof messageValue === "string"
-      ? redactForLog(messageValue).replace(/\n/g, " ").slice(0, 300)
-      : undefined;
-  const parts = [
-    status === undefined ? undefined : `HTTP ${status}`,
-    biliCode === undefined ? undefined : `bili code ${biliCode}`,
-    message,
-  ].filter((part): part is string => Boolean(part));
-  return parts.length > 0 ? parts.join(", ") : "request failed";
+function accountId(account: { uid: string }): bigint | null {
+  return /^\d+$/.test(account.uid) ? BigInt(account.uid) : null;
 }
 
-function getWatchLaterRequestErrorCode(error: unknown): number | undefined {
-  if (!error || typeof error !== "object") return undefined;
-  const record = error as Record<string, unknown>;
-  const data =
-    record.data && typeof record.data === "object"
-      ? (record.data as Record<string, unknown>)
-      : undefined;
-  if (typeof data?.code === "number") return data.code;
-  return typeof record.code === "number" ? record.code : undefined;
-}
-
-export function selectWatchLaterEmpiricalAccount<
-  T extends { enableWatchLater?: boolean },
->(accounts: T[]): T {
-  const enabledAccounts = accounts.filter(
-    (account) => account.enableWatchLater,
-  );
-  if (enabledAccounts.length === 0) {
-    throw new Error(
-      "Empirical Watch Later run requires exactly one loaded account with enable_watch_later = true; found none.",
-    );
-  }
-  if (enabledAccounts.length > 1) {
-    throw new Error(
-      "Empirical Watch Later run requires exactly one loaded account with enable_watch_later = true; found multiple.",
-    );
-  }
-  return enabledAccounts[0];
-}
-
-function asAccountId(account: { uid: string }): bigint | null {
-  if (!/^\d+$/.test(account.uid)) return null;
-  return BigInt(account.uid);
-}
-
-function actionSucceeded(
-  action: WatchLaterAction,
-  aid: bigint,
-  snapshot: WatchLaterSnapshot,
-): boolean {
-  return snapshot.aids.has(aid.toString()) === (action === "add");
-}
-
-async function recoverOperations(
-  database: WatchLaterDatabase,
-  accountId: bigint,
-  snapshot: WatchLaterSnapshot,
-): Promise<number> {
-  const operations =
-    await database.getRecoverableWatchLaterOperations(accountId);
-  for (const operation of operations) {
-    await database.resolveWatchLaterOperation({
-      operationId: operation.operationId,
-      resultClassification: actionSucceeded(
-        operation.action,
-        operation.aid,
-        snapshot,
-      )
-        ? "succeeded"
-        : "failed",
-      resultCode: operation.resultCode,
-      resolvedAt: snapshot.completedAt,
+function createPacer(
+  delay: Delay,
+): (action: () => Promise<void>) => Promise<void> {
+  let tail = Promise.resolve();
+  let used = false;
+  return async (action) => {
+    const previous = tail;
+    let release: () => void = () => {};
+    tail = new Promise((resolve) => {
+      release = resolve;
     });
-  }
-  return operations.length;
+    await previous;
+    try {
+      if (used) await delay(MUTATION_DELAY_MS);
+      used = true;
+      await action();
+    } finally {
+      release();
+    }
+  };
 }
 
-async function performOperation(
+async function reconcileAccount(
   database: WatchLaterDatabase,
   account: WatchLaterAccountContext,
-  action: WatchLaterAction,
-  aid: bigint,
-  runRef: string,
-  mutationPacer: MutationPacer,
-  lease: WatchLaterAccountLease,
+  row: WatchLaterAccount,
+  desiredAids: readonly bigint[],
+  snapshot: WatchLaterSnapshot,
+  pace: (action: () => Promise<void>) => Promise<void>,
+  deadline: number,
+  now: () => number,
   shouldContinue?: () => boolean,
-): Promise<
-  | "succeeded"
-  | "failed"
-  | "ambiguous"
-  | "capacity_blocked"
-  | "lease_lost"
-  | "attempt_unavailable"
-  | "stopped"
-> {
-  const releaseMutation = await mutationPacer.beforeMutation();
-  const operationId = randomUUID();
-  try {
-    if (shouldContinue && !shouldContinue()) return "stopped";
-    await database.createWatchLaterOperation({
-      operationId,
-      accountId: BigInt(account.uid),
-      aid,
-      action,
-      intentAt: new Date(),
-      provenanceRunRef: runRef,
-    });
-    const code = await mutateWatchLater(account, aid, action, {
-      async beforePost() {
-        if (shouldContinue && !shouldContinue()) return "stopped";
-
-        let ownsLease: boolean;
-        try {
-          ownsLease = await lease.renew();
-        } catch {
-          return "lease_lost";
-        }
-        if (!ownsLease) return "lease_lost";
-        if (shouldContinue && !shouldContinue()) return "stopped";
-
-        try {
-          const attemptRecorded =
-            await database.recordWatchLaterOperationAttempt(
-              operationId,
-              new Date(),
-            );
-          if (!attemptRecorded) return "attempt_unavailable";
-        } catch {
-          return "attempt_unavailable";
-        }
-        // This final synchronous check is immediately followed by the POST.
-        if (shouldContinue && !shouldContinue()) return "stopped";
-      },
-    });
-    if (code === 0) {
-      await database.resolveWatchLaterOperation({
-        operationId,
-        resultClassification: "succeeded",
-        resultCode: code,
-      });
-      watchLaterMutationsTotal.inc({ action, outcome: "succeeded" });
-      return "succeeded";
-    }
-    const outcome =
-      code === CAPACITY_BLOCKED_CODE ? "capacity_blocked" : "failed";
-    await database.resolveWatchLaterOperation({
-      operationId,
-      resultClassification: outcome,
-      resultCode: code,
-    });
-    watchLaterMutationsTotal.inc({ action, outcome });
-    return outcome;
-  } catch (cause) {
-    if (cause instanceof WatchLaterMutationPrePostAbortError) {
-      return cause.reason;
-    }
-    await database.resolveWatchLaterOperation({
-      operationId,
-      resultClassification: "ambiguous",
-      resultCode: null,
-    });
-    watchLaterMutationsTotal.inc({ action, outcome: "ambiguous" });
-    return "ambiguous";
-  } finally {
-    releaseMutation();
-  }
-}
-
-export async function reconcileWatchLaterAccount(
-  database: WatchLaterDatabase,
-  account: WatchLaterAccountContext,
-  watchLaterAccount: WatchLaterAccount,
-  delay: Delay = sleep,
-  capacity: number = WATCH_LATER_CAPACITY,
-  input: ReconciliationInput = {},
 ): Promise<WatchLaterReconciliationResult> {
-  return database.withWatchLaterAccountLease(
-    watchLaterAccount.accountId,
-    async (lease) => {
-      const snapshot =
-        input.snapshot ?? (await fetchWatchLaterSnapshot(account.toViewClient));
-      if (!snapshot) {
-        const result: WatchLaterReconciliationResult = {
-          reason: "snapshot_invalid",
-          added: 0,
-          deleted: 0,
-          recovered: 0,
-          capacityBlocked: false,
-        };
-        watchLaterReconciliationsTotal.inc({ outcome: result.reason });
-        return result;
-      }
-
-      const recovered = await recoverOperations(
-        database,
-        watchLaterAccount.accountId,
-        snapshot,
-      );
-      if (capacity === 0) {
-        await database.recordWatchLaterCompleteSnapshot(
-          watchLaterAccount.accountId,
-          snapshot.completedAt,
-        );
-        const result: WatchLaterReconciliationResult = {
-          reason: "completed",
-          added: 0,
-          deleted: 0,
-          recovered,
-          capacityBlocked: false,
-        };
-        watchLaterReconciliationsTotal.inc({ outcome: result.reason });
-        return result;
-      }
-
-      const desired = input.desiredAids
-        ? { aids: input.desiredAids, overflow: false }
-        : await database.getDesiredWatchLaterSet(capacity);
-      if (desired.overflow) {
-        await database.recordWatchLaterCompleteSnapshot(
-          watchLaterAccount.accountId,
-          snapshot.completedAt,
-        );
-        const result: WatchLaterReconciliationResult = {
-          reason: "desired_overflow",
-          added: 0,
-          deleted: 0,
-          recovered,
-          capacityBlocked: false,
-        };
-        watchLaterReconciliationsTotal.inc({ outcome: result.reason });
-        return result;
-      }
-
-      const owned = await database.getWatchLaterOwnedAids(
-        watchLaterAccount.accountId,
-      );
-      const desiredIds = new Set(desired.aids.map((aid) => aid.toString()));
-      const missingOwned = owned.filter(
-        (aid) =>
-          !snapshot.aids.has(aid.toString()) && !desiredIds.has(aid.toString()),
-      );
-      await database.removeWatchLaterOwnershipAfterCompleteSnapshot(
-        watchLaterAccount.accountId,
-        missingOwned,
-        snapshot.completedAt,
-      );
-
-      let added = 0;
-      let deleted = 0;
-      let capacityBlocked = false;
-      let requiresRecoverySnapshot = false;
-      let reason: WatchLaterReconciliationResult["reason"] = "completed";
-      const runRef = randomUUID();
-      const additions = desired.aids.filter(
-        (aid) => !snapshot.aids.has(aid.toString()),
-      );
-      const deletions = [...snapshot.aids]
-        .map((aid) => BigInt(aid))
-        .filter((aid) => !desiredIds.has(aid.toString()));
-      const mutationPacer = input.mutationPacer ?? createMutationPacer(delay);
-      let mutationsInChunk = 0;
-      let availableSlots = Math.max(0, capacity - snapshot.aids.size);
-      const operations = [
-        ...deletions.map((aid) => ({ action: "delete" as const, aid })),
-        ...additions.map((aid) => ({ action: "add" as const, aid })),
-      ];
-
-      for (const operation of operations) {
-        if (input.shouldContinue && !input.shouldContinue()) break;
-        if (operation.action === "add" && availableSlots === 0) continue;
-        const outcome = await performOperation(
-          database,
-          account,
-          operation.action,
-          operation.aid,
-          runRef,
-          mutationPacer,
-          lease,
-          input.shouldContinue,
-        );
-        if (outcome === "stopped") {
-          reason = "stopped";
-          requiresRecoverySnapshot = true;
-          break;
-        }
-        mutationsInChunk += 1;
-        if (outcome === "succeeded") {
-          if (operation.action === "add") {
-            added += 1;
-            snapshot.aids.add(operation.aid.toString());
-          } else {
-            deleted += 1;
-            availableSlots += 1;
-            snapshot.aids.delete(operation.aid.toString());
-          }
-          if (input.accountSlot !== undefined) {
-            watchLaterAccountSlotItems.set(
-              { account_slot: input.accountSlot, kind: "observed" },
-              snapshot.aids.size,
-            );
-          }
-        }
-        if (outcome === "capacity_blocked" || outcome === "ambiguous") {
-          capacityBlocked = outcome === "capacity_blocked";
-          requiresRecoverySnapshot = true;
-          break;
-        }
-        if (outcome === "lease_lost" || outcome === "attempt_unavailable") {
-          reason = outcome;
-          requiresRecoverySnapshot = true;
-          break;
-        }
-        if (
-          mutationsInChunk ===
-          (input.mutationChunkSize ?? MAX_MUTATIONS_PER_RUN)
-        ) {
-          mutationsInChunk = 0;
-          await Promise.resolve();
-        }
-      }
-
-      if (!requiresRecoverySnapshot) {
-        await database.recordWatchLaterCompleteSnapshot(
-          watchLaterAccount.accountId,
-          snapshot.completedAt,
-        );
-      }
-      const result: WatchLaterReconciliationResult = {
-        reason,
-        added,
-        deleted,
-        recovered,
-        capacityBlocked,
-      };
-      if (input.accountSlot !== undefined) {
-        const remainingDeletes = [...snapshot.aids].filter(
-          (aid) => !desiredIds.has(aid),
-        ).length;
-        const remainingAdds = desired.aids.filter(
-          (aid) => !snapshot.aids.has(aid.toString()),
-        ).length;
-        watchLaterAccountSlotItems.set(
-          { account_slot: input.accountSlot, kind: "remaining_delete" },
-          remainingDeletes,
-        );
-        watchLaterAccountSlotItems.set(
-          { account_slot: input.accountSlot, kind: "remaining_add" },
-          remainingAdds,
-        );
-        logger.info(
-          `Watch Later convergence account_slot=${input.accountSlot} added=${added} deleted=${deleted} remaining_add=${remainingAdds} remaining_delete=${remainingDeletes}`,
-        );
-      }
-      watchLaterReconciliationsTotal.inc({ outcome: result.reason });
-      return result;
-    },
-  );
-}
-
-export interface WatchLaterManagementRun {
-  convergence: Promise<WatchLaterReconciliationResult[]>;
-}
-
-export async function startAutomaticWatchLaterManagement(
-  database: WatchLaterDatabase & {
-    getWatchLaterAccounts(accountIds: bigint[]): Promise<WatchLaterAccount[]>;
-  },
-  accounts: WatchLaterAccountContext[],
-  capacity: number = WATCH_LATER_CAPACITY,
-  options: WatchLaterManagementOptions = {},
-): Promise<WatchLaterManagementRun> {
-  const enabledAccounts = accounts.filter(
-    (account) => account.enableWatchLater,
-  );
-  const accountsById = new Map(
-    enabledAccounts.flatMap((account) => {
-      const accountId = asAccountId(account);
-      return accountId === null ? [] : [[accountId, account] as const];
-    }),
-  );
-  const provisionedAccounts = await database.getWatchLaterAccounts([
-    ...accountsById.keys(),
-  ]);
-  watchLaterEnabledAccounts.reset();
-  watchLaterEnabledAccounts.set({ state: "healthy" }, 0);
-  watchLaterEnabledAccounts.set({ state: "unavailable" }, 0);
-  watchLaterCapacity.reset();
-  watchLaterCapacity.set({ pool: "total" }, 0);
-  watchLaterCapacity.set({ pool: "priority" }, 0);
-  watchLaterCapacity.set({ pool: "newest" }, 0);
-  watchLaterAccountSlotItems.reset();
-  const healthyAccounts: Array<{
-    account: WatchLaterAccountContext;
-    watchLaterAccount: WatchLaterAccount;
-    snapshot: WatchLaterSnapshot;
-  }> = [];
-  const unavailableAccounts: WatchLaterAccount[] = [];
-  for (const watchLaterAccount of provisionedAccounts) {
-    const account = accountsById.get(watchLaterAccount.accountId);
-    if (account) {
-      const snapshot = await fetchWatchLaterSnapshot(account.toViewClient);
-      if (snapshot) {
-        healthyAccounts.push({
-          account,
-          watchLaterAccount,
-          snapshot,
+  return database.withWatchLaterAccountLease(row.accountId, async (lease) => {
+    const desired = new Set(desiredAids.map(String));
+    const deletes = [...snapshot.aids]
+      .filter((aid) => !desired.has(aid))
+      .map(BigInt);
+    const adds = desiredAids.filter(
+      (aid) => !snapshot.aids.has(aid.toString()),
+    );
+    let added = 0;
+    let deleted = 0;
+    const mutate = async (
+      action: WatchLaterAction,
+      aid: bigint,
+    ): Promise<WatchLaterReconciliationResult["reason"] | undefined> => {
+      if (now() >= deadline) return "deadline";
+      if (shouldContinue && !shouldContinue()) return "stopped";
+      let code: number | undefined;
+      try {
+        await pace(async () => {
+          code = await mutateWatchLater(account, aid, action, {
+            async beforePost() {
+              if (shouldContinue && !shouldContinue()) return "stopped";
+              return (await lease.renew()) ? undefined : "lease_lost";
+            },
+          });
         });
-      } else {
-        unavailableAccounts.push(watchLaterAccount);
-        options.onUnavailableAccount?.(watchLaterAccount.accountId);
+      } catch (error) {
+        if (error instanceof WatchLaterMutationPrePostAbortError)
+          return error.reason === "stopped" ? "stopped" : "lease_lost";
+        watchLaterMutationsTotal.inc({ action, outcome: "ambiguous" });
+        return "ambiguous";
       }
+      if (code === 0) {
+        watchLaterMutationsTotal.inc({ action, outcome: "succeeded" });
+        if (action === "add") added += 1;
+        else deleted += 1;
+        return undefined;
+      }
+      const reason =
+        code === CAPACITY_BLOCKED_CODE ? "capacity_blocked" : "ambiguous";
+      watchLaterMutationsTotal.inc({
+        action,
+        outcome: reason === "capacity_blocked" ? "capacity_blocked" : "failed",
+      });
+      return reason;
+    };
+    for (const aid of deletes) {
+      const reason = await mutate("delete", aid);
+      if (reason) return { reason, added, deleted };
     }
-  }
-  watchLaterEnabledAccounts.set({ state: "healthy" }, healthyAccounts.length);
-  watchLaterEnabledAccounts.set(
-    { state: "unavailable" },
-    provisionedAccounts.length - healthyAccounts.length,
+    for (const aid of adds) {
+      const reason = await mutate("add", aid);
+      if (reason) return { reason, added, deleted };
+    }
+    return { reason: "completed", added, deleted };
+  });
+}
+
+export function partitionDesiredWatchLaterAids(
+  desiredAids: bigint[],
+  accountCount: number,
+  capacity = WATCH_LATER_CAPACITY,
+): bigint[][] {
+  const assignments = Array.from(
+    { length: Math.max(0, accountCount) },
+    () => [] as bigint[],
   );
-
-  const totalCapacity = capacity * healthyAccounts.length;
-  const priorityCapacity = Math.floor((totalCapacity * 3) / 5);
-  watchLaterCapacity.set({ pool: "total" }, totalCapacity);
-  watchLaterCapacity.set({ pool: "priority" }, priorityCapacity);
-  watchLaterCapacity.set({ pool: "newest" }, totalCapacity - priorityCapacity);
-
-  const desired = await database.getDesiredWatchLaterSet(totalCapacity);
-  const assignments = partitionDesiredWatchLaterAids(
-    desired.aids,
-    healthyAccounts.length,
-    capacity,
-  );
-  const assignedAidsByAccountId = new Map<bigint, readonly bigint[]>();
-  for (const [index, healthyAccount] of healthyAccounts.entries()) {
-    assignedAidsByAccountId.set(
-      healthyAccount.watchLaterAccount.accountId,
-      assignments[index] ?? [],
-    );
+  const seen = new Set<string>();
+  for (const aid of desiredAids) {
+    if (seen.has(aid.toString()) || seen.size >= accountCount * capacity)
+      continue;
+    seen.add(aid.toString());
+    assignments[(seen.size - 1) % accountCount]?.push(aid);
   }
-
-  const healthyAssignmentIds = new Set(
-    assignments.flat().map((aid) => aid.toString()),
-  );
-  for (const unavailableAccount of unavailableAccounts) {
-    const ownedAids = await database.getWatchLaterOwnedAids(
-      unavailableAccount.accountId,
-    );
-    assignedAidsByAccountId.set(
-      unavailableAccount.accountId,
-      ownedAids.filter((aid) => !healthyAssignmentIds.has(aid.toString())),
-    );
-  }
-  options.onDesiredAssignments?.(assignedAidsByAccountId);
-
-  if (healthyAccounts.length === 0) {
-    return { convergence: Promise.resolve([]) };
-  }
-
-  const delay = options.delay ?? sleep;
-  const mutationPacer = createMutationPacer(delay);
-  const convergence = Promise.allSettled(
-    healthyAccounts.map((healthyAccount, index) => {
-      const assignedAids =
-        assignedAidsByAccountId.get(
-          healthyAccount.watchLaterAccount.accountId,
-        ) ?? [];
-      const accountSlot = String(index);
-      watchLaterAccountSlotItems.set(
-        { account_slot: accountSlot, kind: "assigned" },
-        assignedAids.length,
-      );
-      watchLaterAccountSlotItems.set(
-        { account_slot: accountSlot, kind: "observed" },
-        healthyAccount.snapshot.aids.size,
-      );
-      return reconcileWatchLaterAccount(
-        database,
-        healthyAccount.account,
-        healthyAccount.watchLaterAccount,
-        delay,
-        capacity,
-        {
-          desiredAids: assignedAids,
-          snapshot: healthyAccount.snapshot,
-          accountSlot,
-          mutationPacer,
-          shouldContinue: options.shouldContinue,
-          mutationChunkSize: options.mutationChunkSize,
-        },
-      );
-    }),
-  ).then((settled) =>
-    settled.flatMap((outcome, index) => {
-      if (outcome.status === "fulfilled") return [outcome.value];
-      logger.error(`Watch Later convergence account_slot=${index} failed`);
-      watchLaterReconciliationsTotal.inc({ outcome: "branch_failed" });
-      return [];
-    }),
-  );
-  return { convergence };
+  return assignments;
 }
 
 export async function runAutomaticWatchLaterManagement(
@@ -677,62 +196,104 @@ export async function runAutomaticWatchLaterManagement(
     getWatchLaterAccounts(accountIds: bigint[]): Promise<WatchLaterAccount[]>;
   },
   accounts: WatchLaterAccountContext[],
-  capacity: number = WATCH_LATER_CAPACITY,
+  capacity = WATCH_LATER_CAPACITY,
   options: WatchLaterManagementOptions = {},
 ): Promise<WatchLaterReconciliationResult[]> {
-  const run = await startAutomaticWatchLaterManagement(
-    database,
-    accounts,
-    capacity,
-    options,
+  const enabled = accounts.flatMap((account) =>
+    account.enableWatchLater && accountId(account) !== null
+      ? [[accountId(account) as bigint, account] as const]
+      : [],
   );
-  return run.convergence;
+  const rows = await database.getWatchLaterAccounts(enabled.map(([id]) => id));
+  const byId = new Map(enabled);
+  const healthy: Array<{
+    account: WatchLaterAccountContext;
+    row: WatchLaterAccount;
+    snapshot: WatchLaterSnapshot;
+  }> = [];
+  for (const row of rows) {
+    const account = byId.get(row.accountId);
+    const snapshot =
+      account && (await fetchWatchLaterSnapshot(account.toViewClient));
+    if (account && snapshot) {
+      await database.syncWatchLaterSnapshot(
+        row.accountId,
+        [...snapshot.aids].map(BigInt),
+        snapshot.completedAt,
+      );
+      healthy.push({ account, row, snapshot });
+    }
+  }
+  watchLaterEnabledAccounts.reset();
+  watchLaterEnabledAccounts.set({ state: "healthy" }, healthy.length);
+  watchLaterEnabledAccounts.set(
+    { state: "unhealthy" },
+    rows.length - healthy.length,
+  );
+  if (healthy.length === 0) return [];
+  const desired = await database.getDesiredWatchLaterSet(
+    healthy.length * capacity,
+  );
+  if (desired.overflow) return [];
+  const assignments = partitionDesiredWatchLaterAids(
+    desired.aids,
+    healthy.length,
+    capacity,
+  );
+  const delay = options.delay ?? sleep;
+  const now = options.now ?? Date.now;
+  const pace = createPacer(delay);
+  const deadline = now() + CYCLE_DEADLINE_MS;
+  const results: WatchLaterReconciliationResult[] = [];
+  for (const [index, item] of healthy.entries()) {
+    try {
+      const result = await reconcileAccount(
+        database,
+        item.account,
+        item.row,
+        assignments[index] ?? [],
+        item.snapshot,
+        pace,
+        deadline,
+        now,
+        options.shouldContinue,
+      );
+      results.push(result);
+      watchLaterReconciliationsTotal.inc({ outcome: result.reason });
+      if (result.reason !== "completed" && result.reason !== "deadline") break;
+    } catch {
+      watchLaterReconciliationsTotal.inc({ outcome: "lease_lost" });
+    }
+  }
+  return results;
 }
 
-export function partitionDesiredWatchLaterAids(
-  desiredAids: bigint[],
-  accountCount: number,
-  capacity: number = WATCH_LATER_CAPACITY,
-): bigint[][] {
-  if (accountCount <= 0 || capacity <= 0) return [];
+export async function startAutomaticWatchLaterManagement(
+  ...args: Parameters<typeof runAutomaticWatchLaterManagement>
+): Promise<{ convergence: Promise<WatchLaterReconciliationResult[]> }> {
+  return { convergence: runAutomaticWatchLaterManagement(...args) };
+}
 
-  const uniqueAids: bigint[] = [];
-  const seen = new Set<string>();
-  for (const aid of desiredAids) {
-    const key = aid.toString();
-    if (seen.has(key) || uniqueAids.length === accountCount * capacity) {
-      continue;
-    }
-    seen.add(key);
-    uniqueAids.push(aid);
-  }
-
-  const assignments = Array.from(
-    { length: accountCount },
-    () => [] as bigint[],
-  );
-  for (const [index, aid] of uniqueAids.entries()) {
-    assignments[index % accountCount]?.push(aid);
-  }
-  return assignments;
+export function selectWatchLaterEmpiricalAccount<
+  T extends { enableWatchLater?: boolean },
+>(accounts: T[]): T {
+  const selected = accounts.filter((account) => account.enableWatchLater);
+  if (selected.length !== 1)
+    throw new Error(
+      "Empirical Watch Later run requires exactly one loaded account with enable_watch_later = true.",
+    );
+  return selected[0] as T;
 }
 
 export async function runWatchLaterEmpiricalAddTest(
   database: WatchLaterEmpiricalDatabase,
   account: WatchLaterAccountContext,
   delay: Delay = sleep,
-  writeProgress?: ProgressWriter,
+  _writeProgress?: (text: string) => void,
   maxPriorityExclusive = 30,
 ): Promise<WatchLaterEmpiricalResult> {
-  if (
-    !Number.isInteger(maxPriorityExclusive) ||
-    maxPriorityExclusive <= 1 ||
-    maxPriorityExclusive > 721
-  ) {
-    throw new Error("Priority limit must be an integer from 2 through 721");
-  }
-  const initialSnapshot = await fetchWatchLaterSnapshot(account.toViewClient);
-  if (!initialSnapshot) {
+  const initial = await fetchWatchLaterSnapshot(account.toViewClient);
+  if (!initial)
     return {
       reason: "pre_snapshot_failed",
       selected: 0,
@@ -741,145 +302,29 @@ export async function runWatchLaterEmpiricalAddTest(
       preCount: 0,
       postCount: 0,
     };
-  }
-
-  let preSnapshot = initialSnapshot;
-  const eligibleAids =
+  let added = 0;
+  let skipped = 0;
+  const eligible =
     await database.getWatchLaterEligibleAids(maxPriorityExclusive);
-  const missingAids = eligibleAids.filter(
-    (aid) => !initialSnapshot.aids.has(aid.toString()),
-  );
-  writeProgress?.(
-    `priority<${maxPriorityExclusive} targets: ${eligibleAids.length}, present: ${eligibleAids.length - missingAids.length}, missing: ${missingAids.length}, watch-later total: ${initialSnapshot.aids.size}\n`,
-  );
-  let selectedTotal = 0;
-  let addedTotal = 0;
-  let skippedTotal = 0;
-  let consecutiveAddErrors = 0;
-  let delayBeforeNextMutation = false;
-  let nextMissingIndex = 0;
-  for (;;) {
-    const selected = missingAids.slice(nextMissingIndex, nextMissingIndex + 10);
-    selectedTotal += selected.length;
-    if (selected.length === 0) {
-      return {
-        reason: "eligible_exhausted",
-        selected: selectedTotal,
-        added: addedTotal,
-        skipped: skippedTotal,
-        preCount: initialSnapshot.aids.size,
-        postCount: preSnapshot.aids.size,
-      };
-    }
-
-    writeProgress?.(
-      `adding ${addedTotal + 1} to ${addedTotal + selected.length}: `,
-    );
-    const addedInBatch: bigint[] = [];
-    for (const aid of selected) {
-      if (delayBeforeNextMutation) await delay(MUTATION_DELAY_MS);
-      let error: string | undefined;
-      let errorCode: number | undefined;
-      try {
-        const code = await mutateWatchLater(account, aid, "add");
-        if (code !== 0) {
-          error = `bili code ${code}`;
-          errorCode = code;
-        }
-      } catch (cause) {
-        error = describeWatchLaterRequestError(cause);
-        errorCode = getWatchLaterRequestErrorCode(cause);
-      }
-      if (error) {
-        if (errorCode === CAPACITY_BLOCKED_CODE) {
-          writeProgress?.(`request failed: ${error}\n`);
-          return {
-            reason: "request_failed",
-            selected: selectedTotal,
-            added: addedTotal,
-            skipped: skippedTotal,
-            preCount: initialSnapshot.aids.size,
-            postCount: preSnapshot.aids.size,
-            error,
-          };
-        }
-        skippedTotal += 1;
-        consecutiveAddErrors += 1;
-        writeProgress?.(`x\nskipped add: ${error}\n`);
-        const marked = await database.markWatchLaterEmpiricalFailedAid?.(aid);
-        if (!marked) {
-          const markingError = `failed to mark skipped aid after: ${error}`;
-          writeProgress?.(`request failed: ${markingError}\n`);
-          return {
-            reason: "request_failed",
-            selected: selectedTotal,
-            added: addedTotal,
-            skipped: skippedTotal,
-            preCount: initialSnapshot.aids.size,
-            postCount: preSnapshot.aids.size,
-            error: markingError,
-          };
-        }
-        if (consecutiveAddErrors === MAX_CONSECUTIVE_EMPIRICAL_ADD_ERRORS) {
-          writeProgress?.(`request failed: ${error}\n`);
-          return {
-            reason: "request_failed",
-            selected: selectedTotal,
-            added: addedTotal,
-            skipped: skippedTotal,
-            preCount: initialSnapshot.aids.size,
-            postCount: preSnapshot.aids.size,
-            error,
-          };
-        }
-        delayBeforeNextMutation = true;
+  for (const aid of eligible.filter(
+    (aid) => !initial.aids.has(aid.toString()),
+  )) {
+    if (added + skipped > 0) await delay(MUTATION_DELAY_MS);
+    try {
+      if ((await mutateWatchLater(account, aid, "add")) === 0) {
+        added += 1;
         continue;
       }
-      consecutiveAddErrors = 0;
-      addedTotal += 1;
-      addedInBatch.push(aid);
-      delayBeforeNextMutation = true;
-      writeProgress?.(".");
-    }
-    writeProgress?.("\n");
-
-    await delay(POST_SETTLE_DELAY_MS);
-    delayBeforeNextMutation = false;
-    const postSnapshot = await fetchWatchLaterSnapshot(account.toViewClient);
-    if (!postSnapshot) {
-      return {
-        reason: "post_snapshot_failed",
-        selected: selectedTotal,
-        added: addedTotal,
-        skipped: skippedTotal,
-        preCount: initialSnapshot.aids.size,
-        postCount: preSnapshot.aids.size,
-      };
-    }
-    const verified =
-      [...preSnapshot.aids].every((aid) => postSnapshot.aids.has(aid)) &&
-      addedInBatch.every((aid) => postSnapshot.aids.has(aid.toString()));
-    if (!verified) {
-      return {
-        reason: "verification_failed",
-        selected: selectedTotal,
-        added: addedTotal,
-        skipped: skippedTotal,
-        preCount: initialSnapshot.aids.size,
-        postCount: postSnapshot.aids.size,
-      };
-    }
-    preSnapshot = postSnapshot;
-    nextMissingIndex += selected.length;
-    if (selected.length < 10) {
-      return {
-        reason: "eligible_exhausted",
-        selected: selectedTotal,
-        added: addedTotal,
-        skipped: skippedTotal,
-        preCount: initialSnapshot.aids.size,
-        postCount: postSnapshot.aids.size,
-      };
-    }
+    } catch {}
+    skipped += 1;
+    await database.markWatchLaterEmpiricalFailedAid?.(aid);
   }
+  return {
+    reason: "eligible_exhausted",
+    selected: added + skipped,
+    added,
+    skipped,
+    preCount: initial.aids.size,
+    postCount: initial.aids.size,
+  };
 }

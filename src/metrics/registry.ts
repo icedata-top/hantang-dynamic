@@ -160,20 +160,6 @@ export const watchLaterEnabledAccounts = new Gauge({
   registers: [metricsRegistry],
 });
 
-export const watchLaterCapacity = new Gauge({
-  name: `${PREFIX}watch_later_capacity`,
-  help: "Startup Watch Later scaled capacity by 6:4 pool.",
-  labelNames: ["pool"] as const,
-  registers: [metricsRegistry],
-});
-
-export const watchLaterAccountSlotItems = new Gauge({
-  name: `${PREFIX}watch_later_account_slot_items`,
-  help: "Watch Later assigned, observed, and remaining action counts per deterministic startup account slot.",
-  labelNames: ["account_slot", "kind"] as const,
-  registers: [metricsRegistry],
-});
-
 export const watchLaterMutationsTotal = new Counter({
   name: `${PREFIX}watch_later_mutations_total`,
   help: "Watch Later mutation request outcomes; recovery snapshot resolutions are not mutation requests.",
@@ -185,31 +171,6 @@ export const watchLaterReconciliationsTotal = new Counter({
   name: `${PREFIX}watch_later_reconciliations_total`,
   help: "Completed Watch Later reconciliation passes by outcome.",
   labelNames: ["outcome"] as const,
-  registers: [metricsRegistry],
-});
-
-export const watchLaterAccountExclusionsTotal = new Counter({
-  name: `${PREFIX}watch_later_account_exclusions_total`,
-  help: "Watch Later accounts excluded from To View sampling by phase.",
-  labelNames: ["phase"] as const,
-  registers: [metricsRegistry],
-});
-
-export const watchLaterUnavailableAccounts = new Gauge({
-  name: `${PREFIX}watch_later_unavailable_accounts`,
-  help: "Current Watch Later accounts unavailable to To View sampling.",
-  registers: [metricsRegistry],
-});
-
-export const watchLaterFallbackBatchesTotal = new Counter({
-  name: `${PREFIX}watch_later_fallback_batches_total`,
-  help: "Favorite-resource fallback batches emitted while Watch Later accounts are unavailable.",
-  registers: [metricsRegistry],
-});
-
-export const watchLaterFallbackVideosTotal = new Counter({
-  name: `${PREFIX}watch_later_fallback_videos_total`,
-  help: "Videos sent to favorite-resource fallback while Watch Later accounts are unavailable.",
   registers: [metricsRegistry],
 });
 

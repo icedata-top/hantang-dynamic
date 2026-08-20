@@ -5,8 +5,6 @@ import {
   minuteBatchDurationSeconds,
   minuteBatchesTotal,
   minuteSamplesTotal,
-  watchLaterAccountExclusionsTotal,
-  watchLaterUnavailableAccounts,
 } from "../../metrics/registry";
 import type {
   CompleteVideoMinuteTuple,
@@ -16,10 +14,7 @@ import { logger } from "../../utils/logger";
 import { batchSampleVideoStats } from "./batchSampleVideoStats";
 import { isCompleteVideoMinuteSample } from "./completeSample";
 import { shouldPersistMinuteSample } from "./persistencePolicy";
-import {
-  startAutomaticWatchLaterManagement,
-  type WatchLaterManagementRun,
-} from "./watchLaterReconciliation";
+import { startAutomaticWatchLaterManagement } from "./watchLaterReconciliation";
 
 const MAX_SLEEP_MS = 60_000;
 const MIN_SLEEP_MS = 100;
@@ -32,13 +27,7 @@ export type MinuteDatabase = Pick<
   | "advanceUnchangedMinuteVideos"
   | "getWatchLaterAccounts"
   | "getDesiredWatchLaterSet"
-  | "getWatchLaterOwnedAids"
-  | "getRecoverableWatchLaterOperations"
-  | "createWatchLaterOperation"
-  | "recordWatchLaterOperationAttempt"
-  | "resolveWatchLaterOperation"
-  | "removeWatchLaterOwnershipAfterCompleteSnapshot"
-  | "recordWatchLaterCompleteSnapshot"
+  | "syncWatchLaterSnapshot"
   | "withWatchLaterAccountLease"
   | "getLatestCompleteVideoMinuteTuple"
   | "getNextMinuteDueAt"
@@ -76,11 +65,6 @@ export class MinuteHandler {
   private loopPromise: Promise<void> | null = null;
   private abortController: AbortController | null = null;
   private watchLaterManagementPromise: Promise<void> | null = null;
-  private readonly unavailableWatchLaterAccountIds = new Set<bigint>();
-  private readonly desiredWatchLaterAidsByAccountId = new Map<
-    bigint,
-    readonly bigint[]
-  >();
 
   constructor(dependencies: MinuteHandlerDependencies = {}) {
     this.db = dependencies.database ?? Database.getInstance();
@@ -95,24 +79,12 @@ export class MinuteHandler {
   start(): void {
     if (this.loopPromise) return;
     this.isRunning = true;
-    this.unavailableWatchLaterAccountIds.clear();
-    this.desiredWatchLaterAidsByAccountId.clear();
-    watchLaterUnavailableAccounts.set(0);
     this.abortController = new AbortController();
     this.loopPromise = this.loop(this.abortController.signal);
-    logger.info("Adaptive minute handler started (batch-accumulation)");
-  }
-
-  private markWatchLaterAccountUnavailable(
-    accountId: bigint,
-    phase: "startup" | "runtime_sampling",
-  ): void {
-    if (this.unavailableWatchLaterAccountIds.has(accountId)) return;
-    this.unavailableWatchLaterAccountIds.add(accountId);
-    watchLaterAccountExclusionsTotal.inc({ phase });
-    watchLaterUnavailableAccounts.set(
-      this.unavailableWatchLaterAccountIds.size,
+    this.watchLaterManagementPromise = this.runWatchLaterController(
+      this.abortController.signal,
     );
+    logger.info("Adaptive minute handler started (batch-accumulation)");
   }
 
   async stop(): Promise<void> {
@@ -141,30 +113,6 @@ export class MinuteHandler {
    * non-gate videos that have accumulated), so gate latency stays minimal.
    */
   private async loop(signal: AbortSignal): Promise<void> {
-    try {
-      const managementRun = await this.startWatchLaterManagement(
-        this.db,
-        this.accounts(),
-        undefined,
-        {
-          onUnavailableAccount: (accountId) => {
-            this.markWatchLaterAccountUnavailable(accountId, "startup");
-          },
-          onDesiredAssignments: (assignments) => {
-            this.desiredWatchLaterAidsByAccountId.clear();
-            for (const [accountId, aids] of assignments) {
-              this.desiredWatchLaterAidsByAccountId.set(accountId, aids);
-            }
-          },
-          shouldContinue: () => this.isRunning,
-        },
-      );
-      this.watchLaterManagementPromise =
-        this.observeWatchLaterConvergence(managementRun);
-    } catch (error) {
-      logger.error("Watch-later management failed:", error);
-    }
-
     while (this.isRunning) {
       try {
         const due = await this.db.selectDueMinuteVideos(
@@ -235,12 +183,31 @@ export class MinuteHandler {
     this.loopPromise = null;
   }
 
-  private async observeWatchLaterConvergence(
-    managementRun: WatchLaterManagementRun,
-  ): Promise<void> {
+  private async runWatchLaterController(signal: AbortSignal): Promise<void> {
+    while (this.isRunning) {
+      const startedAt = Date.now();
+      try {
+        const run = await this.startWatchLaterManagement(
+          this.db,
+          this.accounts(),
+          undefined,
+          { shouldContinue: () => this.isRunning },
+        );
+        await this.observeWatchLaterConvergence(run);
+      } catch (error) {
+        logger.error("Watch-later management failed:", error);
+      }
+      const nextDelay = Math.max(0, 15 * 60_000 - (Date.now() - startedAt));
+      await cancellableSleep(nextDelay, signal);
+    }
+  }
+
+  private async observeWatchLaterConvergence(managementRun: {
+    convergence: Promise<unknown>;
+  }): Promise<void> {
     try {
       await managementRun.convergence;
-      logger.info("Watch Later background convergence completed");
+      logger.info("Watch Later reconciliation cycle completed");
     } catch (error) {
       logger.error("Watch Later background convergence failed:", error);
     }
@@ -269,19 +236,7 @@ export class MinuteHandler {
         samples = await this.sampleVideoStats(aids, {
           batchSize: config.minute.batchSize,
           toViewAccounts: accounts,
-          watchLaterToViewAccounts: watchLaterToViewAccounts.filter(
-            (account) =>
-              !this.unavailableWatchLaterAccountIds.has(account.accountId),
-          ),
-          unavailableWatchLaterAccountIds: this.unavailableWatchLaterAccountIds,
-          desiredWatchLaterAidsByAccountId:
-            this.desiredWatchLaterAidsByAccountId,
-          onWatchLaterToViewAccountFailure: (accountId) => {
-            this.markWatchLaterAccountUnavailable(
-              accountId,
-              "runtime_sampling",
-            );
-          },
+          watchLaterToViewAccounts,
         });
       } catch (error) {
         logger.error("Minute stats batch request failed:", error);

@@ -126,24 +126,15 @@ import {
   type VideoIdentity,
 } from "./videos.js";
 import {
-  createWatchLaterOperation,
   getDesiredWatchLaterSet,
-  getRecoverableWatchLaterOperations,
   getWatchLaterAccounts,
   getWatchLaterEligibleAids,
-  getWatchLaterOwnedAids,
   markWatchLaterEmpiricalFailedAid,
   provisionWatchLaterAccounts,
-  recordWatchLaterCompleteSnapshot,
-  recordWatchLaterOperationAttempt,
-  removeWatchLaterOwnershipAfterCompleteSnapshot,
-  resolveWatchLaterOperation,
+  syncWatchLaterSnapshot,
   type WatchLaterAccount,
   type WatchLaterAccountLease,
   type WatchLaterDesiredSet,
-  type WatchLaterOperation,
-  type WatchLaterOperationIntent,
-  type WatchLaterOperationResolution,
   withWatchLaterAccountLease,
 } from "./watchLater.js";
 
@@ -620,10 +611,6 @@ export class Database {
     return getDesiredWatchLaterSet(this.ensurePool(), targetCount);
   }
 
-  public async getWatchLaterOwnedAids(accountId: bigint): Promise<bigint[]> {
-    return getWatchLaterOwnedAids(this.ensurePool(), accountId);
-  }
-
   public async getWatchLaterEligibleAids(
     maxPriorityExclusive: number,
   ): Promise<bigint[]> {
@@ -641,52 +628,12 @@ export class Database {
     return withWatchLaterAccountLease(this.ensurePool(), accountId, callback);
   }
 
-  public async createWatchLaterOperation(
-    input: WatchLaterOperationIntent,
-  ): Promise<void> {
-    return createWatchLaterOperation(this.ensurePool(), input);
-  }
-
-  public async recordWatchLaterOperationAttempt(
-    operationId: string,
-    attemptedAt: Date,
-  ): Promise<boolean> {
-    return recordWatchLaterOperationAttempt(
-      this.ensurePool(),
-      operationId,
-      attemptedAt,
-    );
-  }
-
-  public async getRecoverableWatchLaterOperations(
-    accountId: bigint,
-  ): Promise<WatchLaterOperation[]> {
-    return getRecoverableWatchLaterOperations(this.ensurePool(), accountId);
-  }
-
-  public async resolveWatchLaterOperation(
-    input: WatchLaterOperationResolution,
-  ): Promise<boolean> {
-    return resolveWatchLaterOperation(this.ensurePool(), input);
-  }
-
-  public async recordWatchLaterCompleteSnapshot(
-    accountId: bigint,
-    completedAt: Date,
-  ): Promise<void> {
-    return recordWatchLaterCompleteSnapshot(
-      this.ensurePool(),
-      accountId,
-      completedAt,
-    );
-  }
-
-  public async removeWatchLaterOwnershipAfterCompleteSnapshot(
+  public async syncWatchLaterSnapshot(
     accountId: bigint,
     aids: bigint[],
     completedAt: Date,
   ): Promise<number> {
-    return removeWatchLaterOwnershipAfterCompleteSnapshot(
+    return syncWatchLaterSnapshot(
       this.ensurePool(),
       accountId,
       aids,
