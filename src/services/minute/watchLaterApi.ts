@@ -34,6 +34,22 @@ export interface WatchLaterSnapshot {
   completedAt: Date;
 }
 
+export type WatchLaterMutationPrePostAbortReason =
+  | "stopped"
+  | "lease_lost"
+  | "attempt_unavailable";
+
+export class WatchLaterMutationPrePostAbortError extends Error {
+  constructor(readonly reason: WatchLaterMutationPrePostAbortReason) {
+    super(`Watch-later mutation aborted before POST: ${reason}`);
+    this.name = "WatchLaterMutationPrePostAbortError";
+  }
+}
+
+export interface WatchLaterMutationOptions {
+  beforePost?(): Promise<WatchLaterMutationPrePostAbortReason | undefined>;
+}
+
 async function csrfToken(account: WatchLaterAccountContext): Promise<string> {
   if (config.bilibili.csrfToken) return config.bilibili.csrfToken;
   if (!account.cookieJar) {
@@ -92,9 +108,19 @@ export async function mutateWatchLater(
   account: WatchLaterAccountContext,
   aid: bigint,
   action: WatchLaterAction,
+  options: WatchLaterMutationOptions = {},
 ): Promise<number> {
   const release = await sharedApiRateLimiter.acquire();
   try {
+    let abortReason: WatchLaterMutationPrePostAbortReason | undefined;
+    try {
+      abortReason = await options.beforePost?.();
+    } catch {
+      abortReason = "lease_lost";
+    }
+    if (abortReason) {
+      throw new WatchLaterMutationPrePostAbortError(abortReason);
+    }
     const body = new URLSearchParams({
       aid: aid.toString(),
       csrf: await csrfToken(account),

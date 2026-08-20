@@ -20,9 +20,11 @@ import {
   watchLaterMutationsTotal,
   watchLaterReconciliationsTotal,
 } from "../../metrics/registry";
+import { sharedApiRateLimiter } from "../../utils/apiRateLimiter";
 import {
   mutateWatchLater,
   type WatchLaterAccountContext,
+  WatchLaterMutationPrePostAbortError,
 } from "./watchLaterApi";
 import {
   partitionDesiredWatchLaterAids,
@@ -121,6 +123,14 @@ function database(
     },
     ...overrides,
   };
+}
+
+async function waitForSharedApiQueue(): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (sharedApiRateLimiter.getQueueLength() > 0) return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.fail("mutation did not enter the shared API limiter queue");
 }
 
 const configured: WatchLaterAccount = {
@@ -370,6 +380,166 @@ test("lease renewal failure stops an account before its next mutation", async ()
 
   assert.equal(result.reason, "lease_lost");
   assert.equal(posts, 0);
+});
+
+test("cancelling an account while its mutation is queued sends no POST", async () => {
+  const releaseLimiter = await sharedApiRateLimiter.acquire();
+  let continueRunning = true;
+  let posts = 0;
+  let attempts = 0;
+  const guardedAccount = account([snapshot([])]);
+  guardedAccount.toViewClient.post = async () => {
+    posts += 1;
+    return { data: { code: 0 } };
+  };
+
+  try {
+    const reconciliation = reconcileWatchLaterAccount(
+      database({
+        async getDesiredWatchLaterSet() {
+          return { aids: [1n], overflow: false };
+        },
+        async recordWatchLaterOperationAttempt() {
+          attempts += 1;
+          return true;
+        },
+      }),
+      guardedAccount,
+      configured,
+      async () => {},
+      1,
+      {
+        snapshot: { aids: new Set(), completedAt: new Date() },
+        shouldContinue: () => continueRunning,
+      },
+    );
+    await waitForSharedApiQueue();
+    continueRunning = false;
+    releaseLimiter();
+
+    assert.equal((await reconciliation).reason, "stopped");
+    assert.equal(posts, 0);
+    assert.equal(attempts, 0);
+  } finally {
+    if (sharedApiRateLimiter.getActiveCount() > 0) releaseLimiter();
+  }
+  assert.equal(sharedApiRateLimiter.getQueueLength(), 0);
+  assert.equal(sharedApiRateLimiter.getActiveCount(), 0);
+});
+
+test("an expired queued lease loses ownership before the mutation POST", async () => {
+  const releaseLimiter = await sharedApiRateLimiter.acquire();
+  let now = 0;
+  let leaseExpiresAt = 300_000;
+  let competingAcquisitionSucceeded = false;
+  let posts = 0;
+  const guardedAccount = account([snapshot([])]);
+  guardedAccount.toViewClient.post = async () => {
+    posts += 1;
+    return { data: { code: 0 } };
+  };
+
+  try {
+    const reconciliation = reconcileWatchLaterAccount(
+      database({
+        async getDesiredWatchLaterSet() {
+          return { aids: [1n], overflow: false };
+        },
+        async withWatchLaterAccountLease<T>(
+          _accountId: bigint,
+          callback: (lease: WatchLaterAccountLease) => Promise<T>,
+        ) {
+          return callback({
+            async renew() {
+              if (now >= leaseExpiresAt) return false;
+              leaseExpiresAt = now + 300_000;
+              return true;
+            },
+          });
+        },
+      }),
+      guardedAccount,
+      configured,
+      async () => {},
+      1,
+      { snapshot: { aids: new Set(), completedAt: new Date() } },
+    );
+    await waitForSharedApiQueue();
+    now = 300_000;
+    competingAcquisitionSucceeded = now >= leaseExpiresAt;
+    releaseLimiter();
+
+    assert.equal((await reconciliation).reason, "lease_lost");
+    assert.equal(competingAcquisitionSucceeded, true);
+    assert.equal(posts, 0);
+  } finally {
+    if (sharedApiRateLimiter.getActiveCount() > 0) releaseLimiter();
+  }
+  assert.equal(sharedApiRateLimiter.getQueueLength(), 0);
+  assert.equal(sharedApiRateLimiter.getActiveCount(), 0);
+});
+
+test("a valid guard after shared limiter acquisition sends exactly one POST", async () => {
+  const releaseLimiter = await sharedApiRateLimiter.acquire();
+  let posts = 0;
+  const guardedAccount = account([snapshot([])]);
+  guardedAccount.toViewClient.post = async () => {
+    posts += 1;
+    return { data: { code: 0 } };
+  };
+
+  try {
+    const reconciliation = reconcileWatchLaterAccount(
+      database({
+        async getDesiredWatchLaterSet() {
+          return { aids: [1n], overflow: false };
+        },
+      }),
+      guardedAccount,
+      configured,
+      async () => {},
+      1,
+      { snapshot: { aids: new Set(), completedAt: new Date() } },
+    );
+    await waitForSharedApiQueue();
+    releaseLimiter();
+
+    assert.equal((await reconciliation).reason, "completed");
+    assert.equal(posts, 1);
+  } finally {
+    if (sharedApiRateLimiter.getActiveCount() > 0) releaseLimiter();
+  }
+  assert.equal(sharedApiRateLimiter.getQueueLength(), 0);
+  assert.equal(sharedApiRateLimiter.getActiveCount(), 0);
+});
+
+test("a throwing pre-POST guard releases the limiter without dispatching", async () => {
+  let posts = 0;
+  const guardedAccount = account([snapshot([])]);
+  guardedAccount.toViewClient.post = async () => {
+    posts += 1;
+    return { data: { code: 0 } };
+  };
+
+  await assert.rejects(
+    () =>
+      mutateWatchLater(guardedAccount, 1n, "add", {
+        async beforePost() {
+          throw new Error("lease store unavailable");
+        },
+      }),
+    (error: unknown) =>
+      error instanceof WatchLaterMutationPrePostAbortError &&
+      error.reason === "lease_lost",
+  );
+  assert.equal(posts, 0);
+  assert.equal(sharedApiRateLimiter.getQueueLength(), 0);
+  assert.equal(sharedApiRateLimiter.getActiveCount(), 0);
+
+  await mutateWatchLater(guardedAccount, 1n, "add");
+  assert.equal(posts, 1);
+  assert.equal(sharedApiRateLimiter.getQueueLength(), 0);
+  assert.equal(sharedApiRateLimiter.getActiveCount(), 0);
 });
 
 test("an unavailable durable attempt marker stops the account without posting", async () => {

@@ -19,6 +19,7 @@ import {
   fetchWatchLaterSnapshot,
   mutateWatchLater,
   type WatchLaterAccountContext,
+  WatchLaterMutationPrePostAbortError,
   type WatchLaterSnapshot,
 } from "./watchLaterApi";
 
@@ -277,27 +278,30 @@ async function performOperation(
       intentAt: new Date(),
       provenanceRunRef: runRef,
     });
-    let attemptRecorded: boolean;
-    try {
-      attemptRecorded = await database.recordWatchLaterOperationAttempt(
-        operationId,
-        new Date(),
-      );
-    } catch {
-      return "attempt_unavailable";
-    }
-    if (!attemptRecorded) return "attempt_unavailable";
+    const code = await mutateWatchLater(account, aid, action, {
+      async beforePost() {
+        if (shouldContinue && !shouldContinue()) return "stopped";
 
-    let ownsLease: boolean;
-    try {
-      ownsLease = await lease.renew();
-    } catch {
-      return "lease_lost";
-    }
-    if (!ownsLease) return "lease_lost";
-    if (shouldContinue && !shouldContinue()) return "stopped";
+        let ownsLease: boolean;
+        try {
+          ownsLease = await lease.renew();
+        } catch {
+          return "lease_lost";
+        }
+        if (!ownsLease) return "lease_lost";
 
-    const code = await mutateWatchLater(account, aid, action);
+        try {
+          const attemptRecorded =
+            await database.recordWatchLaterOperationAttempt(
+              operationId,
+              new Date(),
+            );
+          if (!attemptRecorded) return "attempt_unavailable";
+        } catch {
+          return "attempt_unavailable";
+        }
+      },
+    });
     if (code === 0) {
       await database.resolveWatchLaterOperation({
         operationId,
@@ -316,7 +320,10 @@ async function performOperation(
     });
     watchLaterMutationsTotal.inc({ action, outcome });
     return outcome;
-  } catch {
+  } catch (cause) {
+    if (cause instanceof WatchLaterMutationPrePostAbortError) {
+      return cause.reason;
+    }
     await database.resolveWatchLaterOperation({
       operationId,
       resultClassification: "ambiguous",
