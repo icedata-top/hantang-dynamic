@@ -172,7 +172,33 @@ test("invalid snapshots are unhealthy and publish no routing membership", async 
     },
   );
   assert.equal(synced, 0);
-  assert.deepEqual(healthy, [[]]);
+  assert.deepEqual(healthy, [[], []]);
+});
+
+test("sync failure excludes only that account from published routing health", async () => {
+  const healthy: bigint[][] = [];
+  await runAutomaticWatchLaterManagement(
+    database({
+      async getWatchLaterAccounts() {
+        return [
+          { accountId: 7n, lastCompleteSnapshotAt: null },
+          { accountId: 8n, lastCompleteSnapshotAt: null },
+        ];
+      },
+      async syncWatchLaterSnapshot(accountId) {
+        if (accountId === 7n) throw new Error("database sync failed");
+        return 0;
+      },
+    }),
+    [account([snapshot([])], [], "7"), account([snapshot([])], [], "8")],
+    undefined,
+    {
+      onHealthyAccounts(ids) {
+        healthy.push([...ids]);
+      },
+    },
+  );
+  assert.deepEqual(healthy, [[], [8n]]);
 });
 
 test("deadline reached while paced prevents the next POST and leaves only snapshot state", async () => {

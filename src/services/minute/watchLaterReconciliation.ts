@@ -204,6 +204,10 @@ export async function runAutomaticWatchLaterManagement(
   capacity = WATCH_LATER_CAPACITY,
   options: WatchLaterManagementOptions = {},
 ): Promise<WatchLaterReconciliationResult[]> {
+  watchLaterEnabledAccounts.reset();
+  watchLaterEnabledAccounts.set({ state: "healthy" }, 0);
+  watchLaterEnabledAccounts.set({ state: "unhealthy" }, 0);
+  options.onHealthyAccounts?.(new Set());
   const enabled = accounts.flatMap((account) =>
     account.enableWatchLater && accountId(account) !== null
       ? [[accountId(account) as bigint, account] as const]
@@ -218,16 +222,17 @@ export async function runAutomaticWatchLaterManagement(
   }> = [];
   for (const row of rows) {
     const account = byId.get(row.accountId);
-    const snapshot =
-      account && (await fetchWatchLaterSnapshot(account.toViewClient));
-    if (account && snapshot) {
+    if (!account) continue;
+    try {
+      const snapshot = await fetchWatchLaterSnapshot(account.toViewClient);
+      if (!snapshot) continue;
       await database.syncWatchLaterSnapshot(
         row.accountId,
         [...snapshot.aids].map(BigInt),
         snapshot.completedAt,
       );
       healthy.push({ account, row, snapshot });
-    }
+    } catch {}
   }
   watchLaterEnabledAccounts.reset();
   watchLaterEnabledAccounts.set({ state: "healthy" }, healthy.length);

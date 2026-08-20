@@ -156,3 +156,35 @@ test("fallback conserves unique large bigint AIDs in fifty-item chunks", async (
   );
   assert.equal(batches[0]?.[0], aids[0]);
 });
+
+test("a stale UID is not queried when current health is empty and falls back in fifty-item batches", async () => {
+  const aids = Array.from({ length: 50 }, (_, index) => BigInt(index + 1));
+  const fallbackBatches: bigint[][] = [];
+  let staleUidCalls = 0;
+  await batchSampleVideoStats(aids, {
+    batchSize: 50,
+    toViewAccounts: [
+      {
+        uid: "7",
+        toViewClient: {
+          async get() {
+            staleUidCalls += 1;
+            return { data: toViewResponse(1) };
+          },
+        },
+      },
+    ],
+    observedWatchLaterAccountIdsByAid: new Map(
+      aids.map((aid) => [aid.toString(), [7n]]),
+    ),
+    healthyWatchLaterAccountIds: new Set(),
+    dependencies: {
+      async fetchStatsBatch(batch) {
+        fallbackBatches.push(batch);
+        return favoriteResponse(batch);
+      },
+    },
+  });
+  assert.equal(staleUidCalls, 0);
+  assert.deepEqual(fallbackBatches, [aids]);
+});

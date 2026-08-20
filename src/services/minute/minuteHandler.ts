@@ -187,6 +187,7 @@ export class MinuteHandler {
   private async runWatchLaterController(signal: AbortSignal): Promise<void> {
     while (this.isRunning) {
       const startedAt = Date.now();
+      this.setHealthyWatchLaterAccounts(new Set());
       try {
         await this.runWatchLaterManagement(
           this.db,
@@ -194,12 +195,8 @@ export class MinuteHandler {
           undefined,
           {
             shouldContinue: () => this.isRunning,
-            onHealthyAccounts: (accountIds) => {
-              this.healthyWatchLaterAccountIds.clear();
-              for (const accountId of accountIds) {
-                this.healthyWatchLaterAccountIds.add(accountId);
-              }
-            },
+            onHealthyAccounts: (accountIds) =>
+              this.setHealthyWatchLaterAccounts(accountIds),
           },
         );
       } catch (error) {
@@ -207,6 +204,13 @@ export class MinuteHandler {
       }
       const nextDelay = Math.max(0, 15 * 60_000 - (Date.now() - startedAt));
       await cancellableSleep(nextDelay, signal);
+    }
+  }
+
+  private setHealthyWatchLaterAccounts(accountIds: ReadonlySet<bigint>): void {
+    this.healthyWatchLaterAccountIds.clear();
+    for (const accountId of accountIds) {
+      this.healthyWatchLaterAccountIds.add(accountId);
     }
   }
 

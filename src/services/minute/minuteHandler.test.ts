@@ -160,3 +160,51 @@ test("watch-later cycles schedule fifteen minutes from the prior start", async (
   assert.equal(cycles, 2);
   assert.deepEqual(delays, [15 * 60_000]);
 });
+
+test("failed controller cycle clears prior routing health before minute sampling", async () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const controller = new AbortController();
+  const routedAccountIds: bigint[][] = [];
+  let cycles = 0;
+  const handler = new MinuteHandler({
+    database: database(() => {}),
+    loadAccounts: () => [],
+    async sampleVideoStats(_aids, options) {
+      routedAccountIds.push([
+        ...(options?.healthyWatchLaterAccountIds ?? new Set()),
+      ]);
+      return [];
+    },
+    async runWatchLaterManagement(_database, _accounts, _capacity, options) {
+      cycles += 1;
+      if (cycles === 1) {
+        options?.onHealthyAccounts?.(new Set([7n]));
+        return [];
+      }
+      await handler.processBatch([
+        {
+          aid: 1n,
+          lastView: null,
+          watchLaterManagedAccountIds: [7n],
+        },
+      ]);
+      Reflect.set(handler, "isRunning", false);
+      controller.abort();
+      throw new Error("snapshot sync failed");
+    },
+  });
+  globalThis.setTimeout = ((callback: () => void) => {
+    queueMicrotask(callback);
+    return {} as NodeJS.Timeout;
+  }) as typeof setTimeout;
+  Reflect.set(handler, "isRunning", true);
+  try {
+    const run = Reflect.get(handler, "runWatchLaterController") as (
+      signal: AbortSignal,
+    ) => Promise<void>;
+    await run.call(handler, controller.signal);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
+  assert.deepEqual(routedAccountIds, [[]]);
+});
