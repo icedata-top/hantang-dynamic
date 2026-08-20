@@ -321,3 +321,31 @@ test("MinuteHandler samples a zero-capacity enabled account without mutations", 
     "watch-later-accounts",
   ]);
 });
+
+test("MinuteHandler begins sampling while Watch Later convergence remains active", async () => {
+  const calls: string[] = [];
+  let resolveConvergence: (() => void) | undefined;
+  const convergence = new Promise<void>((resolve) => {
+    resolveConvergence = resolve;
+  });
+  const handler = new MinuteHandler({
+    database: {
+      ...database(calls),
+      async selectDueMinuteVideos() {
+        calls.push("select-due");
+        return [];
+      },
+    },
+    loadAccounts: () => [],
+    async startWatchLaterManagement() {
+      calls.push("watch-later-started");
+      return { convergence: convergence.then(() => []) };
+    },
+  });
+
+  handler.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["watch-later-started", "select-due"]);
+  resolveConvergence?.();
+  await handler.stop();
+});

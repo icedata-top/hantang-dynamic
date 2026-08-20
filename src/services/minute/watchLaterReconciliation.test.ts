@@ -27,6 +27,7 @@ import {
   runAutomaticWatchLaterManagement,
   runWatchLaterEmpiricalAddTest,
   selectWatchLaterEmpiricalAccount,
+  startAutomaticWatchLaterManagement,
   WATCH_LATER_CAPACITY,
   type WatchLaterDatabase,
   type WatchLaterEmpiricalDatabase,
@@ -187,9 +188,60 @@ test("enabled accounts reconcile independently with the shared injected capacity
   assert.equal(desiredTarget, 4);
   assert.deepEqual(operations, [
     { accountId: 7n, aid: 1n },
-    { accountId: 7n, aid: 3n },
     { accountId: 8n, aid: 2n },
+    { accountId: 7n, aid: 3n },
     { accountId: 8n, aid: 4n },
+  ]);
+});
+
+test("background convergence completes multiple chunks from one startup snapshot", async () => {
+  const operations: Array<{ action: string; aid: bigint }> = [];
+  const delays: number[] = [];
+  let snapshots = 0;
+  const run = await startAutomaticWatchLaterManagement(
+    {
+      ...database({
+        async getDesiredWatchLaterSet() {
+          return { aids: [10n, 11n, 12n, 13n], overflow: false };
+        },
+        async createWatchLaterOperation(input) {
+          operations.push({ action: input.action, aid: input.aid });
+        },
+      }),
+      async getWatchLaterAccounts() {
+        return [configured];
+      },
+    },
+    [account([snapshot([1, 2, 3, 4])], [], "7", () => snapshots++)],
+    4,
+    {
+      delay: async (milliseconds) => {
+        delays.push(milliseconds);
+      },
+      mutationChunkSize: 2,
+    },
+  );
+
+  const [result] = await run.convergence;
+  assert.equal(snapshots, 1);
+  assert.equal(result.deleted, 4);
+  assert.equal(result.added, 4);
+  assert.deepEqual(operations, [
+    { action: "delete", aid: 1n },
+    { action: "delete", aid: 2n },
+    { action: "delete", aid: 3n },
+    { action: "delete", aid: 4n },
+    { action: "add", aid: 10n },
+    { action: "add", aid: 11n },
+    { action: "add", aid: 12n },
+    { action: "add", aid: 13n },
+  ]);
+  assert.deepEqual(delays, Array(7).fill(1_000));
+  assert.deepEqual((await watchLaterAccountSlotItems.get()).values, [
+    { labels: { account_slot: "0", kind: "assigned" }, value: 4 },
+    { labels: { account_slot: "0", kind: "observed" }, value: 4 },
+    { labels: { account_slot: "0", kind: "remaining_delete" }, value: 0 },
+    { labels: { account_slot: "0", kind: "remaining_add" }, value: 0 },
   ]);
 });
 
@@ -287,7 +339,9 @@ test("startup health excludes invalid accounts from capacity and assignment", as
   ]);
   assert.deepEqual((await watchLaterAccountSlotItems.get()).values, [
     { labels: { account_slot: "0", kind: "assigned" }, value: 2 },
-    { labels: { account_slot: "0", kind: "observed" }, value: 0 },
+    { labels: { account_slot: "0", kind: "observed" }, value: 2 },
+    { labels: { account_slot: "0", kind: "remaining_delete" }, value: 0 },
+    { labels: { account_slot: "0", kind: "remaining_add" }, value: 0 },
   ]);
 });
 
@@ -979,7 +1033,9 @@ test("Watch Later metrics report startup layout and reconciliation outcomes", as
   ]);
   assert.deepEqual((await watchLaterAccountSlotItems.get()).values, [
     { labels: { account_slot: "0", kind: "assigned" }, value: 1 },
-    { labels: { account_slot: "0", kind: "observed" }, value: 0 },
+    { labels: { account_slot: "0", kind: "observed" }, value: 1 },
+    { labels: { account_slot: "0", kind: "remaining_delete" }, value: 0 },
+    { labels: { account_slot: "0", kind: "remaining_add" }, value: 0 },
   ]);
   assert.deepEqual(
     (await watchLaterMutationsTotal.get()).values.sort((left, right) =>

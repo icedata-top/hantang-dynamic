@@ -12,6 +12,7 @@ import {
   watchLaterReconciliationsTotal,
 } from "../../metrics/registry";
 import { sleep } from "../../utils/datetime";
+import { logger } from "../../utils/logger";
 import { redactForLog } from "../../utils/redact";
 import {
   fetchWatchLaterSnapshot,
@@ -21,6 +22,7 @@ import {
 } from "./watchLaterApi";
 
 export const WATCH_LATER_CAPACITY = 1_000;
+// A chunk yields control to the minute loop; it does not limit process-lifetime convergence.
 const MAX_MUTATIONS_PER_RUN = 20;
 const MUTATION_DELAY_MS = 1_000;
 const POST_SETTLE_DELAY_MS = 3_000;
@@ -32,6 +34,32 @@ type ProgressWriter = (text: string) => void;
 interface ReconciliationInput {
   desiredAids?: readonly bigint[];
   snapshot?: WatchLaterSnapshot;
+  accountSlot?: string;
+  mutationPacer?: MutationPacer;
+  shouldContinue?(): boolean;
+  mutationChunkSize?: number;
+}
+
+interface MutationPacer {
+  beforeMutation(): Promise<() => void>;
+}
+
+function createMutationPacer(delay: Delay): MutationPacer {
+  let firstMutation = true;
+  let tail = Promise.resolve();
+  return {
+    async beforeMutation() {
+      let release: () => void = () => {};
+      const previous = tail;
+      tail = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await previous;
+      if (!firstMutation) await delay(MUTATION_DELAY_MS);
+      firstMutation = false;
+      return release;
+    },
+  };
 }
 
 export interface WatchLaterDatabase {
@@ -93,6 +121,9 @@ export interface WatchLaterManagementOptions {
   onDesiredAssignments?(
     assignments: ReadonlyMap<bigint, readonly bigint[]>,
   ): void;
+  shouldContinue?(): boolean;
+  delay?: Delay;
+  mutationChunkSize?: number;
 }
 
 export interface WatchLaterEmpiricalDatabase {
@@ -215,7 +246,16 @@ async function performOperation(
   action: WatchLaterAction,
   aid: bigint,
   runRef: string,
-): Promise<"succeeded" | "failed" | "ambiguous" | "capacity_blocked"> {
+  mutationPacer: MutationPacer,
+  shouldContinue?: () => boolean,
+): Promise<
+  "succeeded" | "failed" | "ambiguous" | "capacity_blocked" | "stopped"
+> {
+  const releaseMutation = await mutationPacer.beforeMutation();
+  if (shouldContinue && !shouldContinue()) {
+    releaseMutation();
+    return "stopped";
+  }
   const operationId = randomUUID();
   await database.createWatchLaterOperation({
     operationId,
@@ -255,6 +295,8 @@ async function performOperation(
     });
     watchLaterMutationsTotal.inc({ action, outcome: "ambiguous" });
     return "ambiguous";
+  } finally {
+    releaseMutation();
   }
 }
 
@@ -348,7 +390,8 @@ export async function reconcileWatchLaterAccount(
       const deletions = [...snapshot.aids]
         .map((aid) => BigInt(aid))
         .filter((aid) => !desiredIds.has(aid.toString()));
-      let remainingMutations = MAX_MUTATIONS_PER_RUN;
+      const mutationPacer = input.mutationPacer ?? createMutationPacer(delay);
+      let mutationsInChunk = 0;
       let availableSlots = Math.max(0, capacity - snapshot.aids.size);
       const operations = [
         ...deletions.map((aid) => ({ action: "delete" as const, aid })),
@@ -356,7 +399,7 @@ export async function reconcileWatchLaterAccount(
       ];
 
       for (const operation of operations) {
-        if (remainingMutations === 0) break;
+        if (input.shouldContinue && !input.shouldContinue()) break;
         if (operation.action === "add" && availableSlots === 0) continue;
         const outcome = await performOperation(
           database,
@@ -364,22 +407,38 @@ export async function reconcileWatchLaterAccount(
           operation.action,
           operation.aid,
           runRef,
+          mutationPacer,
+          input.shouldContinue,
         );
+        if (outcome === "stopped") break;
+        mutationsInChunk += 1;
         if (outcome === "succeeded") {
-          if (operation.action === "add") added += 1;
-          else {
+          if (operation.action === "add") {
+            added += 1;
+            snapshot.aids.add(operation.aid.toString());
+          } else {
             deleted += 1;
             availableSlots += 1;
+            snapshot.aids.delete(operation.aid.toString());
+          }
+          if (input.accountSlot !== undefined) {
+            watchLaterAccountSlotItems.set(
+              { account_slot: input.accountSlot, kind: "observed" },
+              snapshot.aids.size,
+            );
           }
         }
-        remainingMutations -= 1;
         if (outcome === "capacity_blocked" || outcome === "ambiguous") {
           capacityBlocked = outcome === "capacity_blocked";
           requiresRecoverySnapshot = true;
           break;
         }
-        if (outcome === "succeeded" && remainingMutations > 0) {
-          await delay(MUTATION_DELAY_MS);
+        if (
+          mutationsInChunk ===
+          (input.mutationChunkSize ?? MAX_MUTATIONS_PER_RUN)
+        ) {
+          mutationsInChunk = 0;
+          await Promise.resolve();
         }
       }
 
@@ -396,20 +455,43 @@ export async function reconcileWatchLaterAccount(
         recovered,
         capacityBlocked,
       };
+      if (input.accountSlot !== undefined) {
+        const remainingDeletes = [...snapshot.aids].filter(
+          (aid) => !desiredIds.has(aid),
+        ).length;
+        const remainingAdds = desired.aids.filter(
+          (aid) => !snapshot.aids.has(aid.toString()),
+        ).length;
+        watchLaterAccountSlotItems.set(
+          { account_slot: input.accountSlot, kind: "remaining_delete" },
+          remainingDeletes,
+        );
+        watchLaterAccountSlotItems.set(
+          { account_slot: input.accountSlot, kind: "remaining_add" },
+          remainingAdds,
+        );
+        logger.info(
+          `Watch Later convergence account_slot=${input.accountSlot} added=${added} deleted=${deleted} remaining_add=${remainingAdds} remaining_delete=${remainingDeletes}`,
+        );
+      }
       watchLaterReconciliationsTotal.inc({ outcome: result.reason });
       return result;
     },
   );
 }
 
-export async function runAutomaticWatchLaterManagement(
+export interface WatchLaterManagementRun {
+  convergence: Promise<WatchLaterReconciliationResult[]>;
+}
+
+export async function startAutomaticWatchLaterManagement(
   database: WatchLaterDatabase & {
     getWatchLaterAccounts(accountIds: bigint[]): Promise<WatchLaterAccount[]>;
   },
   accounts: WatchLaterAccountContext[],
   capacity: number = WATCH_LATER_CAPACITY,
   options: WatchLaterManagementOptions = {},
-): Promise<WatchLaterReconciliationResult[]> {
+): Promise<WatchLaterManagementRun> {
   const enabledAccounts = accounts.filter(
     (account) => account.enableWatchLater,
   );
@@ -492,34 +574,62 @@ export async function runAutomaticWatchLaterManagement(
   }
   options.onDesiredAssignments?.(assignedAidsByAccountId);
 
-  if (healthyAccounts.length === 0) return [];
+  if (healthyAccounts.length === 0) {
+    return { convergence: Promise.resolve([]) };
+  }
 
-  const results: WatchLaterReconciliationResult[] = [];
-  for (const [index, healthyAccount] of healthyAccounts.entries()) {
-    const assignedAids =
-      assignedAidsByAccountId.get(healthyAccount.watchLaterAccount.accountId) ??
-      [];
-    const accountSlot = String(index);
-    watchLaterAccountSlotItems.set(
-      { account_slot: accountSlot, kind: "assigned" },
-      assignedAids.length,
-    );
-    watchLaterAccountSlotItems.set(
-      { account_slot: accountSlot, kind: "observed" },
-      healthyAccount.snapshot.aids.size,
-    );
-    results.push(
-      await reconcileWatchLaterAccount(
+  const delay = options.delay ?? sleep;
+  const mutationPacer = createMutationPacer(delay);
+  const convergence = Promise.all(
+    healthyAccounts.map((healthyAccount, index) => {
+      const assignedAids =
+        assignedAidsByAccountId.get(
+          healthyAccount.watchLaterAccount.accountId,
+        ) ?? [];
+      const accountSlot = String(index);
+      watchLaterAccountSlotItems.set(
+        { account_slot: accountSlot, kind: "assigned" },
+        assignedAids.length,
+      );
+      watchLaterAccountSlotItems.set(
+        { account_slot: accountSlot, kind: "observed" },
+        healthyAccount.snapshot.aids.size,
+      );
+      return reconcileWatchLaterAccount(
         database,
         healthyAccount.account,
         healthyAccount.watchLaterAccount,
-        sleep,
+        delay,
         capacity,
-        { desiredAids: assignedAids, snapshot: healthyAccount.snapshot },
-      ),
-    );
-  }
-  return results;
+        {
+          desiredAids: assignedAids,
+          snapshot: healthyAccount.snapshot,
+          accountSlot,
+          mutationPacer,
+          shouldContinue: options.shouldContinue,
+          mutationChunkSize: options.mutationChunkSize,
+        },
+      );
+    }),
+  );
+  return { convergence };
+}
+
+export async function runAutomaticWatchLaterManagement(
+  database: WatchLaterDatabase & {
+    getWatchLaterAccounts(accountIds: bigint[]): Promise<WatchLaterAccount[]>;
+  },
+  accounts: WatchLaterAccountContext[],
+  capacity: number = WATCH_LATER_CAPACITY,
+  options: WatchLaterManagementOptions = {},
+): Promise<WatchLaterReconciliationResult[]> {
+  const run = await startAutomaticWatchLaterManagement(
+    database,
+    accounts,
+    capacity,
+    options,
+  );
+  return run.convergence;
 }
 
 export function partitionDesiredWatchLaterAids(

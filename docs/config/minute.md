@@ -63,6 +63,17 @@ Adaptive minute collection uses these tables and functions:
 `video_collection_state` is the center of scheduling state. It does not fetch
 videos by itself. Due-row selection happens when the minute handler ticks.
 
+## Watch Later convergence
+
+When enabled Watch Later accounts are configured, startup performs one complete
+snapshot and creates the deterministic account layout before minute sampling
+begins. Reconciliation then continues in a managed background task. It deletes
+non-target remote entries before adding targets, yields after internal chunks,
+and does not fetch a new snapshot for each chunk. Mutation POSTs remain at
+least one second apart. An ambiguous request, invalid snapshot, or `90001`
+capacity result stops that account's convergence until a restart obtains a
+fresh complete snapshot and recovers durable pending operations.
+
 Daily inserts also refresh state through the `video_daily` trigger. This updates
 priority and due time; it does not insert minute samples directly.
 

@@ -162,7 +162,7 @@ export const watchLaterCapacity = new Gauge({
 
 export const watchLaterAccountSlotItems = new Gauge({
   name: `${PREFIX}watch_later_account_slot_items`,
-  help: "Watch Later item counts per deterministic startup account slot and kind.",
+  help: "Watch Later assigned, observed, and remaining action counts per deterministic startup account slot.",
   labelNames: ["account_slot", "kind"] as const,
   registers: [metricsRegistry],
 });
