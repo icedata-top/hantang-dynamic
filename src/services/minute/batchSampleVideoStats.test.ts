@@ -66,6 +66,21 @@ function favoriteResponseWithStringTuples(aids: bigint[]) {
   };
 }
 
+function observedFavoriteResponse(aids: bigint[]) {
+  return {
+    code: 0,
+    data: aids.map((aid) => ({
+      id: Number(aid),
+      cnt_info: {
+        collect: 1,
+        play: 2,
+        danmaku: 3,
+        reply: 4,
+      },
+    })),
+  };
+}
+
 test("routing selects the smallest healthy positive UID only", () => {
   const routing = selectWatchLaterRouting(
     [1n, 2n],
@@ -176,7 +191,31 @@ test("fallback conserves unique large bigint AIDs in fifty-item chunks", async (
   assert.equal(batches[0]?.[0], aids[0]);
 });
 
-test("favorite fallback normalizes legacy string tuples without accepting invalid or incomplete items", async () => {
+test("favorite fallback accepts a full live-shape batch with partial counters", async () => {
+  const aids = Array.from({ length: 50 }, (_, index) => BigInt(index + 1));
+  minuteFallbackResponseMissesTotal.reset();
+
+  const samples = await batchSampleVideoStats(aids, {
+    dependencies: {
+      async fetchStatsBatch(batch) {
+        return observedFavoriteResponse(batch);
+      },
+    },
+  });
+
+  assert.equal(samples.length, 50);
+  assert.deepEqual(samples[0], {
+    aid: 1n,
+    time: samples[0]?.time,
+    favorite: 1,
+    view: 2,
+    danmaku: 3,
+    reply: 4,
+  });
+  assert.deepEqual((await minuteFallbackResponseMissesTotal.get()).values, []);
+});
+
+test("favorite fallback normalizes string tuples and rejects malformed present counters", async () => {
   const requestedAids = [
     9_007_199_254_740_993n,
     ...Array.from({ length: 49 }, (_, index) => BigInt(index + 1)),
@@ -190,12 +229,7 @@ test("favorite fallback normalizes legacy string tuples without accepting invali
         response.data[1] = {
           id: "1",
           cnt_info: {
-            coin: "0",
-            collect: "1",
-            danmaku: "2",
             play: "3",
-            reply: "4",
-            share: "5",
           },
         };
         response.data[2] = {
@@ -229,7 +263,7 @@ test("favorite fallback normalizes legacy string tuples without accepting invali
 
   assert.deepEqual(
     samples.map((sample) => sample.aid),
-    requestedAids.filter((aid) => aid !== 1n && aid !== 2n),
+    requestedAids.filter((aid) => aid !== 2n),
   );
   assert.deepEqual(samples[0], {
     aid: 9_007_199_254_740_993n,
@@ -242,6 +276,33 @@ test("favorite fallback normalizes legacy string tuples without accepting invali
     share: 5,
     like: 6,
   });
+  assert.deepEqual((await minuteFallbackResponseMissesTotal.get()).values, [
+    { labels: { reason: "invalid_response_item" }, value: 1 },
+  ]);
+});
+
+test("favorite fallback rejects missing or malformed play", async () => {
+  minuteFallbackResponseMissesTotal.reset();
+  const samples = await batchSampleVideoStats([1n, 2n, 3n], {
+    dependencies: {
+      async fetchStatsBatch() {
+        return {
+          code: 0,
+          data: [
+            { id: 1, cnt_info: { collect: 1 } },
+            { id: 2, cnt_info: { play: "-1" } },
+            { id: 3, cnt_info: { play: "4" } },
+          ],
+        };
+      },
+    },
+  });
+
+  assert.deepEqual(
+    samples.map((sample) => sample.aid),
+    [3n],
+  );
+  assert.equal(samples[0]?.view, 4);
   assert.deepEqual((await minuteFallbackResponseMissesTotal.get()).values, [
     { labels: { reason: "invalid_response_item" }, value: 2 },
   ]);

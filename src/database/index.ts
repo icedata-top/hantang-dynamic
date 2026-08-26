@@ -21,8 +21,8 @@ import type {
   VideoSnapshot,
 } from "../types/models/database.js";
 import type {
-  CompleteVideoMinuteTuple,
   DailyCollectionCandidate,
+  PersistableVideoMinuteSample,
   ProcessedVideoCollectionInput,
   VideoMinuteSample,
 } from "../types/models/minute.js";
@@ -109,7 +109,7 @@ import {
 } from "./users.js";
 import { getDailyCollectionCandidates } from "./videoDaily.js";
 import {
-  getLatestCompleteVideoMinuteTuple,
+  getLatestVideoMinuteSample,
   insertVideoMinuteSamples,
 } from "./videoMinute.js";
 import {
@@ -591,10 +591,10 @@ export class Database {
     return insertVideoMinuteSamples(this.ensurePool(), samples);
   }
 
-  public async getLatestCompleteVideoMinuteTuple(
+  public async getLatestVideoMinuteSample(
     aid: bigint,
-  ): Promise<CompleteVideoMinuteTuple | null> {
-    return getLatestCompleteVideoMinuteTuple(this.ensurePool(), aid);
+  ): Promise<PersistableVideoMinuteSample | null> {
+    return getLatestVideoMinuteSample(this.ensurePool(), aid);
   }
 
   // ===== Watch-later Operations =====

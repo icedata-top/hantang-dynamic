@@ -1,28 +1,34 @@
-import type { CompleteVideoMinuteTuple } from "../../types/models/minute";
+import type { PersistableVideoMinuteSample } from "../../types/models/minute";
 
 const HUNDRED_BUCKET_SIZE = 100;
 const VIEW_DELTA_THRESHOLD = 50;
 const COUNTER_CHANGE_INTERVAL_MS = 15 * 60 * 1000;
 
 function hasAnyCounterChange(
-  previous: CompleteVideoMinuteTuple,
-  sample: CompleteVideoMinuteTuple,
+  previous: PersistableVideoMinuteSample,
+  sample: PersistableVideoMinuteSample,
 ): boolean {
-  return (
-    sample.coin !== previous.coin ||
-    sample.favorite !== previous.favorite ||
-    sample.danmaku !== previous.danmaku ||
-    sample.view !== previous.view ||
-    sample.reply !== previous.reply ||
-    sample.share !== previous.share ||
-    sample.like !== previous.like
-  );
+  const counters = [
+    "coin",
+    "favorite",
+    "danmaku",
+    "view",
+    "reply",
+    "share",
+    "like",
+  ] as const;
+  return counters.some((counter) => {
+    const current = sample[counter];
+    return (
+      current !== undefined && current !== null && current !== previous[counter]
+    );
+  });
 }
 
-/** A sample without a prior complete tuple is the initial persisted tuple. */
+/** A sample without a prior stored tuple is the initial persisted tuple. */
 export function shouldPersistMinuteSample(
-  previous: CompleteVideoMinuteTuple | null,
-  sample: CompleteVideoMinuteTuple,
+  previous: PersistableVideoMinuteSample | null,
+  sample: PersistableVideoMinuteSample,
 ): boolean {
   if (previous === null) return true;
 

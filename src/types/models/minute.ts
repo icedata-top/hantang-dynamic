@@ -10,6 +10,10 @@ export interface VideoMinuteSample {
   like?: number | null;
 }
 
+export interface PersistableVideoMinuteSample extends VideoMinuteSample {
+  view: number;
+}
+
 export interface CompleteVideoMinuteTuple {
   aid: bigint;
   time: Date;

@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import type {
-  CompleteVideoMinuteTuple,
+  PersistableVideoMinuteSample,
   VideoMinuteSample,
 } from "../types/models/minute.js";
 
@@ -78,31 +78,25 @@ export async function insertVideoMinuteSamples(
   return result.rowCount ?? 0;
 }
 
-export async function getLatestCompleteVideoMinuteTuple(
+export async function getLatestVideoMinuteSample(
   pool: Pool,
   aid: bigint,
-): Promise<CompleteVideoMinuteTuple | null> {
+): Promise<PersistableVideoMinuteSample | null> {
   const result = await pool.query<{
     aid: string;
     time: Date;
-    coin: number;
-    favorite: number;
-    danmaku: number;
+    coin: number | null;
+    favorite: number | null;
+    danmaku: number | null;
     view: number;
-    reply: number;
-    share: number;
-    like: number;
+    reply: number | null;
+    share: number | null;
+    like: number | null;
   }>(
     `SELECT aid, "time", coin, favorite, danmaku, "view", reply, share, "like"
      FROM video_minute
      WHERE aid = $1
-       AND coin IS NOT NULL
-       AND favorite IS NOT NULL
-       AND danmaku IS NOT NULL
        AND "view" IS NOT NULL
-       AND reply IS NOT NULL
-       AND share IS NOT NULL
-       AND "like" IS NOT NULL
      ORDER BY "time" DESC
      LIMIT 1`,
     [aid.toString()],

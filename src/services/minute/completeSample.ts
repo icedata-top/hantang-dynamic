@@ -1,5 +1,6 @@
 import type {
   CompleteVideoMinuteTuple,
+  PersistableVideoMinuteSample,
   VideoMinuteSample,
 } from "../../types/models/minute";
 
@@ -24,5 +25,24 @@ export function isCompleteVideoMinuteSample(
     isMinuteCounter(sample.reply) &&
     isMinuteCounter(sample.share) &&
     isMinuteCounter(sample.like)
+  );
+}
+
+function isOptionalMinuteCounter(value: unknown): boolean {
+  return value === undefined || value === null || isMinuteCounter(value);
+}
+
+export function isPersistableVideoMinuteSample(
+  sample: VideoMinuteSample,
+): sample is PersistableVideoMinuteSample {
+  return (
+    sample.aid > 0n &&
+    isOptionalMinuteCounter(sample.coin) &&
+    isOptionalMinuteCounter(sample.favorite) &&
+    isOptionalMinuteCounter(sample.danmaku) &&
+    isMinuteCounter(sample.view) &&
+    isOptionalMinuteCounter(sample.reply) &&
+    isOptionalMinuteCounter(sample.share) &&
+    isOptionalMinuteCounter(sample.like)
   );
 }

@@ -87,8 +87,10 @@ time. Positive-priority minute and Watch Later selection queries exclude it.
 For every minute batch, a due AID is covered by a complete current To View
 tuple or is sent once through the existing favorite-resource path in
 `batch_size` chunks. Watch Later assignment and reconciliation state do not
-remove AIDs from that fallback. A partial or malformed favorite response leaves
-the AID failed for rescheduling and increments
+remove AIDs from that fallback. The favorite-resource response requires a valid
+requested AID and view count; its other counters are persisted when supplied.
+A missing item or malformed required or supplied counter leaves the AID failed
+for rescheduling and increments
 `bili_tracker_minute_fallback_response_misses_total` with one bounded reason:
 `api_failure`, `invalid_response`, `missing_response_item`, or
 `invalid_response_item`.

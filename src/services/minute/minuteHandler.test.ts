@@ -36,7 +36,7 @@ function database(onSelect: () => void): MinuteDatabase {
     async withWatchLaterAccountLease() {
       throw new Error("not used");
     },
-    async getLatestCompleteVideoMinuteTuple() {
+    async getLatestVideoMinuteSample() {
       return null;
     },
     async getNextMinuteDueAt() {
@@ -207,4 +207,55 @@ test("failed controller cycle clears prior routing health before minute sampling
     globalThis.setTimeout = originalSetTimeout;
   }
   assert.deepEqual(routedAccountIds, [[]]);
+});
+
+test("partial favorite samples persist initially and advance when unchanged", async () => {
+  const insertedAids: bigint[] = [];
+  const unchangedAids: bigint[] = [];
+  const failedAids: bigint[] = [];
+  const sampledAt = new Date("2026-08-18T00:01:00.000Z");
+  const db: MinuteDatabase = {
+    ...database(() => {}),
+    async getLatestVideoMinuteSample(aid) {
+      return aid === 2n
+        ? {
+            aid,
+            time: new Date("2026-08-18T00:00:00.000Z"),
+            favorite: 1,
+            view: 100,
+          }
+        : null;
+    },
+    async insertVideoMinuteSamples(samples) {
+      insertedAids.push(...samples.map((sample) => sample.aid));
+      return samples.length;
+    },
+    async advanceUnchangedMinuteVideos(aids) {
+      unchangedAids.push(...aids);
+      return aids.length;
+    },
+    async advanceFailedMinuteVideos(aids) {
+      failedAids.push(...aids);
+      return aids.length;
+    },
+  };
+  const handler = new MinuteHandler({
+    database: db,
+    loadAccounts: () => [],
+    async sampleVideoStats() {
+      return [
+        { aid: 1n, time: sampledAt, favorite: 1, view: 100 },
+        { aid: 2n, time: sampledAt, favorite: 1, view: 100 },
+      ];
+    },
+  });
+
+  await handler.processBatch([
+    { aid: 1n, lastView: null, watchLaterManagedAccountIds: [] },
+    { aid: 2n, lastView: 100n, watchLaterManagedAccountIds: [] },
+  ]);
+
+  assert.deepEqual(insertedAids, [1n]);
+  assert.deepEqual(unchangedAids, [2n]);
+  assert.deepEqual(failedAids, []);
 });

@@ -19,13 +19,13 @@ import {
 } from "./toview";
 
 interface BiliFavoriteCounterInfo {
-  coin: number;
-  collect: number;
-  danmaku: number;
+  coin?: number;
+  collect?: number;
+  danmaku?: number;
   play: number;
-  reply: number;
-  share: number;
-  thumb_up: number;
+  reply?: number;
+  share?: number;
+  thumb_up?: number;
 }
 
 type UnknownRecord = { [key: string]: unknown };
@@ -83,13 +83,25 @@ function toMinuteSample(
   return {
     aid: resource.aid,
     time: sampledAt,
-    coin: resource.cnt_info.coin,
-    favorite: resource.cnt_info.collect,
-    danmaku: resource.cnt_info.danmaku,
     view: resource.cnt_info.play,
-    reply: resource.cnt_info.reply,
-    share: resource.cnt_info.share,
-    like: resource.cnt_info.thumb_up,
+    ...(resource.cnt_info.coin === undefined
+      ? {}
+      : { coin: resource.cnt_info.coin }),
+    ...(resource.cnt_info.collect === undefined
+      ? {}
+      : { favorite: resource.cnt_info.collect }),
+    ...(resource.cnt_info.danmaku === undefined
+      ? {}
+      : { danmaku: resource.cnt_info.danmaku }),
+    ...(resource.cnt_info.reply === undefined
+      ? {}
+      : { reply: resource.cnt_info.reply }),
+    ...(resource.cnt_info.share === undefined
+      ? {}
+      : { share: resource.cnt_info.share }),
+    ...(resource.cnt_info.thumb_up === undefined
+      ? {}
+      : { like: resource.cnt_info.thumb_up }),
   };
 }
 
@@ -101,33 +113,25 @@ function parseBiliFavoriteCounterInfo(
   value: unknown,
 ): BiliFavoriteCounterInfo | null {
   if (!isUnknownRecord(value)) return null;
-  const coin = parseMinuteCounter(value.coin);
-  const collect = parseMinuteCounter(value.collect);
-  const danmaku = parseMinuteCounter(value.danmaku);
   const play = parseMinuteCounter(value.play);
-  const reply = parseMinuteCounter(value.reply);
-  const share = parseMinuteCounter(value.share);
-  const thumbUp = parseMinuteCounter(value.thumb_up);
-  if (
-    coin === null ||
-    collect === null ||
-    danmaku === null ||
-    play === null ||
-    reply === null ||
-    share === null ||
-    thumbUp === null
-  ) {
-    return null;
+  if (play === null) return null;
+
+  const counters: BiliFavoriteCounterInfo = { play };
+  const optionalFields = [
+    "coin",
+    "collect",
+    "danmaku",
+    "reply",
+    "share",
+    "thumb_up",
+  ] as const;
+  for (const field of optionalFields) {
+    if (!(field in value)) continue;
+    const counter = parseMinuteCounter(value[field]);
+    if (counter === null) return null;
+    counters[field] = counter;
   }
-  return {
-    coin,
-    collect,
-    danmaku,
-    play,
-    reply,
-    share,
-    thumb_up: thumbUp,
-  };
+  return counters;
 }
 
 function parseBiliFavoriteResourceInfo(

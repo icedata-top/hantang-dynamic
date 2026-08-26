@@ -7,12 +7,12 @@ import {
   minuteSamplesTotal,
 } from "../../metrics/registry";
 import type {
-  CompleteVideoMinuteTuple,
+  PersistableVideoMinuteSample,
   VideoMinuteSample,
 } from "../../types/models/minute";
 import { logger } from "../../utils/logger";
 import { batchSampleVideoStats } from "./batchSampleVideoStats";
-import { isCompleteVideoMinuteSample } from "./completeSample";
+import { isPersistableVideoMinuteSample } from "./completeSample";
 import { shouldPersistMinuteSample } from "./persistencePolicy";
 import { runAutomaticWatchLaterManagement } from "./watchLaterReconciliation";
 
@@ -29,7 +29,7 @@ export type MinuteDatabase = Pick<
   | "getDesiredWatchLaterSet"
   | "syncWatchLaterSnapshot"
   | "withWatchLaterAccountLease"
-  | "getLatestCompleteVideoMinuteTuple"
+  | "getLatestVideoMinuteSample"
   | "getNextMinuteDueAt"
   | "insertVideoMinuteSamples"
   | "selectDueMinuteVideos"
@@ -215,7 +215,7 @@ export class MinuteHandler {
   }
 
   /**
-   * Fetch complete stats for due videos, then persist samples that meet the
+   * Fetch valid stats for due videos, then persist samples that meet the
    * counter-aware minute policy and advance all remaining valid coverage.
    */
   async processBatch(
@@ -254,12 +254,12 @@ export class MinuteHandler {
 
       const changed: VideoMinuteSample[] = [];
       const unchangedAids: bigint[] = [];
-      const samplesByAid = new Map<string, CompleteVideoMinuteTuple>();
+      const samplesByAid = new Map<string, PersistableVideoMinuteSample>();
       const invalidAids = new Set<string>();
 
       for (const sample of samples) {
         const key = sample.aid.toString();
-        if (!isCompleteVideoMinuteSample(sample)) {
+        if (!isPersistableVideoMinuteSample(sample)) {
           invalidAids.add(key);
           continue;
         }
@@ -272,9 +272,7 @@ export class MinuteHandler {
 
       for (const [key, sample] of samplesByAid) {
         if (invalidAids.has(key)) continue;
-        const previous = await this.db.getLatestCompleteVideoMinuteTuple(
-          sample.aid,
-        );
+        const previous = await this.db.getLatestVideoMinuteSample(sample.aid);
         if (shouldPersistMinuteSample(previous, sample)) {
           changed.push(sample);
         } else {
