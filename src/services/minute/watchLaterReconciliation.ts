@@ -54,10 +54,20 @@ export interface WatchLaterManagementOptions {
   delay?: Delay;
   now?(): number;
   onHealthyAccounts?(accountIds: ReadonlySet<bigint>): void;
+  onAccountUnavailable?(accountId: bigint): void;
 }
 
 function accountId(account: { uid: string }): bigint | null {
   return /^\d+$/.test(account.uid) ? BigInt(account.uid) : null;
+}
+
+function globalStopReason(
+  now: () => number,
+  deadline: number,
+  shouldContinue?: () => boolean,
+): "deadline" | "stopped" | null {
+  if (now() >= deadline) return "deadline";
+  return shouldContinue && !shouldContinue() ? "stopped" : null;
 }
 
 function createPacer(
@@ -87,14 +97,42 @@ async function reconcileAccount(
   account: WatchLaterAccountContext,
   row: WatchLaterAccount,
   desiredAids: readonly bigint[],
-  snapshot: WatchLaterSnapshot,
   pace: (action: () => Promise<void>) => Promise<void>,
   deadline: number,
   now: () => number,
-  phase: "delete" | "add" | "all" = "all",
   shouldContinue?: () => boolean,
 ): Promise<WatchLaterReconciliationResult> {
   return database.withWatchLaterAccountLease(row.accountId, async (lease) => {
+    const stoppedBeforeSnapshot = globalStopReason(
+      now,
+      deadline,
+      shouldContinue,
+    );
+    if (stoppedBeforeSnapshot) {
+      return { reason: stoppedBeforeSnapshot, added: 0, deleted: 0 };
+    }
+    let snapshot: WatchLaterSnapshot | null;
+    try {
+      snapshot = await fetchWatchLaterSnapshot(account.toViewClient);
+      if (!snapshot) {
+        return { reason: "snapshot_invalid", added: 0, deleted: 0 };
+      }
+      await database.syncWatchLaterSnapshot(
+        row.accountId,
+        [...snapshot.aids].map(BigInt),
+        snapshot.completedAt,
+      );
+    } catch {
+      return { reason: "ambiguous", added: 0, deleted: 0 };
+    }
+    const stoppedAfterSnapshot = globalStopReason(
+      now,
+      deadline,
+      shouldContinue,
+    );
+    if (stoppedAfterSnapshot) {
+      return { reason: stoppedAfterSnapshot, added: 0, deleted: 0 };
+    }
     const desired = new Set(desiredAids.map(String));
     const deletes = [...snapshot.aids]
       .filter((aid) => !desired.has(aid))
@@ -138,11 +176,11 @@ async function reconcileAccount(
       watchLaterMutationsTotal.inc({ action, outcome: "failed" });
       return "ambiguous";
     };
-    for (const aid of phase === "add" ? [] : deletes) {
+    for (const aid of deletes) {
       const reason = await mutate("delete", aid);
       if (reason) return { reason, added, deleted };
     }
-    for (const aid of phase === "delete" ? [] : adds) {
+    for (const aid of adds) {
       const reason = await mutate("add", aid);
       if (reason) return { reason, added, deleted };
     }
@@ -181,6 +219,8 @@ export async function runAutomaticWatchLaterManagement(
   watchLaterEnabledAccounts.set({ state: "healthy" }, 0);
   watchLaterEnabledAccounts.set({ state: "unhealthy" }, 0);
   options.onHealthyAccounts?.(new Set());
+  const now = options.now ?? Date.now;
+  const deadline = now() + CYCLE_DEADLINE_MS;
   const enabled = accounts.flatMap((account) =>
     account.enableWatchLater && accountId(account) !== null
       ? [[accountId(account) as bigint, account] as const]
@@ -191,21 +231,22 @@ export async function runAutomaticWatchLaterManagement(
   const healthy: Array<{
     account: WatchLaterAccountContext;
     row: WatchLaterAccount;
-    snapshot: WatchLaterSnapshot;
   }> = [];
   for (const row of rows) {
+    const stopped = globalStopReason(now, deadline, options.shouldContinue);
+    if (stopped) return [{ reason: stopped, added: 0, deleted: 0 }];
     const account = byId.get(row.accountId);
     if (!account) continue;
     try {
       const snapshot = await fetchWatchLaterSnapshot(account.toViewClient);
-      if (!snapshot) continue;
-      await database.syncWatchLaterSnapshot(
-        row.accountId,
-        [...snapshot.aids].map(BigInt),
-        snapshot.completedAt,
-      );
-      healthy.push({ account, row, snapshot });
-    } catch {}
+      if (!snapshot) {
+        options.onAccountUnavailable?.(row.accountId);
+        continue;
+      }
+      healthy.push({ account, row });
+    } catch {
+      options.onAccountUnavailable?.(row.accountId);
+    }
   }
   watchLaterEnabledAccounts.reset();
   watchLaterEnabledAccounts.set({ state: "healthy" }, healthy.length);
@@ -217,6 +258,8 @@ export async function runAutomaticWatchLaterManagement(
     new Set(healthy.map((item) => item.row.accountId)),
   );
   if (healthy.length === 0) return [];
+  const stopped = globalStopReason(now, deadline, options.shouldContinue);
+  if (stopped) return [{ reason: stopped, added: 0, deleted: 0 }];
   const desired = await database.getDesiredWatchLaterSet(
     healthy.length * capacity,
   );
@@ -227,32 +270,31 @@ export async function runAutomaticWatchLaterManagement(
     capacity,
   );
   const delay = options.delay ?? sleep;
-  const now = options.now ?? Date.now;
-  const deadline = now() + CYCLE_DEADLINE_MS;
   const pace = createPacer(delay);
   const results: WatchLaterReconciliationResult[] = [];
-  for (const phase of ["delete", "add"] as const) {
-    for (const [index, item] of healthy.entries()) {
-      try {
-        const result = await reconcileAccount(
-          database,
-          item.account,
-          item.row,
-          assignments[index] ?? [],
-          item.snapshot,
-          pace,
-          deadline,
-          now,
-          phase,
-          options.shouldContinue,
-        );
-        results.push(result);
-        watchLaterReconciliationsTotal.inc({ outcome: result.reason });
-        if (result.reason !== "completed") return results;
-      } catch {
-        watchLaterReconciliationsTotal.inc({ outcome: "lease_lost" });
-        return results;
-      }
+  for (const [index, item] of healthy.entries()) {
+    let result: WatchLaterReconciliationResult;
+    try {
+      result = await reconcileAccount(
+        database,
+        item.account,
+        item.row,
+        assignments[index] ?? [],
+        pace,
+        deadline,
+        now,
+        options.shouldContinue,
+      );
+    } catch {
+      result = { reason: "lease_lost", added: 0, deleted: 0 };
+    }
+    results.push(result);
+    watchLaterReconciliationsTotal.inc({ outcome: result.reason });
+    if (result.reason === "deadline" || result.reason === "stopped") {
+      return results;
+    }
+    if (result.reason !== "completed") {
+      options.onAccountUnavailable?.(item.row.accountId);
     }
   }
   return results;

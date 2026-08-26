@@ -66,6 +66,7 @@ export class MinuteHandler {
   private abortController: AbortController | null = null;
   private watchLaterManagementPromise: Promise<void> | null = null;
   private readonly healthyWatchLaterAccountIds = new Set<bigint>();
+  private readonly disabledWatchLaterAccountIds = new Set<bigint>();
 
   constructor(dependencies: MinuteHandlerDependencies = {}) {
     this.db = dependencies.database ?? Database.getInstance();
@@ -80,6 +81,7 @@ export class MinuteHandler {
     if (this.loopPromise) return;
     this.isRunning = true;
     this.healthyWatchLaterAccountIds.clear();
+    this.disabledWatchLaterAccountIds.clear();
     this.abortController = new AbortController();
     this.loopPromise = this.loop(this.abortController.signal);
     this.watchLaterManagementPromise = this.runWatchLaterController(
@@ -191,12 +193,22 @@ export class MinuteHandler {
       try {
         await this.runWatchLaterManagement(
           this.db,
-          this.accounts(),
+          this.accounts().filter((account) => {
+            const accountId = /^\d+$/.test(account.uid)
+              ? BigInt(account.uid)
+              : null;
+            return (
+              accountId === null ||
+              !this.disabledWatchLaterAccountIds.has(accountId)
+            );
+          }),
           undefined,
           {
             shouldContinue: () => this.isRunning,
             onHealthyAccounts: (accountIds) =>
               this.setHealthyWatchLaterAccounts(accountIds),
+            onAccountUnavailable: (accountId) =>
+              this.disableWatchLaterAccount(accountId),
           },
         );
       } catch (error) {
@@ -210,8 +222,15 @@ export class MinuteHandler {
   private setHealthyWatchLaterAccounts(accountIds: ReadonlySet<bigint>): void {
     this.healthyWatchLaterAccountIds.clear();
     for (const accountId of accountIds) {
-      this.healthyWatchLaterAccountIds.add(accountId);
+      if (!this.disabledWatchLaterAccountIds.has(accountId)) {
+        this.healthyWatchLaterAccountIds.add(accountId);
+      }
     }
+  }
+
+  private disableWatchLaterAccount(accountId: bigint): void {
+    this.disabledWatchLaterAccountIds.add(accountId);
+    this.healthyWatchLaterAccountIds.delete(accountId);
   }
 
   /**
@@ -244,6 +263,8 @@ export class MinuteHandler {
           toViewAccounts: accounts,
           observedWatchLaterAccountIdsByAid,
           healthyWatchLaterAccountIds: this.healthyWatchLaterAccountIds,
+          onWatchLaterToViewAccountFailure: (accountId) =>
+            this.disableWatchLaterAccount(accountId),
         });
       } catch (error) {
         logger.error("Minute stats batch request failed:", error);
