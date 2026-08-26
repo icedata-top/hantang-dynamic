@@ -85,12 +85,15 @@ an existing active row is made inactive with `priority = 0` and no next due
 time. Positive-priority minute and Watch Later selection queries exclude it.
 
 For every minute batch, a due AID is covered by a complete current To View
-tuple or is sent once through the existing favorite-resource path in
-`batch_size` chunks. Watch Later assignment and reconciliation state do not
-remove AIDs from that fallback. The favorite-resource response requires a valid
-requested AID and view count; its other counters are persisted when supplied.
-A missing item or malformed required or supplied counter leaves the AID failed
-for rescheduling and increments
+seven-counter tuple or is sent once through the existing favorite-resource
+path in `batch_size` chunks. Watch Later assignment and reconciliation state
+do not remove AIDs from that fallback. In the live favorite response,
+`cnt_info` supplies `collect`, `play`, `danmaku`, and `reply`; `play` is
+required for a usable sample. The AID and supplied counters may be JSON numbers
+or decimal strings and are normalized exactly. Optional counters that are not
+supplied remain absent and are persisted as `NULL`, rather than as zero. Any
+supplied malformed counter makes the tuple invalid and retryable. A missing
+item or invalid tuple leaves the AID failed for rescheduling and increments
 `bili_tracker_minute_fallback_response_misses_total` with one bounded reason:
 `api_failure`, `invalid_response`, `missing_response_item`, or
 `invalid_response_item`.
