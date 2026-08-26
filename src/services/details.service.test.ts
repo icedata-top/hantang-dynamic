@@ -22,20 +22,15 @@ interface ProcessedVideoResult {
   video: VideoData | null;
 }
 
-test("newly processed eligible videos upsert collection state after persistence", async () => {
+test("newly processed eligible videos persist with collection state", async () => {
   const database = Database.getInstance();
-  const originalMarkVideoProcessed = database.markVideoProcessed;
-  const originalUpsertCollectionState =
-    database.upsertCollectionStateFromProcessedVideo;
-  const calls: string[] = [];
-  let collectionInput: unknown;
-  database.markVideoProcessed = async () => {
-    calls.push("processed");
-  };
-  database.upsertCollectionStateFromProcessedVideo = async (input) => {
-    calls.push("collection-state");
-    collectionInput = input;
-    return "upserted_bootstrap";
+  const originalPersist = database.markVideoProcessedWithCollectionState;
+  let persisted: { video: VideoData; filtered: boolean } | undefined;
+  database.markVideoProcessedWithCollectionState = async (
+    persistedVideo,
+    filtered,
+  ) => {
+    persisted = { video: persistedVideo, filtered };
   };
 
   try {
@@ -49,19 +44,9 @@ test("newly processed eligible videos upsert collection state after persistence"
     ]);
 
     assert.equal((result as ProcessedVideoResult).video, video);
-    assert.deepEqual(calls, ["processed", "collection-state"]);
-    assert.deepEqual(collectionInput, {
-      aid: 42n,
-      pubdate: 1_700_000_000,
-      ctime: 1_700_000_000,
-      tidV2: 2022,
-      isDeleted: false,
-      isFiltered: true,
-    });
+    assert.deepEqual(persisted, { video, filtered: true });
   } finally {
-    database.markVideoProcessed = originalMarkVideoProcessed;
-    database.upsertCollectionStateFromProcessedVideo =
-      originalUpsertCollectionState;
+    database.markVideoProcessedWithCollectionState = originalPersist;
   }
 });
 

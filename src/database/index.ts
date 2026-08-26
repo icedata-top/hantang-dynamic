@@ -122,6 +122,7 @@ import {
   hasProcessedVideoById,
   markVideoDeleted,
   markVideoProcessed,
+  markVideoProcessedWithCollectionState,
   type VideoDeletionNotes,
   type VideoIdentity,
 } from "./videos.js";
@@ -316,6 +317,32 @@ export class Database {
     filtered: boolean,
   ): Promise<void> {
     return markVideoProcessed(this.ensurePool(), video, filtered);
+  }
+
+  /**
+   * Persist a processed video and its collection state in one transaction.
+   */
+  public async markVideoProcessedWithCollectionState(
+    video: VideoData,
+    filtered: boolean,
+    now?: Date,
+  ): Promise<void> {
+    return markVideoProcessedWithCollectionState(
+      this.ensurePool(),
+      video,
+      filtered,
+      now,
+      {
+        bootstrapPriority: config.minute.bootstrapPriority,
+        bootstrapTtlHours: config.minute.bootstrapTtlHours,
+        bootstrapLabelContentTypes: config.minute.bootstrapLabelContentTypes,
+        bootstrapLabelOrigin: config.minute.bootstrapLabelOrigin,
+        bootstrapLabelWriters: config.minute.bootstrapLabelWriters,
+        bootstrapTidV2Allowlist: config.minute.bootstrapTidV2Allowlist,
+        processedBackfillNewVideoAgeDays:
+          config.minute.processedBackfillNewVideoAgeDays,
+      },
+    );
   }
 
   /**

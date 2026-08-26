@@ -1,5 +1,17 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type { ProcessedVideoCollectionInput } from "../types/models/minute.js";
+
+export type DatabaseQuery = Pick<PoolClient, "query">;
+
+export interface ProcessedVideoCollectionOptions {
+  bootstrapPriority?: number;
+  bootstrapTtlHours?: number;
+  bootstrapLabelContentTypes?: string[];
+  bootstrapLabelOrigin?: string;
+  bootstrapLabelWriters?: string[];
+  bootstrapTidV2Allowlist?: number[];
+  processedBackfillNewVideoAgeDays?: number;
+}
 
 export async function refreshVideoCollectionStateFromDaily(
   pool: Pool,
@@ -42,18 +54,10 @@ export async function refreshVideoCollectionStateFromDaily(
 }
 
 export async function upsertCollectionStateFromProcessedVideo(
-  pool: Pool,
+  pool: DatabaseQuery,
   input: ProcessedVideoCollectionInput,
   now = new Date(),
-  options?: {
-    bootstrapPriority?: number;
-    bootstrapTtlHours?: number;
-    bootstrapLabelContentTypes?: string[];
-    bootstrapLabelOrigin?: string;
-    bootstrapLabelWriters?: string[];
-    bootstrapTidV2Allowlist?: number[];
-    processedBackfillNewVideoAgeDays?: number;
-  },
+  options?: ProcessedVideoCollectionOptions,
 ): Promise<string> {
   const result = await pool.query(
     `

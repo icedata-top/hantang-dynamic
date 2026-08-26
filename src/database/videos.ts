@@ -1,6 +1,11 @@
 import type { Pool, PoolClient } from "pg";
 import type { VideoSnapshot } from "../types/models/database.js";
 import type { VideoData } from "../types/models/video.js";
+import {
+  type DatabaseQuery,
+  type ProcessedVideoCollectionOptions,
+  upsertCollectionStateFromProcessedVideo,
+} from "./collectionState.js";
 
 export interface BvidListQuery {
   where?: string;
@@ -74,7 +79,7 @@ export async function getAllProcessedIds(
  * Mark a video as processed
  */
 export async function markVideoProcessed(
-  pool: Pool,
+  pool: DatabaseQuery,
   video: VideoData,
   filtered: boolean,
 ): Promise<void> {
@@ -130,6 +135,42 @@ export async function markVideoProcessed(
       video.notes ? JSON.stringify(video.notes) : null,
     ],
   );
+}
+
+/**
+ * Persist a processed video and its collection state atomically.
+ */
+export async function markVideoProcessedWithCollectionState(
+  pool: Pool,
+  video: VideoData,
+  filtered: boolean,
+  now = new Date(),
+  options?: ProcessedVideoCollectionOptions,
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await markVideoProcessed(client, video, filtered);
+    await upsertCollectionStateFromProcessedVideo(
+      client,
+      {
+        aid: video.aid,
+        pubdate: video.pubdate,
+        ctime: video.ctime,
+        tidV2: video.tid_v2,
+        isDeleted: video.is_deleted ?? false,
+        isFiltered: filtered,
+      },
+      now,
+      options,
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /**

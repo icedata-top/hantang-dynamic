@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
-import { markVideoDeleted } from "./videos";
+import {
+  markVideoDeleted,
+  markVideoProcessedWithCollectionState,
+} from "./videos";
 
 interface QueryCall {
   sql: string;
@@ -15,7 +18,7 @@ function createPool(options: { failCollectionStateUpdate?: boolean } = {}) {
       calls.push({ sql, values });
       if (
         options.failCollectionStateUpdate &&
-        sql.includes("video_collection_state")
+        sql.includes("collection_state")
       ) {
         throw new Error("collection state update failed");
       }
@@ -28,6 +31,65 @@ function createPool(options: { failCollectionStateUpdate?: boolean } = {}) {
   };
   return { pool: { connect: async () => client } as Pool, calls };
 }
+
+const video = {
+  aid: 42n,
+  bvid: "BV1test",
+  user_id: 7n,
+  type_id: 3,
+  tid_v2: 2022,
+  title: "eligible video",
+  description: "",
+  pic: "",
+  tag: "",
+  pubdate: 1_700_000_000,
+  ctime: 1_700_000_000,
+};
+
+test("processed video and collection state commit in one transaction", async () => {
+  const { pool, calls } = createPool();
+
+  await markVideoProcessedWithCollectionState(
+    pool,
+    video,
+    true,
+    new Date("2026-08-26T00:00:00Z"),
+  );
+
+  assert.equal(calls[0]?.sql, "BEGIN");
+  assert.match(calls[1]?.sql ?? "", /INSERT INTO processed_videos/);
+  assert.match(
+    calls[2]?.sql ?? "",
+    /fn_upsert_collection_state_from_processed_video/,
+  );
+  assert.deepEqual(calls[2]?.values?.slice(0, 9), [
+    "42",
+    1_700_000_000,
+    1_700_000_000,
+    2022,
+    null,
+    null,
+    null,
+    false,
+    true,
+  ]);
+  assert.equal(calls[3]?.sql, "COMMIT");
+});
+
+test("processed video insert rolls back when collection state upsert fails", async () => {
+  const { pool, calls } = createPool({ failCollectionStateUpdate: true });
+
+  await assert.rejects(
+    markVideoProcessedWithCollectionState(pool, video, true),
+    /collection state update failed/,
+  );
+
+  assert.equal(
+    calls.some((call) => call.sql === "COMMIT"),
+    false,
+  );
+  assert.equal(calls[calls.length - 1]?.sql, "ROLLBACK");
+});
 
 test("terminal deletion persists BVID identities and sets existing state to priority -1", async () => {
   const { pool, calls } = createPool();

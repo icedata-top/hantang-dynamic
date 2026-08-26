@@ -365,15 +365,10 @@ export class DetailsService {
       await this.db.trackRecommendationsBatch(recommendations);
     }
 
-    await this.db.markVideoProcessed(videoData, filtered !== null);
-    await this.db.upsertCollectionStateFromProcessedVideo({
-      aid: videoData.aid,
-      pubdate: videoData.pubdate,
-      ctime: videoData.ctime,
-      tidV2: videoData.tid_v2,
-      isDeleted: videoData.is_deleted ?? false,
-      isFiltered: filtered !== null,
-    });
+    await this.db.markVideoProcessedWithCollectionState(
+      videoData,
+      filtered !== null,
+    );
 
     if (!filtered) {
       return { video: null, relatedVideos: [] };
