@@ -46,20 +46,29 @@ operations. `access_key` maps to app authentication.
 ## Watch-later minute sampling
 
 Set `enable_watch_later = true` on a cookie-file entry to sample that loaded
-account and provision its independent Watch Later state. Each healthy enabled
-account contributes 1,000 slots at startup. The global target gives 60% of
-those slots to positive-priority videos, then gives the remaining 40% to the
-newest eligible processed videos. It is distributed deterministically across
-the healthy enabled accounts without assigning a video to more than one
-account.
+account and provision its independent Watch Later state. This feature runs only
+when `[minute].enabled = true`. Minute sampling and Watch Later management start
+together; management runs immediately and then every 15 minutes.
+
+Each available enabled account contributes 1,000 slots. The global target gives
+60% of those slots to positive-priority videos, then gives the remaining 40% to
+the newest eligible processed videos. It is distributed deterministically
+across the available enabled accounts without assigning a video to more than
+one account.
 
 Enabled accounts are dedicated Watch Later lists. Reconciliation can delete
 non-target entries, including manually added entries, and add assigned target
-entries. If an account fails during a process, it is excluded for the rest of
-that process. Its assigned videos use the existing favorite/history fallback
-in 50-item batches. The next restart checks account health again and
-recomputes the distribution. Environment cookie paths remain
-authentication-only and do not enable Watch Later.
+entries. Each account uses one lease and a fresh complete snapshot, with
+non-target entries deleted before missing targets are added. Mutation POSTs are
+paced at least one second apart globally.
+
+An account that fails snapshot retrieval or validation, authentication, lease
+acquisition or renewal, mutation, or To View sampling is disabled for the
+current process run. Other accounts continue. Affected video coverage uses the
+favorite-resource fallback in `[minute].batch_size` batches, which default to
+50 AIDs. Restarting the process checks the account again and recomputes the
+distribution. Environment cookie paths remain authentication-only and do not
+enable Watch Later.
 
 ## Proxies
 
