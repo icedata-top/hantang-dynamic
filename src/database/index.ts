@@ -128,8 +128,6 @@ import {
 import {
   getDesiredWatchLaterSet,
   getWatchLaterAccounts,
-  getWatchLaterEligibleAids,
-  markWatchLaterEmpiricalFailedAid,
   provisionWatchLaterAccounts,
   syncWatchLaterSnapshot,
   type WatchLaterAccount,
@@ -615,16 +613,6 @@ export class Database {
     targetCount: number,
   ): Promise<WatchLaterDesiredSet> {
     return getDesiredWatchLaterSet(this.ensurePool(), targetCount);
-  }
-
-  public async getWatchLaterEligibleAids(
-    maxPriorityExclusive: number,
-  ): Promise<bigint[]> {
-    return getWatchLaterEligibleAids(this.ensurePool(), maxPriorityExclusive);
-  }
-
-  public async markWatchLaterEmpiricalFailedAid(aid: bigint): Promise<boolean> {
-    return markWatchLaterEmpiricalFailedAid(this.ensurePool(), aid);
   }
 
   public async withWatchLaterAccountLease<T>(

@@ -3,8 +3,6 @@ import test from "node:test";
 import type { Pool } from "pg";
 import {
   getDesiredWatchLaterSet,
-  getWatchLaterEligibleAids,
-  markWatchLaterEmpiricalFailedAid,
   syncWatchLaterSnapshot,
 } from "./watchLater";
 
@@ -31,28 +29,6 @@ test("desired sets use deterministic 600/400 pools for one through three account
     );
     assert.deepEqual(values, [accounts * 1_000]);
   }
-});
-
-test("empirical 90001 candidates stay eligible while other failures use -1", async () => {
-  let eligibleQuery = "";
-  let failedQuery = "";
-  const pool = {
-    async query(sql: string) {
-      if (sql.includes("SELECT aid")) eligibleQuery = sql;
-      else failedQuery = sql;
-      return { rows: [], rowCount: 1 };
-    },
-  } as Pool;
-  await getWatchLaterEligibleAids(pool, 30);
-  await markWatchLaterEmpiricalFailedAid(pool, 42n);
-  assert.match(
-    eligibleQuery,
-    /NOT \(-1 = ANY\(watch_later_managed_account_ids\)\)/,
-  );
-  assert.match(
-    failedQuery,
-    /array_append\(watch_later_managed_account_ids, -1\)/,
-  );
 });
 
 test("complete snapshots synchronize one UID without creating remote-only state", async () => {

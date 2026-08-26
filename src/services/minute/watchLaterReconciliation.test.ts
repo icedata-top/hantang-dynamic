@@ -9,7 +9,6 @@ import type { WatchLaterAccountContext } from "./watchLaterApi";
 import {
   partitionDesiredWatchLaterAids,
   runAutomaticWatchLaterManagement,
-  runWatchLaterEmpiricalAddTest,
   type WatchLaterDatabase,
 } from "./watchLaterReconciliation";
 
@@ -275,30 +274,4 @@ test("capacity, ambiguous response, lease loss, and cancellation do not replay m
       scenario.name,
     );
   }
-});
-
-test("empirical capacity failure does not exclude an AID while other failures do", async () => {
-  const marked: bigint[] = [];
-  const result = await runWatchLaterEmpiricalAddTest(
-    {
-      async getWatchLaterEligibleAids() {
-        return [1n, 2n];
-      },
-      async markWatchLaterEmpiricalFailedAid(aid) {
-        marked.push(aid);
-        return true;
-      },
-    },
-    account([snapshot([])], [90001, 90002]),
-    async () => {},
-  );
-  assert.deepEqual(marked, [2n]);
-  assert.deepEqual(result, {
-    reason: "eligible_exhausted",
-    selected: 2,
-    added: 0,
-    skipped: 2,
-    preCount: 0,
-    postCount: 0,
-  });
 });

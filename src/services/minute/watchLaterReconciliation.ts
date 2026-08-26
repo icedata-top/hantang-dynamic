@@ -58,26 +58,6 @@ export interface WatchLaterManagementOptions {
   onHealthyAccounts?(accountIds: ReadonlySet<bigint>): void;
 }
 
-export interface WatchLaterEmpiricalDatabase {
-  getWatchLaterEligibleAids(maxPriorityExclusive: number): Promise<bigint[]>;
-  markWatchLaterEmpiricalFailedAid?(aid: bigint): Promise<boolean>;
-}
-
-export interface WatchLaterEmpiricalResult {
-  reason:
-    | "eligible_exhausted"
-    | "pre_snapshot_failed"
-    | "request_failed"
-    | "post_snapshot_failed"
-    | "verification_failed";
-  selected: number;
-  added: number;
-  skipped: number;
-  preCount: number;
-  postCount: number;
-  error?: string;
-}
-
 function accountId(account: { uid: string }): bigint | null {
   return /^\d+$/.test(account.uid) ? BigInt(account.uid) : null;
 }
@@ -283,66 +263,4 @@ export async function runAutomaticWatchLaterManagement(
     }
   }
   return results;
-}
-
-export function selectWatchLaterEmpiricalAccount<
-  T extends { enableWatchLater?: boolean },
->(accounts: T[]): T {
-  const selected = accounts.filter((account) => account.enableWatchLater);
-  if (selected.length !== 1)
-    throw new Error(
-      "Empirical Watch Later run requires exactly one loaded account with enable_watch_later = true.",
-    );
-  return selected[0] as T;
-}
-
-export async function runWatchLaterEmpiricalAddTest(
-  database: WatchLaterEmpiricalDatabase,
-  account: WatchLaterAccountContext,
-  delay: Delay = sleep,
-  _writeProgress?: (text: string) => void,
-  maxPriorityExclusive = 30,
-): Promise<WatchLaterEmpiricalResult> {
-  const initial = await fetchWatchLaterSnapshot(account.toViewClient);
-  if (!initial)
-    return {
-      reason: "pre_snapshot_failed",
-      selected: 0,
-      added: 0,
-      skipped: 0,
-      preCount: 0,
-      postCount: 0,
-    };
-  let added = 0;
-  let skipped = 0;
-  const eligible =
-    await database.getWatchLaterEligibleAids(maxPriorityExclusive);
-  for (const aid of eligible.filter(
-    (aid) => !initial.aids.has(aid.toString()),
-  )) {
-    if (added + skipped > 0) await delay(MUTATION_DELAY_MS);
-    let shouldMarkFailed = false;
-    try {
-      const code = await mutateWatchLater(account, aid, "add");
-      if (code === 0) {
-        added += 1;
-        continue;
-      }
-      shouldMarkFailed = code !== CAPACITY_BLOCKED_CODE;
-    } catch {
-      shouldMarkFailed = true;
-    }
-    skipped += 1;
-    if (shouldMarkFailed) {
-      await database.markWatchLaterEmpiricalFailedAid?.(aid);
-    }
-  }
-  return {
-    reason: "eligible_exhausted",
-    selected: added + skipped,
-    added,
-    skipped,
-    preCount: initial.aids.size,
-    postCount: initial.aids.size,
-  };
 }
