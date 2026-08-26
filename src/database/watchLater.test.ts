@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
-import {
-  getDesiredWatchLaterSet,
-  syncWatchLaterSnapshot,
-} from "./watchLater";
+import { getDesiredWatchLaterSet, syncWatchLaterSnapshot } from "./watchLater";
 
 test("desired sets use deterministic 600/400 pools for one through three accounts", async () => {
   for (const accounts of [1, 2, 3]) {
