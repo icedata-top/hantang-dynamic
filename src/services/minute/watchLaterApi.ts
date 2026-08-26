@@ -52,8 +52,8 @@ export interface WatchLaterMutationOptions {
 }
 
 async function csrfToken(account: WatchLaterAccountContext): Promise<string> {
-  if (config.bilibili.csrfToken) return config.bilibili.csrfToken;
   if (!account.cookieJar) {
+    if (config.bilibili.csrfToken) return config.bilibili.csrfToken;
     throw new Error("Watch-later mutation requires an authenticated account");
   }
   const cookies = await account.cookieJar.getCookies(
