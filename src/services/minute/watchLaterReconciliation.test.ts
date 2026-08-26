@@ -222,7 +222,7 @@ test("deadline reached while paced prevents the next POST and leaves only snapsh
   assert.equal(result[result.length - 1]?.reason, "deadline");
 });
 
-test("capacity, ambiguous response, lease loss, and cancellation do not replay mutations", async () => {
+test("mutation failure, lease loss, and cancellation do not replay mutations", async () => {
   const cases: Array<{
     name: string;
     codes?: number[];
@@ -230,7 +230,6 @@ test("capacity, ambiguous response, lease loss, and cancellation do not replay m
     stopDuringDelay?: boolean;
     reason: string;
   }> = [
-    { name: "capacity", codes: [90001], reason: "capacity_blocked" },
     { name: "ambiguous", codes: [90002], reason: "ambiguous" },
     { name: "lease", renew: false, reason: "lease_lost" },
     { name: "stopped", stopDuringDelay: true, reason: "stopped" },

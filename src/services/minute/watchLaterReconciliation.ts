@@ -20,7 +20,6 @@ import {
 export const WATCH_LATER_CAPACITY = 1_000;
 const MUTATION_DELAY_MS = 1_000;
 const CYCLE_DEADLINE_MS = 14 * 60_000;
-const CAPACITY_BLOCKED_CODE = 90001;
 type Delay = (milliseconds: number) => Promise<void>;
 
 export interface WatchLaterDatabase {
@@ -45,7 +44,6 @@ export interface WatchLaterReconciliationResult {
     | "deadline"
     | "lease_lost"
     | "stopped"
-    | "capacity_blocked"
     | "ambiguous";
   added: number;
   deleted: number;
@@ -137,13 +135,8 @@ async function reconcileAccount(
         else deleted += 1;
         return undefined;
       }
-      const reason =
-        code === CAPACITY_BLOCKED_CODE ? "capacity_blocked" : "ambiguous";
-      watchLaterMutationsTotal.inc({
-        action,
-        outcome: reason === "capacity_blocked" ? "capacity_blocked" : "failed",
-      });
-      return reason;
+      watchLaterMutationsTotal.inc({ action, outcome: "failed" });
+      return "ambiguous";
     };
     for (const aid of phase === "add" ? [] : deletes) {
       const reason = await mutate("delete", aid);
