@@ -12,6 +12,7 @@ interface WatchLaterResponse {
 interface WatchLaterMutationRequestConfig {
   headers: { "Content-Type": string };
   noRetry: true;
+  rawApiErrors: true;
 }
 
 export interface WatchLaterMutationClient extends ToViewClient {
@@ -132,6 +133,7 @@ export async function mutateWatchLater(
       {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         noRetry: true,
+        rawApiErrors: true,
       },
     );
     return response.data.code;

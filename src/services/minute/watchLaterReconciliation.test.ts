@@ -37,7 +37,6 @@ function account(
   mutationCodes: number[] = [],
   uid = "7",
   actions: string[] = [],
-  onGet?: () => void,
 ): WatchLaterAccountContext {
   const cookieJar = new CookieJar();
   cookieJar.setCookieSync("bili_jct=test", "https://www.bilibili.com/");
@@ -47,7 +46,6 @@ function account(
     enableWatchLater: true,
     toViewClient: {
       async get() {
-        onGet?.();
         const response = snapshots.shift();
         if (!response) throw new Error("missing snapshot");
         return { data: response };
@@ -110,48 +108,47 @@ test("assigns each desired AID once in deterministic capacity-bounded order", ()
   }
 });
 
-test("uses a fresh snapshot and one lease for each account reconciliation", async () => {
+test("syncs healthy snapshots, deletes globally before adding, and shares pacing", async () => {
   const actions: string[] = [];
-  let leaseActive = false;
-  let snapshotRequests = 0;
-  let syncs = 0;
+  const delays: number[] = [];
+  let target = 0;
   const result = await runAutomaticWatchLaterManagement(
     database({
-      async getDesiredWatchLaterSet() {
-        return { aids: [1n], overflow: false };
+      async getWatchLaterAccounts() {
+        return [
+          { accountId: 7n, lastCompleteSnapshotAt: null },
+          { accountId: 8n, lastCompleteSnapshotAt: null },
+        ];
       },
-      async syncWatchLaterSnapshot() {
-        assert.equal(leaseActive, true);
-        syncs += 1;
-        return 0;
-      },
-      async withWatchLaterAccountLease(_accountId, callback) {
-        assert.equal(leaseActive, false);
-        leaseActive = true;
-        try {
-          return await callback({
-            async renew() {
-              return true;
-            },
-          });
-        } finally {
-          leaseActive = false;
-        }
+      async getDesiredWatchLaterSet(requested) {
+        target = requested;
+        return { aids: [1n, 2n, 3n, 4n], overflow: false };
       },
     }),
     [
-      account([snapshot([90]), snapshot([1])], [], "7", actions, () => {
-        snapshotRequests += 1;
-        assert.equal(leaseActive, snapshotRequests === 2);
-      }),
+      account([snapshot([90])], [], "7", actions),
+      account([snapshot([91])], [], "8", actions),
     ],
+    2,
+    {
+      async delay(ms) {
+        delays.push(ms);
+      },
+    },
   );
-  assert.equal(snapshotRequests, 2);
-  assert.equal(syncs, 1);
-  assert.deepEqual(actions, []);
-  assert.deepEqual(
-    result.map((entry) => entry.reason),
-    ["completed"],
+  assert.equal(target, 4);
+  assert.deepEqual(actions, [
+    "/del:90",
+    "/del:91",
+    "/add:1",
+    "/add:3",
+    "/add:2",
+    "/add:4",
+  ]);
+  assert.deepEqual(delays, [1_000, 1_000, 1_000, 1_000, 1_000]);
+  assert.equal(
+    result.every((entry) => entry.reason === "completed"),
+    true,
   );
 });
 
@@ -177,54 +174,30 @@ test("invalid snapshots are unhealthy and publish no routing membership", async 
   assert.deepEqual(healthy, [[], []]);
 });
 
-test("account-local failures do not stop the next account", async () => {
-  for (const scenario of ["sync", "lease"] as const) {
-    const unavailable: bigint[] = [];
-    const actions: string[] = [];
-    const result = await runAutomaticWatchLaterManagement(
-      database({
-        async getWatchLaterAccounts() {
-          return [
-            { accountId: 7n, lastCompleteSnapshotAt: null },
-            { accountId: 8n, lastCompleteSnapshotAt: null },
-          ];
-        },
-        async syncWatchLaterSnapshot(accountId) {
-          if (scenario === "sync" && accountId === 7n) {
-            throw new Error("database sync failed");
-          }
-          return 0;
-        },
-        async withWatchLaterAccountLease(accountId, callback) {
-          if (scenario === "lease" && accountId === 7n) {
-            throw new Error("lease unavailable");
-          }
-          return callback({
-            async renew() {
-              return true;
-            },
-          });
-        },
-      }),
-      [
-        account([snapshot([]), snapshot([])], [], "7"),
-        account([snapshot([]), snapshot([])], [], "8", actions),
-      ],
-      undefined,
-      {
-        onAccountUnavailable(accountId) {
-          unavailable.push(accountId);
-        },
+test("sync failure excludes only that account from published routing health", async () => {
+  const healthy: bigint[][] = [];
+  await runAutomaticWatchLaterManagement(
+    database({
+      async getWatchLaterAccounts() {
+        return [
+          { accountId: 7n, lastCompleteSnapshotAt: null },
+          { accountId: 8n, lastCompleteSnapshotAt: null },
+        ];
       },
-    );
-    assert.deepEqual(unavailable, scenario === "sync" ? [7n] : [], scenario);
-    assert.deepEqual(
-      result.map((entry) => entry.reason),
-      [scenario === "sync" ? "ambiguous" : "lease_lost", "completed"],
-      scenario,
-    );
-    assert.deepEqual(actions, [], scenario);
-  }
+      async syncWatchLaterSnapshot(accountId) {
+        if (accountId === 7n) throw new Error("database sync failed");
+        return 0;
+      },
+    }),
+    [account([snapshot([])], [], "7"), account([snapshot([])], [], "8")],
+    undefined,
+    {
+      onHealthyAccounts(ids) {
+        healthy.push([...ids]);
+      },
+    },
+  );
+  assert.deepEqual(healthy, [[], [8n]]);
 });
 
 test("deadline reached while paced prevents the next POST and leaves only snapshot state", async () => {
@@ -236,7 +209,7 @@ test("deadline reached while paced prevents the next POST and leaves only snapsh
         return { aids: [1n], overflow: false };
       },
     }),
-    [account([snapshot([2]), snapshot([2])], [], "7", actions)],
+    [account([snapshot([2])], [], "7", actions)],
     undefined,
     {
       now: () => now,
@@ -249,7 +222,7 @@ test("deadline reached while paced prevents the next POST and leaves only snapsh
   assert.equal(result[result.length - 1]?.reason, "deadline");
 });
 
-test("mutation failure, lease loss, and cancellation do not replay mutations", async () => {
+test("capacity, ambiguous response, lease loss, and cancellation do not replay mutations", async () => {
   const cases: Array<{
     name: string;
     codes?: number[];
@@ -257,13 +230,13 @@ test("mutation failure, lease loss, and cancellation do not replay mutations", a
     stopDuringDelay?: boolean;
     reason: string;
   }> = [
+    { name: "capacity", codes: [90001], reason: "capacity_blocked" },
     { name: "ambiguous", codes: [90002], reason: "ambiguous" },
     { name: "lease", renew: false, reason: "lease_lost" },
     { name: "stopped", stopDuringDelay: true, reason: "stopped" },
   ];
   for (const scenario of cases) {
     const actions: string[] = [];
-    const unavailable: bigint[] = [];
     let running = true;
     const result = await runAutomaticWatchLaterManagement(
       database({
@@ -281,15 +254,12 @@ test("mutation failure, lease loss, and cancellation do not replay mutations", a
           });
         },
       }),
-      [account([snapshot([]), snapshot([])], scenario.codes, "7", actions)],
+      [account([snapshot([])], scenario.codes, "7", actions)],
       undefined,
       {
         shouldContinue: () => running,
         async delay() {
           if (scenario.stopDuringDelay) running = false;
-        },
-        onAccountUnavailable(accountId) {
-          unavailable.push(accountId);
         },
       },
     );
@@ -301,11 +271,6 @@ test("mutation failure, lease loss, and cancellation do not replay mutations", a
     assert.equal(
       actions.length,
       scenario.stopDuringDelay ? 1 : scenario.renew === false ? 0 : 1,
-      scenario.name,
-    );
-    assert.deepEqual(
-      unavailable,
-      scenario.reason === "ambiguous" ? [7n] : [],
       scenario.name,
     );
   }

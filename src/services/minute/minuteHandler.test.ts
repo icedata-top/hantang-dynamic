@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AccountContext } from "../../core/account";
 import type { MinuteDatabase } from "./minuteHandler";
 import { MinuteHandler } from "./minuteHandler";
 
@@ -212,93 +211,6 @@ test("failed controller cycle clears prior routing health before minute sampling
     globalThis.setTimeout = originalSetTimeout;
   }
   assert.deepEqual(routedAccountIds, [[]]);
-});
-
-test("an unavailable account stays disabled for later management cycles", async () => {
-  const originalSetTimeout = globalThis.setTimeout;
-  const controller = new AbortController();
-  const managedAccountCounts: number[] = [];
-  const routedAccountIds: bigint[][] = [];
-  let cycles = 0;
-  const handler = new MinuteHandler({
-    database: database(() => {}),
-    loadAccounts: () => [{ uid: "7" } as AccountContext],
-    async sampleVideoStats(_aids, options) {
-      routedAccountIds.push([
-        ...(options?.healthyWatchLaterAccountIds ?? new Set()),
-      ]);
-      return [];
-    },
-    async runWatchLaterManagement(_database, accounts, _capacity, options) {
-      cycles += 1;
-      managedAccountCounts.push(accounts.length);
-      options?.onHealthyAccounts?.(new Set([7n]));
-      if (cycles === 1) {
-        options?.onAccountUnavailable?.(7n);
-        return [];
-      }
-      await handler.processBatch([
-        {
-          aid: 1n,
-          lastView: null,
-          watchLaterManagedAccountIds: [7n],
-        },
-      ]);
-      Reflect.set(handler, "isRunning", false);
-      controller.abort();
-      return [];
-    },
-  });
-  globalThis.setTimeout = ((callback: () => void) => {
-    queueMicrotask(callback);
-    return {} as NodeJS.Timeout;
-  }) as typeof setTimeout;
-  Reflect.set(handler, "isRunning", true);
-  try {
-    const run = Reflect.get(handler, "runWatchLaterController") as (
-      signal: AbortSignal,
-    ) => Promise<void>;
-    await run.call(handler, controller.signal);
-  } finally {
-    globalThis.setTimeout = originalSetTimeout;
-  }
-  assert.deepEqual(managedAccountCounts, [1, 0]);
-  assert.deepEqual(routedAccountIds, [[]]);
-});
-
-test("a To View failure disables that account for later batches", async () => {
-  const management = deferred();
-  const routedAccountIds: bigint[][] = [];
-  let calls = 0;
-  const handler = new MinuteHandler({
-    database: database(() => {}),
-    loadAccounts: () => [],
-    async sampleVideoStats(_aids, options) {
-      calls += 1;
-      routedAccountIds.push([
-        ...(options?.healthyWatchLaterAccountIds ?? new Set()),
-      ]);
-      if (calls === 1) {
-        options?.onWatchLaterToViewAccountFailure?.(7n);
-      }
-      return [];
-    },
-    async runWatchLaterManagement(_database, _accounts, _capacity, options) {
-      options?.onHealthyAccounts?.(new Set([7n]));
-      await management.promise;
-      return [];
-    },
-  });
-  handler.start();
-  await new Promise<void>((resolve) => setImmediate(resolve));
-
-  const due = [{ aid: 1n, lastView: null, watchLaterManagedAccountIds: [7n] }];
-  await handler.processBatch(due);
-  await handler.processBatch(due);
-  management.resolve();
-  await handler.stop();
-
-  assert.deepEqual(routedAccountIds, [[7n], []]);
 });
 
 test("partial favorite samples persist initially and advance when unchanged", async () => {

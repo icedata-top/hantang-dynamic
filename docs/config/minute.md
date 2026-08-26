@@ -65,23 +65,17 @@ videos by itself. Due-row selection happens when the minute handler ticks.
 
 ## Watch Later convergence
 
-Watch Later management runs only when `[minute].enabled = true`. The minute
-sampling loop and Watch Later management start together. Management runs once
-immediately and then every 15 minutes.
-
-Each account reconciliation holds one database lease while it fetches and
-stores a fresh complete snapshot, deletes non-target remote entries, and adds
-missing targets. Deletions happen before additions. Mutation POSTs remain at
-least one second apart globally across configured accounts, and the account
-lease is renewed immediately before each POST.
-
-If an account fails snapshot retrieval or validation, authentication,
-mutation, or To View sampling, it is disabled for the current process run.
-Other accounts continue to be managed. Lease acquisition or renewal contention
-skips that account for the current management cycle so a later cycle can retry
-it. Due videos that cannot use a disabled account's To View data use the
-favorite-resource fallback in `batch_size` batches, which default to 50 AIDs.
-Restarting the process clears the disabled state and checks the account again.
+When enabled Watch Later accounts are configured, startup performs one complete
+snapshot and creates the deterministic account layout before minute sampling
+begins. Reconciliation then continues in a managed background task. It deletes
+non-target remote entries before adding targets, yields after internal chunks,
+and does not fetch a new snapshot for each chunk. Mutation POSTs remain at
+least one second apart globally across every configured account and internal
+chunk boundary. Each POST is preceded by a durable attempt marker and a fenced
+lease renewal. If either step fails, that account stops without another POST;
+a restart obtains a fresh complete snapshot and recovers durable pending
+operations. An ambiguous request, invalid snapshot, or `90001` capacity result
+also stops that account's convergence.
 
 Daily inserts also refresh state through the `video_daily` trigger. This updates
 priority and due time; it does not insert minute samples directly.
