@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
+import { initVideosSchema } from "./schema/videos";
 import {
   markVideoDeleted,
   markVideoProcessedWithCollectionState,
+  updateProcessedVideoPidV2,
 } from "./videos";
 
 interface QueryCall {
@@ -91,6 +93,75 @@ test("processed video insert rolls back when collection state upsert fails", asy
   assert.equal(calls[calls.length - 1]?.sql, "ROLLBACK");
 });
 
+test("authoritative TAG relations are replaced in the processed-video transaction", async () => {
+  const { pool, calls } = createPool();
+
+  await markVideoProcessedWithCollectionState(
+    pool,
+    {
+      ...video,
+      mission_id: 99n,
+      tagSnapshot: [
+        { tagId: 10n, tagName: "vocaloid" },
+        { tagId: 20n, tagName: "topic" },
+      ],
+    },
+    true,
+  );
+
+  assert.match(calls[1]?.sql ?? "", /mission_id = EXCLUDED\.mission_id/);
+  assert.equal(calls[1]?.values?.[19], "99");
+  assert.match(calls[2]?.sql ?? "", /INSERT INTO tags/);
+  assert.deepEqual(calls[2]?.values, [
+    ["10", "20"],
+    ["vocaloid", "topic"],
+  ]);
+  assert.match(calls[3]?.sql ?? "", /DELETE FROM video_tags/);
+  assert.match(calls[4]?.sql ?? "", /INSERT INTO video_tags/);
+  assert.match(
+    calls[5]?.sql ?? "",
+    /fn_upsert_collection_state_from_processed_video/,
+  );
+  assert.equal(calls[6]?.sql, "COMMIT");
+});
+
+test("missing TAG snapshots preserve stored names and normalized relations", async () => {
+  const { pool, calls } = createPool();
+
+  await markVideoProcessedWithCollectionState(pool, video, true);
+
+  assert.match(
+    calls[1]?.sql ?? "",
+    /WHEN \$23::boolean THEN EXCLUDED\.tag\s+ELSE processed_videos\.tag/,
+  );
+  assert.match(
+    calls[1]?.sql ?? "",
+    /WHEN \$23::boolean THEN EXCLUDED\.tag_new\s+ELSE processed_videos\.tag_new/,
+  );
+  assert.equal(calls[1]?.values?.[22], false);
+  assert.equal(
+    calls.some((call) => call.sql.includes("DELETE FROM video_tags")),
+    false,
+  );
+});
+
+test("authoritative empty TAG snapshots clear names and normalized relations", async () => {
+  const { pool, calls } = createPool();
+
+  await markVideoProcessedWithCollectionState(
+    pool,
+    { ...video, tag_new: [], tagSnapshot: [] },
+    true,
+  );
+
+  assert.equal(calls[1]?.values?.[5], "");
+  assert.deepEqual(calls[1]?.values?.[13], []);
+  assert.equal(calls[1]?.values?.[22], true);
+  assert.deepEqual(calls[2]?.values, [[], []]);
+  assert.match(calls[3]?.sql ?? "", /DELETE FROM video_tags/);
+  assert.deepEqual(calls[4]?.values, ["42", []]);
+});
+
 test("terminal deletion persists BVID identities and sets existing state to priority -1", async () => {
   const { pool, calls } = createPool();
 
@@ -137,4 +208,68 @@ test("terminal deletion rolls back processed deletion when collection state tran
     false,
   );
   assert.equal(calls[calls.length - 1]?.sql, "ROLLBACK");
+});
+
+test("pid_v2 metadata updates only matching changed videos", async () => {
+  const calls: QueryCall[] = [];
+  const query = {
+    async query(sql: string, values?: unknown[]) {
+      calls.push({ sql, values });
+      return { rows: [], rowCount: 2 };
+    },
+  };
+
+  const updated = await updateProcessedVideoPidV2(query as unknown as Pool, [
+    { aid: 1n, pidV2: 22 },
+    { aid: 2n, pidV2: 33 },
+  ]);
+
+  assert.equal(updated, 2);
+  assert.deepEqual(calls[0]?.values, [
+    ["1", "2"],
+    [22, 33],
+  ]);
+  assert.match(calls[0]?.sql ?? "", /video\.aid = metadata\.aid/);
+  assert.match(calls[0]?.sql ?? "", /video\.aid = ANY\(\$1::bigint\[\]\)/);
+  assert.match(
+    calls[0]?.sql ?? "",
+    /video\.pid_v2 IS DISTINCT FROM metadata\.pid_v2/,
+  );
+});
+
+test("mission backfill advances through eligible AIDs in bounded batches", async () => {
+  const backfillCursors: unknown[] = [];
+  const batches = [
+    Array.from({ length: 1_000 }, (_, index) => ({ aid: String(index + 1) })),
+    Array.from({ length: 1_000 }, (_, index) => ({
+      aid: String(index + 1_001),
+    })),
+    Array.from({ length: 500 }, (_, index) => ({
+      aid: String(index + 2_001),
+    })),
+  ];
+  let countCalls = 0;
+  const pool = {
+    async query(sql: string, values?: unknown[]) {
+      if (sql.includes("count(*)::text AS remaining")) {
+        countCalls += 1;
+        return {
+          rows: [{ remaining: countCalls === 1 ? "2500" : "0" }],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("WITH candidates AS")) {
+        backfillCursors.push(values?.[0]);
+        const rows = batches.shift() ?? [];
+        return { rows, rowCount: rows.length };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+  } as unknown as Pool;
+
+  await initVideosSchema(pool);
+
+  assert.deepEqual(backfillCursors, [null, "1000", "2000"]);
+  assert.equal(countCalls, 2);
+  assert.equal(batches.length, 0);
 });

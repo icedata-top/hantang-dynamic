@@ -21,6 +21,54 @@ interface VideoProcessingOptions {
   processRelated?: boolean;
 }
 
+const MAX_POSTGRES_INTEGER = 2_147_483_647;
+
+function validPidV2(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value > 0 &&
+    value <= MAX_POSTGRES_INTEGER
+  );
+}
+
+function parseTagSnapshot(value: unknown): {
+  names: string[];
+  tags: Array<{ tagId: bigint; tagName: string }>;
+} | null {
+  if (!Array.isArray(value)) return null;
+  const names: string[] = [];
+  const tagsById = new Map<bigint, string>();
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) return null;
+    const tagType = "tag_type" in item ? item.tag_type : undefined;
+    if (tagType !== undefined && typeof tagType !== "string") return null;
+    const tagName = "tag_name" in item ? item.tag_name : undefined;
+    if (typeof tagName !== "string") return null;
+    const tagId = "tag_id" in item ? item.tag_id : undefined;
+    if (
+      typeof tagId !== "number" ||
+      !Number.isSafeInteger(tagId) ||
+      tagId < 0
+    ) {
+      return null;
+    }
+    if (
+      tagType !== undefined &&
+      tagType !== "old_channel" &&
+      tagType !== "topic"
+    ) {
+      continue;
+    }
+    names.push(tagName);
+    if (tagId !== 0) tagsById.set(BigInt(tagId), tagName);
+  }
+  return {
+    names,
+    tags: [...tagsById].map(([tagId, tagName]) => ({ tagId, tagName })),
+  };
+}
+
 export class DetailsService {
   private rateLimiter: RateLimiter;
   private db: Database;
@@ -235,7 +283,8 @@ export class DetailsService {
     const view = detailData.View;
     const relatedVideos = detailData.Related || [];
 
-    const tagString = detailData.Tags.map((t) => t.tag_name).join(";");
+    const tagSnapshot = parseTagSnapshot(detailData.Tags);
+    const tagNames = tagSnapshot?.names ?? [];
 
     const videoData: VideoData = {
       aid: view.aid,
@@ -248,19 +297,22 @@ export class DetailsService {
       description: view.desc,
       dynamic: view.dynamic || undefined,
       pic: view.pic,
-      tag: tagString,
-      tag_new: detailData.Tags?.map((t) => t.tag_name),
+      tag: tagNames.join(";"),
+      tag_new: tagSnapshot ? tagNames : undefined,
+      tagSnapshot: tagSnapshot?.tags,
       participle: detailData.participle,
       pubdate: view.pubdate,
       ctime: view.ctime,
       is_deleted: false,
       copyright: view.copyright,
+      mission_id: Number.isSafeInteger(view.mission_id)
+        ? BigInt(view.mission_id as number)
+        : undefined,
       extras: {
         duration: view.duration,
         videos: view.videos,
         state: view.state,
         cid: view.cid,
-        mission_id: view.mission_id,
         ugc_season_id: view.ugc_season?.id,
         dimension: view.dimension,
         rights: view.rights,
@@ -356,6 +408,15 @@ export class DetailsService {
     relatedVideos: BiliDynamicCard[];
   }> {
     const filtered = await filterVideo(videoData);
+
+    const relatedPidV2 = relatedVideos.flatMap((video) =>
+      validPidV2(video.pid_v2)
+        ? [{ aid: BigInt(video.aid), pidV2: video.pid_v2 }]
+        : [],
+    );
+    if (relatedPidV2.length > 0) {
+      await this.db.updateProcessedVideoPidV2(relatedPidV2);
+    }
 
     if (options.processRecommendations && relatedVideos.length > 0) {
       const recommendations = this.buildRecommendationInputs(

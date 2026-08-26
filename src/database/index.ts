@@ -122,6 +122,7 @@ import {
   markVideoDeleted,
   markVideoProcessed,
   markVideoProcessedWithCollectionState,
+  updateProcessedVideoPidV2,
   type VideoDeletionNotes,
   type VideoIdentity,
 } from "./videos.js";
@@ -340,6 +341,12 @@ export class Database {
           config.minute.processedBackfillNewVideoAgeDays,
       },
     );
+  }
+
+  public async updateProcessedVideoPidV2(
+    metadata: ReadonlyArray<{ aid: bigint; pidV2: number }>,
+  ): Promise<number> {
+    return updateProcessedVideoPidV2(this.ensurePool(), metadata);
   }
 
   /**
@@ -649,12 +656,14 @@ export class Database {
   public async syncWatchLaterSnapshot(
     accountId: bigint,
     aids: bigint[],
+    pidV2Metadata: ReadonlyArray<{ aid: bigint; pidV2: number }>,
     completedAt: Date,
   ): Promise<number> {
     return syncWatchLaterSnapshot(
       this.ensurePool(),
       accountId,
       aids,
+      pidV2Metadata,
       completedAt,
     );
   }
