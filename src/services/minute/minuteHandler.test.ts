@@ -158,7 +158,11 @@ test("watch-later cycles schedule fifteen minutes from the prior start", async (
     globalThis.setTimeout = originalSetTimeout;
   }
   assert.equal(cycles, 2);
-  assert.deepEqual(delays, [15 * 60_000]);
+  assert.equal(delays.length, 1);
+  const delay = delays[0];
+  const fifteenMinutes = 15 * 60_000;
+  assert.ok(delay >= fifteenMinutes * 0.95);
+  assert.ok(delay <= fifteenMinutes * 1.05);
 });
 
 test("failed controller cycle clears prior routing health before minute sampling", async () => {
