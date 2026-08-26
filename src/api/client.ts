@@ -319,10 +319,11 @@ function createClient(
           `Code: ${response.data.code}\n` +
           `baseURL: ${baseURL + response.config.url}\n` +
           `Config: ${JSON.stringify(redactSensitive(response.config))}\n` +
-          `Response: ${JSON.stringify(response.data || "No message")?.slice(
-            0,
-            1000,
-          )}`;
+          `Response: ${JSON.stringify(
+            redactSensitive(response.data || "No message"),
+          )?.slice(0, 1000)}`;
+
+        logger.error(message);
 
         if ((response.config as RequestConfig).rawApiErrors) {
           return Promise.reject({
