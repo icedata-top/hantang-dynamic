@@ -84,7 +84,6 @@ import {
   trackRecommendationsBatch,
 } from "./recommendations.js";
 import { initializeSchema } from "./schema/index.js";
-import { initWatchLaterSchema } from "./schema/watchLater.js";
 import { getStats } from "./stats.js";
 import {
   cidHasAiSubtitle,
@@ -161,8 +160,8 @@ export class Database {
   /**
    * Initialize the database connection pool.
    *
-   * Normal startup applies the idempotent watch-later upgrade before minute
-   * processing can query its relations. Full schema initialization remains opt-in.
+   * Schema initialization is opt-in so normal startup only connects to an
+   * already initialized database and provisions configured accounts.
    */
   public async init(
     url: string = config.database.url,
@@ -197,8 +196,6 @@ export class Database {
 
       if (options.initializeSchema === true) {
         await initializeSchema(this.pool, schema);
-      } else {
-        await initWatchLaterSchema(this.pool);
       }
       await provisionWatchLaterAccounts(
         this.pool,
