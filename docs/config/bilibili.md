@@ -62,13 +62,14 @@ entries. Each account uses one lease and a fresh complete snapshot, with
 non-target entries deleted before missing targets are added. Mutation POSTs are
 paced at least one second apart globally.
 
-An account that fails snapshot retrieval or validation, authentication, lease
-acquisition or renewal, mutation, or To View sampling is disabled for the
-current process run. Other accounts continue. Affected video coverage uses the
-favorite-resource fallback in `[minute].batch_size` batches, which default to
-50 AIDs. Restarting the process checks the account again and recomputes the
-distribution. Environment cookie paths remain authentication-only and do not
-enable Watch Later.
+An account that fails snapshot retrieval or validation, authentication,
+mutation, or To View sampling is disabled for the current process run. Other
+accounts continue. Lease acquisition or renewal contention skips that account
+for the current management cycle so a later cycle can retry it. Affected video
+coverage uses the favorite-resource fallback in `[minute].batch_size` batches,
+which default to 50 AIDs. Restarting the process checks disabled accounts again
+and recomputes the distribution. Environment cookie paths remain
+authentication-only and do not enable Watch Later.
 
 ## Proxies
 

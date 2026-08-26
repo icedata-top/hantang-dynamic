@@ -75,12 +75,13 @@ missing targets. Deletions happen before additions. Mutation POSTs remain at
 least one second apart globally across configured accounts, and the account
 lease is renewed immediately before each POST.
 
-If an account fails snapshot retrieval or validation, authentication, lease
-acquisition or renewal, mutation, or To View sampling, it is disabled for the
-current process run. Other accounts continue to be managed. Due videos that
-cannot use that account's To View data use the favorite-resource fallback in
-`batch_size` batches, which default to 50 AIDs. Restarting the process clears
-the disabled state and checks the account again.
+If an account fails snapshot retrieval or validation, authentication,
+mutation, or To View sampling, it is disabled for the current process run.
+Other accounts continue to be managed. Lease acquisition or renewal contention
+skips that account for the current management cycle so a later cycle can retry
+it. Due videos that cannot use a disabled account's To View data use the
+favorite-resource fallback in `batch_size` batches, which default to 50 AIDs.
+Restarting the process clears the disabled state and checks the account again.
 
 Daily inserts also refresh state through the `video_daily` trigger. This updates
 priority and due time; it does not insert minute samples directly.

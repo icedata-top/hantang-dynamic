@@ -73,22 +73,11 @@ function globalStopReason(
 function createPacer(
   delay: Delay,
 ): (action: () => Promise<void>) => Promise<void> {
-  let tail = Promise.resolve();
   let used = false;
   return async (action) => {
-    const previous = tail;
-    let release: () => void = () => {};
-    tail = new Promise((resolve) => {
-      release = resolve;
-    });
-    await previous;
-    try {
-      if (used) await delay(MUTATION_DELAY_MS);
-      used = true;
-      await action();
-    } finally {
-      release();
-    }
+    if (used) await delay(MUTATION_DELAY_MS);
+    used = true;
+    await action();
   };
 }
 
@@ -293,7 +282,7 @@ export async function runAutomaticWatchLaterManagement(
     if (result.reason === "deadline" || result.reason === "stopped") {
       return results;
     }
-    if (result.reason !== "completed") {
+    if (result.reason !== "completed" && result.reason !== "lease_lost") {
       options.onAccountUnavailable?.(item.row.accountId);
     }
   }
