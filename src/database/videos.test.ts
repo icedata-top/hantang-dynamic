@@ -109,7 +109,10 @@ test("authoritative TAG relations are replaced in the processed-video transactio
     true,
   );
 
-  assert.match(calls[1]?.sql ?? "", /mission_id = EXCLUDED\.mission_id/);
+  assert.match(
+    calls[1]?.sql ?? "",
+    /mission_id = COALESCE\(EXCLUDED\.mission_id, processed_videos\.mission_id\)/,
+  );
   assert.equal(calls[1]?.values?.[19], "99");
   assert.match(calls[2]?.sql ?? "", /INSERT INTO tags/);
   assert.deepEqual(calls[2]?.values, [

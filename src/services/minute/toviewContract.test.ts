@@ -69,6 +69,6 @@ test("To View validator keeps valid items when pid_v2 is absent, null, or malfor
   );
   assert.equal(result.samples.length, 3);
   assert.equal(result.invalidItemCount, 0);
-  assert.equal(result.invalidPidV2Count, 3);
+  assert.equal(result.invalidPidV2Count, 1);
   assert.deepEqual(result.pidV2Metadata, []);
 });

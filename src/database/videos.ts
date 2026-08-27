@@ -116,7 +116,7 @@ export async function markVideoProcessed(
       is_deleted = EXCLUDED.is_deleted,
       copyright = EXCLUDED.copyright,
       pid_v2 = COALESCE(EXCLUDED.pid_v2, processed_videos.pid_v2),
-      mission_id = EXCLUDED.mission_id,
+      mission_id = COALESCE(EXCLUDED.mission_id, processed_videos.mission_id),
       extras = EXCLUDED.extras,
       notes = EXCLUDED.notes,
       updated_at = NOW()

@@ -107,7 +107,12 @@ export function validateToViewResponse(
 
     seenAids.add(itemResult.data.aid);
     samples.push(toSample(itemResult.data, sampledAt));
-    const parsedPidV2 = pidV2.safeParse(itemResult.data.pid_v2);
+    const pidV2Value = itemResult.data.pid_v2;
+    if (pidV2Value == null) {
+      continue;
+    }
+
+    const parsedPidV2 = pidV2.safeParse(pidV2Value);
     if (parsedPidV2.success) {
       pidV2Metadata.push({
         aid: BigInt(itemResult.data.aid),
