@@ -220,16 +220,17 @@ test("deadline reached while paced prevents the next POST and leaves only snapsh
   assert.equal(result[result.length - 1]?.reason, "deadline");
 });
 
-test("snapshot scanning consumes the reconciliation deadline", async () => {
+test("an invalid snapshot that consumes the deadline reports deadline", async () => {
   let now = 0;
   let synced = 0;
   let selected = 0;
   const context = account([], [], "7");
   context.toViewClient.get = async () => {
     now = 14 * 60_000;
-    return { data: snapshot([1]) };
+    return { data: { code: 0 } };
   };
 
+  watchLaterReconciliationsTotal.reset();
   const result = await runAutomaticWatchLaterManagement(
     database({
       async syncWatchLaterSnapshot() {
@@ -249,6 +250,11 @@ test("snapshot scanning consumes the reconciliation deadline", async () => {
   assert.deepEqual(result, []);
   assert.equal(synced, 0);
   assert.equal(selected, 0);
+  assert.equal(
+    await metricValue(watchLaterReconciliationsTotal, { outcome: "deadline" }),
+    1,
+  );
+  watchLaterReconciliationsTotal.reset();
 });
 
 test("capacity, ambiguous response, and cancellation do not replay mutations", async () => {

@@ -346,6 +346,37 @@ test("counts persisted samples before a later suppressed-state write fails", asy
   minuteSamplesTotal.reset();
 });
 
+test("counts failed samples when retry-state advancement also fails", async () => {
+  const handler = new MinuteHandler({
+    database: {
+      ...database(() => {}),
+      async advanceFailedMinuteVideos() {
+        throw new Error("retry state write failed");
+      },
+    },
+    loadAccounts: () => [],
+    async sampleVideoStats() {
+      throw new Error("sampling failed");
+    },
+  });
+
+  minuteSamplesTotal.reset();
+  await assert.rejects(
+    handler.processBatch([
+      { aid: 1n, lastView: null, watchLaterManagedAccountIds: [] },
+    ]),
+    /retry state write failed/,
+  );
+  assert.deepEqual(
+    (await minuteSamplesTotal.get()).values.map(({ labels, value }) => ({
+      labels,
+      value,
+    })),
+    [{ labels: { outcome: "failed" }, value: 1 }],
+  );
+  minuteSamplesTotal.reset();
+});
+
 test("a failed To View account is removed from subsequent batch routing", async () => {
   const routedAccountIds: bigint[][] = [];
   let calls = 0;

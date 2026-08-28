@@ -184,13 +184,16 @@ export async function runAutomaticWatchLaterManagement(
         cycleOutcome = "deadline";
         return [];
       }
+      let snapshot: WatchLaterSnapshot | null = null;
       try {
-        const snapshot = await fetchWatchLaterSnapshot(account.toViewClient);
-        if (!snapshot) continue;
-        if (now() >= deadline) {
-          cycleOutcome = "deadline";
-          return [];
-        }
+        snapshot = await fetchWatchLaterSnapshot(account.toViewClient);
+      } catch {}
+      if (now() >= deadline) {
+        cycleOutcome = "deadline";
+        return [];
+      }
+      if (!snapshot) continue;
+      try {
         await database.syncWatchLaterSnapshot(
           id,
           [...snapshot.aids].map(BigInt),
@@ -198,6 +201,10 @@ export async function runAutomaticWatchLaterManagement(
         );
         healthy.push({ accountId: id, account, snapshot });
       } catch {}
+      if (now() >= deadline) {
+        cycleOutcome = "deadline";
+        return [];
+      }
     }
     watchLaterEnabledAccounts.reset();
     watchLaterEnabledAccounts.set({ state: "healthy" }, healthy.length);

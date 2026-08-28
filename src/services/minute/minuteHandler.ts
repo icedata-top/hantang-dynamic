@@ -248,8 +248,8 @@ export class MinuteHandler {
         });
       } catch (error) {
         logger.error("Minute stats batch request failed:", error);
-        await this.db.advanceFailedMinuteVideos(aids);
         minuteSamplesTotal.inc({ outcome: "failed" }, aids.length);
+        await this.db.advanceFailedMinuteVideos(aids);
         return aids.length;
       }
 
@@ -297,8 +297,8 @@ export class MinuteHandler {
           minuteSamplesTotal.inc({ outcome: "persisted" }, changed.length);
         } catch (error) {
           logger.error("Minute sample write failed:", error);
-          await this.db.advanceFailedMinuteVideos(aids);
           minuteSamplesTotal.inc({ outcome: "failed" }, aids.length);
+          await this.db.advanceFailedMinuteVideos(aids);
           return aids.length;
         }
       }
@@ -313,8 +313,8 @@ export class MinuteHandler {
 
       if (failedAids.length > 0) {
         logger.warn(`Minute stats response missed ${failedAids.length} aid(s)`);
-        await this.db.advanceFailedMinuteVideos(failedAids);
         minuteSamplesTotal.inc({ outcome: "failed" }, failedAids.length);
+        await this.db.advanceFailedMinuteVideos(failedAids);
       }
 
       return aids.length;
