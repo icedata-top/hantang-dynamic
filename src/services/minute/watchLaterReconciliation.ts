@@ -1,8 +1,4 @@
-import type {
-  WatchLaterAccount,
-  WatchLaterAccountLease,
-  WatchLaterAction,
-} from "../../database/watchLater";
+import type { WatchLaterAction } from "../../database/watchLater";
 import {
   watchLaterEnabledAccounts,
   watchLaterMutationsTotal,
@@ -24,27 +20,18 @@ const CAPACITY_BLOCKED_CODE = 90001;
 type Delay = (milliseconds: number) => Promise<void>;
 
 export interface WatchLaterDatabase {
-  getDesiredWatchLaterSet(
-    targetCount: number,
-  ): Promise<{ aids: bigint[]; overflow: boolean }>;
+  getDesiredWatchLaterSet(targetCount: number): Promise<bigint[]>;
   syncWatchLaterSnapshot(
     accountId: bigint,
     aids: bigint[],
     pidV2Metadata: ReadonlyArray<{ aid: bigint; pidV2: number }>,
-    completedAt: Date,
   ): Promise<number>;
-  withWatchLaterAccountLease<T>(
-    accountId: bigint,
-    callback: (lease: WatchLaterAccountLease) => Promise<T>,
-  ): Promise<T>;
 }
 
 export interface WatchLaterReconciliationResult {
   reason:
     | "completed"
-    | "snapshot_invalid"
     | "deadline"
-    | "lease_lost"
     | "stopped"
     | "capacity_blocked"
     | "ambiguous";
@@ -86,76 +73,66 @@ function createPacer(
 }
 
 async function reconcileAccount(
-  database: WatchLaterDatabase,
   account: WatchLaterAccountContext,
-  row: WatchLaterAccount,
   desiredAids: readonly bigint[],
   snapshot: WatchLaterSnapshot,
   pace: (action: () => Promise<void>) => Promise<void>,
   deadline: number,
   now: () => number,
-  phase: "delete" | "add" | "all" = "all",
+  phase: "delete" | "add",
   shouldContinue?: () => boolean,
 ): Promise<WatchLaterReconciliationResult> {
-  return database.withWatchLaterAccountLease(row.accountId, async (lease) => {
-    const desired = new Set(desiredAids.map(String));
-    const deletes = [...snapshot.aids]
-      .filter((aid) => !desired.has(aid))
-      .map(BigInt);
-    const adds = desiredAids.filter(
-      (aid) => !snapshot.aids.has(aid.toString()),
-    );
-    let added = 0;
-    let deleted = 0;
-    const mutate = async (
-      action: WatchLaterAction,
-      aid: bigint,
-    ): Promise<WatchLaterReconciliationResult["reason"] | undefined> => {
-      if (now() >= deadline) return "deadline";
-      if (shouldContinue && !shouldContinue()) return "stopped";
-      let code: number | undefined;
-      try {
-        await pace(async () => {
-          code = await mutateWatchLater(account, aid, action, {
-            async beforePost() {
-              if (now() >= deadline) return "deadline";
-              if (shouldContinue && !shouldContinue()) return "stopped";
-              return (await lease.renew()) ? undefined : "lease_lost";
-            },
-          });
+  const desired = new Set(desiredAids.map(String));
+  const deletes = [...snapshot.aids]
+    .filter((aid) => !desired.has(aid))
+    .map(BigInt);
+  const adds = desiredAids.filter((aid) => !snapshot.aids.has(aid.toString()));
+  let added = 0;
+  let deleted = 0;
+  const mutate = async (
+    action: WatchLaterAction,
+    aid: bigint,
+  ): Promise<WatchLaterReconciliationResult["reason"] | undefined> => {
+    if (now() >= deadline) return "deadline";
+    if (shouldContinue && !shouldContinue()) return "stopped";
+    let code: number | undefined;
+    try {
+      await pace(async () => {
+        code = await mutateWatchLater(account, aid, action, {
+          async beforePost() {
+            if (now() >= deadline) return "deadline";
+            if (shouldContinue && !shouldContinue()) return "stopped";
+            return undefined;
+          },
         });
-      } catch (error) {
-        if (error instanceof WatchLaterMutationPrePostAbortError) {
-          if (error.reason === "deadline") return "deadline";
-          return error.reason === "stopped" ? "stopped" : "lease_lost";
-        }
-        watchLaterMutationsTotal.inc({ action, outcome: "ambiguous" });
-        return "ambiguous";
-      }
-      if (code === 0) {
-        watchLaterMutationsTotal.inc({ action, outcome: "succeeded" });
-        if (action === "add") added += 1;
-        else deleted += 1;
-        return undefined;
-      }
-      const reason =
-        code === CAPACITY_BLOCKED_CODE ? "capacity_blocked" : "ambiguous";
-      watchLaterMutationsTotal.inc({
-        action,
-        outcome: reason === "capacity_blocked" ? "capacity_blocked" : "failed",
       });
-      return reason;
-    };
-    for (const aid of phase === "add" ? [] : deletes) {
-      const reason = await mutate("delete", aid);
-      if (reason) return { reason, added, deleted };
+    } catch (error) {
+      if (error instanceof WatchLaterMutationPrePostAbortError) {
+        return error.reason;
+      }
+      watchLaterMutationsTotal.inc({ action, outcome: "ambiguous" });
+      return "ambiguous";
     }
-    for (const aid of phase === "delete" ? [] : adds) {
-      const reason = await mutate("add", aid);
-      if (reason) return { reason, added, deleted };
+    if (code === 0) {
+      watchLaterMutationsTotal.inc({ action, outcome: "succeeded" });
+      if (action === "add") added += 1;
+      else deleted += 1;
+      return undefined;
     }
-    return { reason: "completed", added, deleted };
-  });
+    const reason =
+      code === CAPACITY_BLOCKED_CODE ? "capacity_blocked" : "ambiguous";
+    watchLaterMutationsTotal.inc({
+      action,
+      outcome: reason === "capacity_blocked" ? "capacity_blocked" : "failed",
+    });
+    return reason;
+  };
+  const aids = phase === "delete" ? deletes : adds;
+  for (const aid of aids) {
+    const reason = await mutate(phase, aid);
+    if (reason) return { reason, added, deleted };
+  }
+  return { reason: "completed", added, deleted };
 }
 
 export function partitionDesiredWatchLaterAids(
@@ -178,9 +155,7 @@ export function partitionDesiredWatchLaterAids(
 }
 
 export async function runAutomaticWatchLaterManagement(
-  database: WatchLaterDatabase & {
-    getWatchLaterAccounts(accountIds: bigint[]): Promise<WatchLaterAccount[]>;
-  },
+  database: WatchLaterDatabase,
   accounts: WatchLaterAccountContext[],
   capacity = WATCH_LATER_CAPACITY,
   options: WatchLaterManagementOptions = {},
@@ -189,49 +164,46 @@ export async function runAutomaticWatchLaterManagement(
   watchLaterEnabledAccounts.set({ state: "healthy" }, 0);
   watchLaterEnabledAccounts.set({ state: "unhealthy" }, 0);
   options.onHealthyAccounts?.(new Set());
-  const enabled = accounts.flatMap((account) =>
-    account.enableWatchLater && accountId(account) !== null
-      ? [[accountId(account) as bigint, account] as const]
-      : [],
+  const enabledById = new Map<bigint, WatchLaterAccountContext>();
+  for (const account of accounts) {
+    const id = accountId(account);
+    if (account.enableWatchLater && id !== null) {
+      enabledById.set(id, account);
+    }
+  }
+  const enabled = [...enabledById].sort(([left], [right]) =>
+    left < right ? -1 : left > right ? 1 : 0,
   );
-  const rows = await database.getWatchLaterAccounts(enabled.map(([id]) => id));
-  const byId = new Map(enabled);
   const healthy: Array<{
+    accountId: bigint;
     account: WatchLaterAccountContext;
-    row: WatchLaterAccount;
     snapshot: WatchLaterSnapshot;
   }> = [];
-  for (const row of rows) {
-    const account = byId.get(row.accountId);
-    if (!account) continue;
+  for (const [id, account] of enabled) {
     try {
       const snapshot = await fetchWatchLaterSnapshot(account.toViewClient);
       if (!snapshot) continue;
       await database.syncWatchLaterSnapshot(
-        row.accountId,
+        id,
         [...snapshot.aids].map(BigInt),
         snapshot.pidV2Metadata,
-        snapshot.completedAt,
       );
-      healthy.push({ account, row, snapshot });
+      healthy.push({ accountId: id, account, snapshot });
     } catch {}
   }
   watchLaterEnabledAccounts.reset();
   watchLaterEnabledAccounts.set({ state: "healthy" }, healthy.length);
   watchLaterEnabledAccounts.set(
     { state: "unhealthy" },
-    rows.length - healthy.length,
+    enabled.length - healthy.length,
   );
-  options.onHealthyAccounts?.(
-    new Set(healthy.map((item) => item.row.accountId)),
-  );
+  options.onHealthyAccounts?.(new Set(healthy.map((item) => item.accountId)));
   if (healthy.length === 0) return [];
-  const desired = await database.getDesiredWatchLaterSet(
+  const desiredAids = await database.getDesiredWatchLaterSet(
     healthy.length * capacity,
   );
-  if (desired.overflow) return [];
   const assignments = partitionDesiredWatchLaterAids(
-    desired.aids,
+    desiredAids,
     healthy.length,
     capacity,
   );
@@ -242,30 +214,22 @@ export async function runAutomaticWatchLaterManagement(
   const results: WatchLaterReconciliationResult[] = [];
   for (const phase of ["delete", "add"] as const) {
     for (const [index, item] of healthy.entries()) {
-      try {
-        const result = await reconcileAccount(
-          database,
-          item.account,
-          item.row,
-          assignments[index] ?? [],
-          item.snapshot,
-          pace,
-          deadline,
-          now,
-          phase,
-          options.shouldContinue,
-        );
-        results.push(result);
-        watchLaterReconciliationsTotal.inc({ outcome: result.reason });
-        const canContinueAdding =
-          phase === "add" &&
-          (result.reason === "capacity_blocked" ||
-            result.reason === "ambiguous");
-        if (result.reason !== "completed" && !canContinueAdding) {
-          return results;
-        }
-      } catch {
-        watchLaterReconciliationsTotal.inc({ outcome: "lease_lost" });
+      const result = await reconcileAccount(
+        item.account,
+        assignments[index] ?? [],
+        item.snapshot,
+        pace,
+        deadline,
+        now,
+        phase,
+        options.shouldContinue,
+      );
+      results.push(result);
+      watchLaterReconciliationsTotal.inc({ outcome: result.reason });
+      const canContinueAdding =
+        phase === "add" &&
+        (result.reason === "capacity_blocked" || result.reason === "ambiguous");
+      if (result.reason !== "completed" && !canContinueAdding) {
         return results;
       }
     }

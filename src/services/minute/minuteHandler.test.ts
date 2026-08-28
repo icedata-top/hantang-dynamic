@@ -24,17 +24,11 @@ function database(onSelect: () => void): MinuteDatabase {
     async advanceSuppressedMinuteSamples() {
       return 0;
     },
-    async getWatchLaterAccounts() {
-      return [];
-    },
     async getDesiredWatchLaterSet() {
-      return { aids: [], mandatoryCount: 0, overflow: false };
+      return [];
     },
     async syncWatchLaterSnapshot() {
       return 0;
-    },
-    async withWatchLaterAccountLease() {
-      throw new Error("not used");
     },
     async getLatestVideoMinuteSamples() {
       return new Map();

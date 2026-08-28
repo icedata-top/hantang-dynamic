@@ -36,17 +36,12 @@ export interface WatchLaterAccountContext extends ToViewAccountIdentity {
 
 export interface WatchLaterSnapshot {
   aids: Set<string>;
-  completedAt: Date;
   pidV2Metadata: Array<{ aid: bigint; pidV2: number }>;
 }
 
 const WATCH_LATER_MEMBERSHIP_CAPACITY = 1_000;
 
-export type WatchLaterMutationPrePostAbortReason =
-  | "deadline"
-  | "stopped"
-  | "lease_lost"
-  | "attempt_unavailable";
+export type WatchLaterMutationPrePostAbortReason = "deadline" | "stopped";
 
 export class WatchLaterMutationPrePostAbortError extends Error {
   constructor(readonly reason: WatchLaterMutationPrePostAbortReason) {
@@ -95,7 +90,6 @@ export async function fetchWatchLaterSnapshot(
   }
   return {
     aids: new Set(snapshot.samples.map((sample) => sample.aid.toString())),
-    completedAt: now,
     pidV2Metadata: snapshot.pidV2Metadata,
   };
 }
@@ -106,19 +100,14 @@ export async function mutateWatchLater(
   action: WatchLaterAction,
   options: WatchLaterMutationOptions = {},
 ): Promise<number> {
-  // Prepare all request data before the final cancellation/lease fence.
+  // Prepare all request data before the final cancellation fence.
   const body = new URLSearchParams({
     aid: aid.toString(),
     csrf: await csrfToken(account),
   });
   const release = await sharedApiRateLimiter.acquire();
   try {
-    let abortReason: WatchLaterMutationPrePostAbortReason | undefined;
-    try {
-      abortReason = await options.beforePost?.();
-    } catch {
-      abortReason = "lease_lost";
-    }
+    const abortReason = await options.beforePost?.();
     if (abortReason) {
       throw new WatchLaterMutationPrePostAbortError(abortReason);
     }

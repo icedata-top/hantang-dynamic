@@ -25,10 +25,8 @@ export type MinuteDatabase = Pick<
   Database,
   | "advanceFailedMinuteVideos"
   | "advanceSuppressedMinuteSamples"
-  | "getWatchLaterAccounts"
   | "getDesiredWatchLaterSet"
   | "syncWatchLaterSnapshot"
-  | "withWatchLaterAccountLease"
   | "getLatestVideoMinuteSamples"
   | "getNextMinuteDueAt"
   | "insertVideoMinuteSamples"

@@ -1,6 +1,5 @@
 import { Pool } from "pg";
 import { config } from "../config/index.js";
-import { loadAccounts } from "../core/account";
 import {
   dbPoolConnections,
   dbQueryDurationSeconds,
@@ -127,13 +126,7 @@ import {
 } from "./videos.js";
 import {
   getDesiredWatchLaterSet,
-  getWatchLaterAccounts,
-  provisionWatchLaterAccounts,
   syncWatchLaterSnapshot,
-  type WatchLaterAccount,
-  type WatchLaterAccountLease,
-  type WatchLaterDesiredSet,
-  withWatchLaterAccountLease,
 } from "./watchLater.js";
 
 /**
@@ -161,7 +154,7 @@ export class Database {
    * Initialize the database connection pool.
    *
    * Schema initialization is opt-in so normal startup only connects to an
-   * already initialized database and provisions configured accounts.
+   * already initialized database.
    */
   public async init(
     url: string = config.database.url,
@@ -197,13 +190,6 @@ export class Database {
       if (options.initializeSchema === true) {
         await initializeSchema(this.pool, schema);
       }
-      await provisionWatchLaterAccounts(
-        this.pool,
-        loadAccounts()
-          .filter((account) => account.enableWatchLater)
-          .map((account) => BigInt(account.uid)),
-      );
-
       logger.info("PostgreSQL initialized successfully");
     } catch (error) {
       logger.error("Failed to initialize PostgreSQL:", error);
@@ -616,43 +602,20 @@ export class Database {
 
   // ===== Watch-later Operations =====
 
-  public async getWatchLaterAccounts(
-    accountIds: bigint[],
-  ): Promise<WatchLaterAccount[]> {
-    return getWatchLaterAccounts(this.ensurePool(), accountIds);
-  }
-
-  public async provisionWatchLaterAccounts(
-    accountIds: bigint[],
-  ): Promise<void> {
-    return provisionWatchLaterAccounts(this.ensurePool(), accountIds);
-  }
-
-  public async getDesiredWatchLaterSet(
-    targetCount: number,
-  ): Promise<WatchLaterDesiredSet> {
+  public async getDesiredWatchLaterSet(targetCount: number): Promise<bigint[]> {
     return getDesiredWatchLaterSet(this.ensurePool(), targetCount);
-  }
-
-  public async withWatchLaterAccountLease<T>(
-    accountId: bigint,
-    callback: (lease: WatchLaterAccountLease) => Promise<T>,
-  ): Promise<T> {
-    return withWatchLaterAccountLease(this.ensurePool(), accountId, callback);
   }
 
   public async syncWatchLaterSnapshot(
     accountId: bigint,
     aids: bigint[],
     pidV2Metadata: ReadonlyArray<{ aid: bigint; pidV2: number }>,
-    completedAt: Date,
   ): Promise<number> {
     return syncWatchLaterSnapshot(
       this.ensurePool(),
       accountId,
       aids,
       pidV2Metadata,
-      completedAt,
     );
   }
 

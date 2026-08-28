@@ -1,70 +1,12 @@
-import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import { updateProcessedVideoPidV2 } from "./videos.js";
 
 export type WatchLaterAction = "add" | "delete";
 
-export interface WatchLaterAccount {
-  accountId: bigint;
-  lastCompleteSnapshotAt: Date | null;
-}
-
-export interface WatchLaterDesiredSet {
-  aids: bigint[];
-  mandatoryCount: number;
-  overflow: boolean;
-}
-
-export interface WatchLaterAccountLease {
-  renew(): Promise<boolean>;
-}
-
-interface WatchLaterAccountRow {
-  account_id: string;
-  last_complete_snapshot_at: Date | null;
-}
-
-function mapWatchLaterAccount(row: WatchLaterAccountRow): WatchLaterAccount {
-  return {
-    accountId: BigInt(row.account_id),
-    lastCompleteSnapshotAt: row.last_complete_snapshot_at,
-  };
-}
-
-export async function provisionWatchLaterAccounts(
-  pool: Pool,
-  accountIds: bigint[],
-): Promise<void> {
-  for (const accountId of accountIds) {
-    await pool.query(
-      `INSERT INTO watch_later_account (account_id)
-       VALUES ($1)
-       ON CONFLICT (account_id) DO UPDATE
-       SET updated_at = now()`,
-      [accountId.toString()],
-    );
-  }
-}
-
-export async function getWatchLaterAccounts(
-  pool: Pool,
-  accountIds: bigint[],
-): Promise<WatchLaterAccount[]> {
-  const result = await pool.query<WatchLaterAccountRow>(
-    `SELECT account_id, last_complete_snapshot_at
-     FROM watch_later_account
-     WHERE account_id = ANY($1::bigint[])
-     ORDER BY account_id ASC`,
-    [accountIds.map((accountId) => accountId.toString())],
-  );
-
-  return result.rows.map(mapWatchLaterAccount);
-}
-
 export async function getDesiredWatchLaterSet(
   pool: Pool,
   targetCount: number,
-): Promise<WatchLaterDesiredSet> {
+): Promise<bigint[]> {
   const result = await pool.query<{ aid: string }>(
     `WITH priority_candidates AS (
        SELECT aid, priority
@@ -105,59 +47,7 @@ export async function getDesiredWatchLaterSet(
     [targetCount],
   );
 
-  return {
-    aids: result.rows.map((row) => BigInt(row.aid)),
-    mandatoryCount: result.rows.length,
-    overflow: false,
-  };
-}
-
-export async function withWatchLaterAccountLease<T>(
-  pool: Pool,
-  accountId: bigint,
-  callback: (lease: WatchLaterAccountLease) => Promise<T>,
-): Promise<T> {
-  const leaseToken = randomUUID();
-  const acquired = await pool.query(
-    `UPDATE watch_later_account
-     SET lease_token = $2::uuid,
-         lease_expires_at = now() + interval '15 minutes',
-         updated_at = now()
-     WHERE account_id = $1
-       AND (lease_expires_at IS NULL OR lease_expires_at < now())
-     RETURNING account_id`,
-    [accountId.toString(), leaseToken],
-  );
-  if ((acquired.rowCount ?? 0) !== 1) {
-    throw new Error(`Watch-later account ${accountId} is already leased`);
-  }
-  const lease: WatchLaterAccountLease = {
-    async renew(): Promise<boolean> {
-      const renewed = await pool.query(
-        `UPDATE watch_later_account
-         SET lease_expires_at = now() + interval '15 minutes',
-             updated_at = now()
-         WHERE account_id = $1
-           AND lease_token = $2::uuid
-           AND lease_expires_at > now()`,
-        [accountId.toString(), leaseToken],
-      );
-      return (renewed.rowCount ?? 0) === 1;
-    },
-  };
-  try {
-    return await callback(lease);
-  } finally {
-    await pool.query(
-      `UPDATE watch_later_account
-       SET lease_token = NULL,
-           lease_expires_at = NULL,
-           updated_at = now()
-       WHERE account_id = $1
-         AND lease_token = $2::uuid`,
-      [accountId.toString(), leaseToken],
-    );
-  }
+  return result.rows.map((row) => BigInt(row.aid));
 }
 
 export async function syncWatchLaterSnapshot(
@@ -165,22 +55,10 @@ export async function syncWatchLaterSnapshot(
   accountId: bigint,
   observedAids: bigint[],
   pidV2Metadata: ReadonlyArray<{ aid: bigint; pidV2: number }>,
-  completedAt: Date,
 ): Promise<number> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const accountResult = await client.query(
-      `UPDATE watch_later_account
-       SET last_complete_snapshot_at = $2,
-           updated_at = now()
-       WHERE account_id = $1`,
-      [accountId.toString(), completedAt],
-    );
-    if ((accountResult.rowCount ?? 0) !== 1) {
-      throw new Error(`Watch-later account ${accountId} does not exist`);
-    }
-
     await updateProcessedVideoPidV2(client, pidV2Metadata);
 
     const membershipResult = await client.query(

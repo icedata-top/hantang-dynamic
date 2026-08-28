@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CookieJar } from "tough-cookie";
-import type {
-  WatchLaterAccount,
-  WatchLaterAccountLease,
-} from "../../database/watchLater";
 import type { WatchLaterAccountContext } from "./watchLaterApi";
 import {
   partitionDesiredWatchLaterAids,
@@ -68,31 +64,14 @@ function account(
 }
 
 function database(
-  overrides: Partial<WatchLaterDatabase> & {
-    getWatchLaterAccounts?(accountIds: bigint[]): Promise<WatchLaterAccount[]>;
-  } = {},
-): WatchLaterDatabase & {
-  getWatchLaterAccounts(accountIds: bigint[]): Promise<WatchLaterAccount[]>;
-} {
+  overrides: Partial<WatchLaterDatabase> = {},
+): WatchLaterDatabase {
   return {
     async getDesiredWatchLaterSet() {
-      return { aids: [], overflow: false };
-    },
-    async getWatchLaterAccounts() {
-      return [{ accountId: 7n, lastCompleteSnapshotAt: null }];
+      return [];
     },
     async syncWatchLaterSnapshot() {
       return 0;
-    },
-    async withWatchLaterAccountLease<T>(
-      _accountId: bigint,
-      callback: (lease: WatchLaterAccountLease) => Promise<T>,
-    ) {
-      return callback({
-        async renew() {
-          return true;
-        },
-      });
     },
     ...overrides,
   };
@@ -124,15 +103,9 @@ test("syncs healthy snapshots, deletes globally before adding, and shares pacing
   let target = 0;
   const result = await runAutomaticWatchLaterManagement(
     database({
-      async getWatchLaterAccounts() {
-        return [
-          { accountId: 7n, lastCompleteSnapshotAt: null },
-          { accountId: 8n, lastCompleteSnapshotAt: null },
-        ];
-      },
       async getDesiredWatchLaterSet(requested) {
         target = requested;
-        return { aids: [1n, 2n, 3n, 4n], overflow: false };
+        return [1n, 2n, 3n, 4n];
       },
       async syncWatchLaterSnapshot(_accountId, _aids, pidV2Metadata) {
         metadata.push(pidV2Metadata);
@@ -193,12 +166,6 @@ test("sync failure excludes only that account from published routing health", as
   const healthy: bigint[][] = [];
   await runAutomaticWatchLaterManagement(
     database({
-      async getWatchLaterAccounts() {
-        return [
-          { accountId: 7n, lastCompleteSnapshotAt: null },
-          { accountId: 8n, lastCompleteSnapshotAt: null },
-        ];
-      },
       async syncWatchLaterSnapshot(accountId) {
         if (accountId === 7n) throw new Error("database sync failed");
         return 0;
@@ -221,7 +188,7 @@ test("deadline reached while paced prevents the next POST and leaves only snapsh
   const result = await runAutomaticWatchLaterManagement(
     database({
       async getDesiredWatchLaterSet() {
-        return { aids: [1n], overflow: false };
+        return [1n];
       },
     }),
     [account([snapshot([2])], [], "7", actions)],
@@ -237,17 +204,15 @@ test("deadline reached while paced prevents the next POST and leaves only snapsh
   assert.equal(result[result.length - 1]?.reason, "deadline");
 });
 
-test("capacity, ambiguous response, lease loss, and cancellation do not replay mutations", async () => {
+test("capacity, ambiguous response, and cancellation do not replay mutations", async () => {
   const cases: Array<{
     name: string;
     codes?: number[];
-    renew?: boolean;
     stopDuringDelay?: boolean;
     reason: string;
   }> = [
     { name: "capacity", codes: [90001], reason: "capacity_blocked" },
     { name: "ambiguous", codes: [90002], reason: "ambiguous" },
-    { name: "lease", renew: false, reason: "lease_lost" },
     { name: "stopped", stopDuringDelay: true, reason: "stopped" },
   ];
   for (const scenario of cases) {
@@ -256,17 +221,7 @@ test("capacity, ambiguous response, lease loss, and cancellation do not replay m
     const result = await runAutomaticWatchLaterManagement(
       database({
         async getDesiredWatchLaterSet() {
-          return { aids: [1n, 2n], overflow: false };
-        },
-        async withWatchLaterAccountLease<T>(
-          _id: bigint,
-          callback: (lease: WatchLaterAccountLease) => Promise<T>,
-        ) {
-          return callback({
-            async renew() {
-              return scenario.renew ?? true;
-            },
-          });
+          return [1n, 2n];
         },
       }),
       [account([snapshot([])], scenario.codes, "7", actions)],
@@ -283,11 +238,7 @@ test("capacity, ambiguous response, lease loss, and cancellation do not replay m
       scenario.reason,
       scenario.name,
     );
-    assert.equal(
-      actions.length,
-      scenario.stopDuringDelay ? 1 : scenario.renew === false ? 0 : 1,
-      scenario.name,
-    );
+    assert.equal(actions.length, 1, scenario.name);
   }
 });
 
@@ -295,15 +246,8 @@ test("add failures do not prevent later healthy accounts from reconciling", asyn
   const actions: string[] = [];
   const result = await runAutomaticWatchLaterManagement(
     database({
-      async getWatchLaterAccounts() {
-        return [
-          { accountId: 7n, lastCompleteSnapshotAt: null },
-          { accountId: 8n, lastCompleteSnapshotAt: null },
-          { accountId: 9n, lastCompleteSnapshotAt: null },
-        ];
-      },
       async getDesiredWatchLaterSet() {
-        return { aids: [1n, 2n, 3n], overflow: false };
+        return [1n, 2n, 3n];
       },
     }),
     [
@@ -333,14 +277,8 @@ test("delete failure suppresses remaining deletes and all additions", async () =
   const actions: string[] = [];
   const result = await runAutomaticWatchLaterManagement(
     database({
-      async getWatchLaterAccounts() {
-        return [
-          { accountId: 7n, lastCompleteSnapshotAt: null },
-          { accountId: 8n, lastCompleteSnapshotAt: null },
-        ];
-      },
       async getDesiredWatchLaterSet() {
-        return { aids: [1n, 2n], overflow: false };
+        return [1n, 2n];
       },
     }),
     [

@@ -46,7 +46,6 @@ test("complete snapshots synchronize one UID without creating remote-only state"
     7n,
     [1n],
     [{ aid: 1n, pidV2: 22 }],
-    new Date(),
   );
   const enrichmentIndex = queries.findIndex((sql) =>
     sql.includes("UPDATE processed_videos"),
@@ -85,7 +84,6 @@ test("snapshot synchronization adds and removes only the observed account UID", 
     7n,
     [1n, 2n],
     [],
-    new Date(),
   );
   const membership =
     queries.find((sql) => sql.includes("UPDATE video_collection_state")) ?? "";
