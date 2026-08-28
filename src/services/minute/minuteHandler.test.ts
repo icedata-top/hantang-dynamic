@@ -263,3 +263,32 @@ test("partial favorite samples persist initially and advance when unchanged", as
   assert.deepEqual(unchangedAids, [2n]);
   assert.deepEqual(failedAids, []);
 });
+
+test("a failed To View account is removed from subsequent batch routing", async () => {
+  const routedAccountIds: bigint[][] = [];
+  let calls = 0;
+  const handler = new MinuteHandler({
+    database: database(() => {}),
+    loadAccounts: () => [],
+    async sampleVideoStats(_aids, options) {
+      routedAccountIds.push([
+        ...(options?.healthyWatchLaterAccountIds ?? new Set()),
+      ]);
+      calls += 1;
+      if (calls === 1) {
+        options?.onWatchLaterToViewAccountFailure?.(7n);
+      }
+      return [];
+    },
+  });
+  const publish = Reflect.get(handler, "setHealthyWatchLaterAccounts") as (
+    accountIds: ReadonlySet<bigint>,
+  ) => void;
+  publish.call(handler, new Set([7n]));
+  const due = [{ aid: 1n, lastView: null, watchLaterManagedAccountIds: [7n] }];
+
+  await handler.processBatch(due);
+  await handler.processBatch(due);
+
+  assert.deepEqual(routedAccountIds, [[7n], []]);
+});

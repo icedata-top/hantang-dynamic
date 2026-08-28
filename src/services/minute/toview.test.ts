@@ -82,3 +82,20 @@ test("To View rejects an incomplete response before sampling", async () => {
     samplesByAccountId: new Map(),
   });
 });
+
+test("To View rejects a success response without snapshot data", async () => {
+  const client: ToViewClient = {
+    async get() {
+      return { data: { code: 0 } };
+    },
+  };
+
+  const result = await sampleWatchLaterToViewAccountsWithStatus(
+    [{ uid: "100", toViewClient: client }],
+    [{ accountId: 100n }],
+    new Date(),
+  );
+
+  assert.deepEqual(result.failedAccountIds, [100n]);
+  assert.deepEqual(result.samples, []);
+});

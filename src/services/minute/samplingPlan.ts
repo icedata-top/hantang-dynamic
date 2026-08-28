@@ -54,21 +54,3 @@ export function partitionMinuteSamplingCoverage(
     ),
   };
 }
-
-export function planFavoriteFallbackBatches(
-  requestedAids: bigint[],
-  toViewSamples: VideoMinuteSample[],
-  batchSize: number,
-): bigint[][] {
-  const { favoriteFallbackAids } = partitionMinuteSamplingCoverage(
-    requestedAids,
-    toViewSamples,
-  );
-  const batches: bigint[][] = [];
-
-  for (let index = 0; index < favoriteFallbackAids.length; index += batchSize) {
-    batches.push(favoriteFallbackAids.slice(index, index + batchSize));
-  }
-
-  return batches;
-}

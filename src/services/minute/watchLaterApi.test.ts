@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CookieJar } from "tough-cookie";
+import { AccountAuthError } from "../../api/client";
 import { config } from "../../config";
 import {
+  fetchWatchLaterSnapshot,
   mutateWatchLater,
   type WatchLaterAccountContext,
 } from "./watchLaterApi";
@@ -88,5 +90,58 @@ test("Watch Later mutation returns a structured raw API business code", async ()
       });
 
     assert.equal(await mutateWatchLater(context, 1n, "add"), 90001);
+  });
+});
+
+test("Watch Later snapshot uses complete To View validation and preserves metadata", async () => {
+  const valid = await fetchWatchLaterSnapshot({
+    async get() {
+      return {
+        data: {
+          code: 0,
+          data: {
+            count: 1,
+            list: [
+              {
+                aid: 1,
+                pid_v2: 9,
+                stat: {
+                  aid: 1,
+                  coin: 1,
+                  favorite: 2,
+                  danmaku: 3,
+                  view: 4,
+                  reply: 5,
+                  share: 6,
+                  like: 7,
+                },
+              },
+            ],
+          },
+        },
+      };
+    },
+  });
+  const missing = await fetchWatchLaterSnapshot({
+    async get() {
+      return { data: { code: 0 } };
+    },
+  });
+
+  assert.deepEqual(valid?.aids, new Set(["1"]));
+  assert.deepEqual(valid?.pidV2Metadata, [{ aid: 1n, pidV2: 9 }]);
+  assert.equal(missing, null);
+});
+
+test("Watch Later mutation preserves account authentication errors", async () => {
+  await withGlobalCsrfToken("global-token", async () => {
+    const context = account(null, []);
+    const authError = new AccountAuthError(4100000, "7", "expired");
+    context.toViewClient.post = async () => Promise.reject(authError);
+
+    await assert.rejects(
+      mutateWatchLater(context, 1n, "add"),
+      (error: unknown) => error === authError,
+    );
   });
 });

@@ -1,10 +1,14 @@
 import type { CookieJar } from "tough-cookie";
+import { isAccountAuthError } from "../../api/client";
 import { config } from "../../config";
 import type { WatchLaterAction } from "../../database/watchLater";
 import { sharedApiRateLimiter } from "../../utils/apiRateLimiter";
 import { logger } from "../../utils/logger";
-import type { ToViewAccountIdentity, ToViewClient } from "./toview";
-import { validateToViewResponse } from "./toviewContract";
+import {
+  fetchCompleteToViewSnapshot,
+  type ToViewAccountIdentity,
+  type ToViewClient,
+} from "./toview";
 
 interface WatchLaterResponse {
   code: number;
@@ -80,48 +84,20 @@ export async function fetchWatchLaterSnapshot(
   client: ToViewClient,
   now = new Date(),
 ): Promise<WatchLaterSnapshot | null> {
-  const release = await sharedApiRateLimiter.acquire();
-  try {
-    const response = await client.get("/web", {
-      params: {
-        pn: 1,
-        ps: 3000,
-        viewed: 0,
-        key: "",
-        asc: false,
-        need_split: true,
-      },
-    });
-    const validated = validateToViewResponse(response.data, now);
-    const listed =
-      response.data.code === 0 ? response.data.data?.list.length : undefined;
-    const expected =
-      response.data.code === 0 ? response.data.data?.count : undefined;
-    if (
-      validated.responseCode !== 0 ||
-      validated.invalidItemCount !== 0 ||
-      expected === undefined ||
-      listed === undefined ||
-      expected !== listed ||
-      listed > WATCH_LATER_MEMBERSHIP_CAPACITY
-    ) {
-      return null;
-    }
-    if (validated.invalidPidV2Count > 0) {
-      logger.warn(
-        `Watch Later snapshot ignored pid_v2 metadata for ${validated.invalidPidV2Count} item(s)`,
-      );
-    }
-    return {
-      aids: new Set(validated.samples.map((sample) => sample.aid.toString())),
-      completedAt: now,
-      pidV2Metadata: validated.pidV2Metadata,
-    };
-  } catch {
+  const snapshot = await fetchCompleteToViewSnapshot(client, now);
+  if (!snapshot || snapshot.samples.length > WATCH_LATER_MEMBERSHIP_CAPACITY) {
     return null;
-  } finally {
-    release();
   }
+  if (snapshot.invalidPidV2Count > 0) {
+    logger.warn(
+      `Watch Later snapshot ignored pid_v2 metadata for ${snapshot.invalidPidV2Count} item(s)`,
+    );
+  }
+  return {
+    aids: new Set(snapshot.samples.map((sample) => sample.aid.toString())),
+    completedAt: now,
+    pidV2Metadata: snapshot.pidV2Metadata,
+  };
 }
 
 export async function mutateWatchLater(
@@ -158,6 +134,7 @@ export async function mutateWatchLater(
       );
       return response.data.code;
     } catch (error) {
+      if (isAccountAuthError(error)) throw error;
       const code = rawApiErrorCode(error);
       if (code !== undefined) return code;
       throw error;

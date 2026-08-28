@@ -325,15 +325,6 @@ function createClient(
 
         logger.error(message);
 
-        if ((response.config as RequestConfig).rawApiErrors) {
-          return Promise.reject({
-            message: `API Error: code ${response.data.code}`,
-            status: response.status,
-            code: response.data.code,
-            data: response.data,
-          });
-        }
-
         if (response.data.code === ApiErrorCode.CookieExpired) {
           if (skipCookie) {
             return Promise.reject(
@@ -378,6 +369,15 @@ function createClient(
             accountLabel,
             `Risk control failed for account ${accountLabel}`,
           );
+        }
+
+        if ((response.config as RequestConfig).rawApiErrors) {
+          return Promise.reject({
+            message: `API Error: code ${response.data.code}`,
+            status: response.status,
+            code: response.data.code,
+            data: response.data,
+          });
         }
 
         // We must await notify before rejecting, otherwise the message might not be sent

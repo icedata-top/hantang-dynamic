@@ -34,6 +34,7 @@ const toViewResponseSchema = z.object({
 });
 
 export interface ToViewValidationResult {
+  complete: boolean;
   samples: CompleteVideoMinuteTuple[];
   invalidItemCount: number;
   invalidPidV2Count: number;
@@ -65,6 +66,7 @@ export function validateToViewResponse(
   const responseResult = toViewResponseSchema.safeParse(value);
   if (!responseResult.success) {
     return {
+      complete: false,
       samples: [],
       invalidItemCount: 1,
       invalidPidV2Count: 0,
@@ -76,6 +78,7 @@ export function validateToViewResponse(
   const response = responseResult.data;
   if (response.code !== 0 || !response.data) {
     return {
+      complete: false,
       samples: [],
       invalidItemCount: 0,
       invalidPidV2Count: 0,
@@ -124,6 +127,9 @@ export function validateToViewResponse(
   }
 
   return {
+    complete:
+      invalidItemCount === 0 &&
+      response.data.count === response.data.list.length,
     samples,
     invalidItemCount,
     invalidPidV2Count,

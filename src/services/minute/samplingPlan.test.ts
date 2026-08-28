@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  partitionMinuteSamplingCoverage,
-  planFavoriteFallbackBatches,
-} from "./samplingPlan";
+import { partitionMinuteSamplingCoverage } from "./samplingPlan";
 
 function completeSample(aid: bigint) {
   return {
@@ -18,27 +15,6 @@ function completeSample(aid: bigint) {
     like: 1,
   };
 }
-
-test("favorite fallback batches only requested AIDs absent from To View", () => {
-  const batches = planFavoriteFallbackBatches(
-    [1n, 2n, 3n, 4n],
-    [
-      {
-        aid: 1n,
-        time: new Date(),
-        coin: 1,
-        favorite: 1,
-        danmaku: 1,
-        view: 1,
-        reply: 1,
-        share: 1,
-        like: 1,
-      },
-    ],
-    3,
-  );
-  assert.deepEqual(batches, [[2n, 3n, 4n]]);
-});
 
 test("duplicate complete To View tuples conservatively retain the AID for fallback", () => {
   const coverage = partitionMinuteSamplingCoverage(
@@ -84,7 +60,7 @@ test("To View coverage conserves requested AIDs across duplicates, malformed tup
 });
 
 test("favorite fallback retains requested AIDs with invalid To View tuples", () => {
-  const batches = planFavoriteFallbackBatches(
+  const coverage = partitionMinuteSamplingCoverage(
     [1n],
     [
       {
@@ -98,8 +74,7 @@ test("favorite fallback retains requested AIDs with invalid To View tuples", () 
         share: 1,
       },
     ],
-    50,
   );
 
-  assert.deepEqual(batches, [[1n]]);
+  assert.deepEqual(coverage.favoriteFallbackAids, [1n]);
 });

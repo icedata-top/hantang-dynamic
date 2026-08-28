@@ -3,6 +3,7 @@ import type { BiliToViewWebResponse } from "../../types/bilibili/toview";
 import type { CompleteVideoMinuteTuple } from "../../types/models/minute";
 import { sharedApiRateLimiter } from "../../utils/apiRateLimiter";
 import { logger } from "../../utils/logger";
+import type { ToViewValidationResult } from "./toviewContract";
 import { validateToViewResponse } from "./toviewContract";
 
 export interface WatchLaterToViewAccount {
@@ -69,13 +70,13 @@ export function selectWatchLaterToViewAccounts<T extends ToViewAccountIdentity>(
   });
 }
 
-async function fetchToViewSamples(
-  account: ToViewRequestAccount,
+export async function fetchCompleteToViewSnapshot(
+  client: ToViewClient,
   sampledAt: Date,
-): Promise<CompleteVideoMinuteTuple[] | null> {
+): Promise<ToViewValidationResult | null> {
   const release = await sharedApiRateLimiter.acquire();
   try {
-    const response = await account.toViewClient.get("/web", {
+    const response = await client.get("/web", {
       params: {
         pn: 1,
         ps: 3000,
@@ -86,23 +87,11 @@ async function fetchToViewSamples(
       },
     });
     const result = validateToViewResponse(response.data, sampledAt);
-    const isComplete =
-      result.responseCode === 0 &&
-      result.invalidItemCount === 0 &&
-      response.data.data?.count === response.data.data?.list.length;
-    if (!isComplete) {
+    if (!result.complete) {
       logger.warn("To View API response was incomplete or invalid");
       return null;
     }
-    if (result.responseCode !== 0) {
-      logger.warn("To View API returned a non-success response");
-    }
-    if (result.invalidItemCount > 0) {
-      logger.warn(
-        `To View API rejected ${result.invalidItemCount} invalid item(s)`,
-      );
-    }
-    return result.samples;
+    return result;
   } catch (error) {
     logger.warn("To View API request failed");
     logger.debug(error);
@@ -126,15 +115,18 @@ export async function sampleWatchLaterToViewAccountsWithStatus(
   const samplesByAccountId = new Map<bigint, CompleteVideoMinuteTuple[]>();
 
   for (const account of selectedAccounts) {
-    const accountSamples = await fetchToViewSamples(account, sampledAt);
-    if (accountSamples === null) {
+    const snapshot = await fetchCompleteToViewSnapshot(
+      account.toViewClient,
+      sampledAt,
+    );
+    if (snapshot === null) {
       const id = accountId(account);
       if (id !== null) failedAccountIds.push(id);
       continue;
     }
     const id = accountId(account);
-    if (id !== null) samplesByAccountId.set(id, accountSamples);
-    for (const sample of accountSamples) {
+    if (id !== null) samplesByAccountId.set(id, snapshot.samples);
+    for (const sample of snapshot.samples) {
       samples.push(sample);
     }
   }

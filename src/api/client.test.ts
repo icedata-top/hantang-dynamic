@@ -6,7 +6,11 @@ import test from "node:test";
 import type { AxiosAdapter } from "axios";
 import { CookieJar } from "tough-cookie";
 import { StateManager } from "../core/state";
-import { createAccountToViewClient } from "./client";
+import {
+  createAccountToViewClient,
+  isAccountAuthError,
+  type RequestConfig,
+} from "./client";
 
 test("logical API errors are logged with redaction before raw rejection", async () => {
   const directory = mkdtempSync(join(tmpdir(), "hantang-api-client-"));
@@ -70,4 +74,36 @@ test("logical API errors are logged with redaction before raw rejection", async 
     /request-secret|response-secret|response-token/,
   );
   assert.match(diagnostic, /\[redacted\]/);
+});
+
+test("raw API mode preserves account authentication and risk-control errors", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "hantang-api-auth-"));
+  const state = new StateManager(join(directory, "state.json"));
+  state.updateTicket("test-ticket", Math.floor(Date.now() / 1000) + 7200);
+  const client = createAccountToViewClient(
+    new CookieJar(),
+    join(directory, "cookies.txt"),
+    state,
+    "auth-account",
+  );
+  try {
+    for (const code of [4100000, -352]) {
+      const adapter: AxiosAdapter = async (request) => ({
+        config: request,
+        data: { code, message: "authentication unavailable" },
+        headers: {},
+        status: 200,
+        statusText: "OK",
+      });
+      await assert.rejects(
+        client.post("/add", "csrf=test", {
+          adapter,
+          rawApiErrors: true,
+        } as RequestConfig),
+        (error: unknown) => isAccountAuthError(error) && error.code === code,
+      );
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

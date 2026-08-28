@@ -244,6 +244,9 @@ export class MinuteHandler {
           toViewAccounts: accounts,
           observedWatchLaterAccountIdsByAid,
           healthyWatchLaterAccountIds: this.healthyWatchLaterAccountIds,
+          onWatchLaterToViewAccountFailure: (accountId) => {
+            this.healthyWatchLaterAccountIds.delete(accountId);
+          },
         });
       } catch (error) {
         logger.error("Minute stats batch request failed:", error);

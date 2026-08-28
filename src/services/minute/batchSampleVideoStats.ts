@@ -9,10 +9,7 @@ import type { VideoMinuteSample } from "../../types/models/minute";
 import { sharedApiRateLimiter } from "../../utils/apiRateLimiter";
 import { logger } from "../../utils/logger";
 import { isMinuteCounter } from "./completeSample";
-import {
-  partitionMinuteSamplingCoverage,
-  planFavoriteFallbackBatches,
-} from "./samplingPlan";
+import { partitionMinuteSamplingCoverage } from "./samplingPlan";
 import {
   sampleWatchLaterToViewAccountsWithStatus,
   type ToViewRequestAccount,
@@ -222,9 +219,11 @@ export async function batchSampleVideoStats(
     for (const [accountId, accountAids] of routing) {
       const accountSamples =
         toViewResult.samplesByAccountId.get(accountId) ?? [];
+      const accountAidKeys = new Set(accountAids.map((aid) => aid.toString()));
       toViewSamples.push(
-        ...partitionMinuteSamplingCoverage(accountAids, accountSamples)
-          .toViewSamples,
+        ...accountSamples.filter((sample) =>
+          accountAidKeys.has(sample.aid.toString()),
+        ),
       );
     }
   }
@@ -236,11 +235,15 @@ export async function batchSampleVideoStats(
     }
   }
 
-  for (const aidBatch of planFavoriteFallbackBatches(
-    aids,
-    toViewSamples,
-    batchSize,
-  )) {
+  for (
+    let index = 0;
+    index < coverage.favoriteFallbackAids.length;
+    index += batchSize
+  ) {
+    const aidBatch = coverage.favoriteFallbackAids.slice(
+      index,
+      index + batchSize,
+    );
     const release = await sharedApiRateLimiter.acquire();
     try {
       const data = options?.dependencies?.fetchStatsBatch
