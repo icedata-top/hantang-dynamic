@@ -271,11 +271,17 @@ export class MinuteHandler {
         samplesByAid.set(key, sample);
       }
 
-      const previousSamples = await this.db.getLatestVideoMinuteSamples(
-        [...samplesByAid]
-          .filter(([key]) => !invalidAids.has(key))
-          .map(([, sample]) => sample.aid),
-      );
+      let previousSamples: Map<bigint, PersistableVideoMinuteSample>;
+      try {
+        previousSamples = await this.db.getLatestVideoMinuteSamples(
+          [...samplesByAid]
+            .filter(([key]) => !invalidAids.has(key))
+            .map(([, sample]) => sample.aid),
+        );
+      } catch (error) {
+        minuteSamplesTotal.inc({ outcome: "failed" }, aids.length);
+        throw error;
+      }
       for (const [key, sample] of samplesByAid) {
         if (invalidAids.has(key)) continue;
         const previous = previousSamples.get(sample.aid) ?? null;
@@ -304,7 +310,15 @@ export class MinuteHandler {
       }
 
       if (suppressedSamples.length > 0) {
-        await this.db.advanceSuppressedMinuteSamples(suppressedSamples);
+        try {
+          await this.db.advanceSuppressedMinuteSamples(suppressedSamples);
+        } catch (error) {
+          minuteSamplesTotal.inc(
+            { outcome: "failed" },
+            suppressedSamples.length + failedAids.length,
+          );
+          throw error;
+        }
         minuteSamplesTotal.inc(
           { outcome: "suppressed" },
           suppressedSamples.length,

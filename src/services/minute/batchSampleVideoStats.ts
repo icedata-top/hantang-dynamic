@@ -246,9 +246,15 @@ export async function batchSampleVideoStats(
     );
     const release = await sharedApiRateLimiter.acquire();
     try {
-      const data = options?.dependencies?.fetchStatsBatch
-        ? await options.dependencies.fetchStatsBatch(aidBatch)
-        : await fetchStatsBatchWithFallback(aidBatch);
+      let data: BiliFavoriteResponse;
+      try {
+        data = options?.dependencies?.fetchStatsBatch
+          ? await options.dependencies.fetchStatsBatch(aidBatch)
+          : await fetchStatsBatchWithFallback(aidBatch);
+      } catch (error) {
+        recordFallbackResponseMiss("api_failure", aidBatch.length);
+        throw error;
+      }
 
       if (data.code !== 0) {
         logger.warn(`Minute stats API failed with code ${data.code}`);

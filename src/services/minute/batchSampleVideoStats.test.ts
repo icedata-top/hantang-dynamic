@@ -308,6 +308,24 @@ test("favorite fallback rejects missing or malformed play", async () => {
   ]);
 });
 
+test("favorite fallback records final request failures before rethrowing", async () => {
+  minuteFallbackResponseMissesTotal.reset();
+  await assert.rejects(
+    batchSampleVideoStats([1n, 2n], {
+      dependencies: {
+        async fetchStatsBatch() {
+          throw new Error("favorite request failed");
+        },
+      },
+    }),
+    /favorite request failed/,
+  );
+  assert.deepEqual((await minuteFallbackResponseMissesTotal.get()).values, [
+    { labels: { reason: "api_failure" }, value: 2 },
+  ]);
+  minuteFallbackResponseMissesTotal.reset();
+});
+
 test("a stale UID is not queried when current health is empty and falls back in fifty-item batches", async () => {
   const aids = Array.from({ length: 50 }, (_, index) => BigInt(index + 1));
   const fallbackBatches: bigint[][] = [];

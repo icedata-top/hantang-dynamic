@@ -333,6 +333,7 @@ test("counts persisted samples before a later suppressed-state write fails", asy
     handler.processBatch([
       { aid: 1n, lastView: null, watchLaterManagedAccountIds: [] },
       { aid: 2n, lastView: 100n, watchLaterManagedAccountIds: [] },
+      { aid: 3n, lastView: null, watchLaterManagedAccountIds: [] },
     ]),
     /suppressed state write failed/,
   );
@@ -341,7 +342,45 @@ test("counts persisted samples before a later suppressed-state write fails", asy
       labels,
       value,
     })),
-    [{ labels: { outcome: "persisted" }, value: 1 }],
+    [
+      { labels: { outcome: "persisted" }, value: 1 },
+      { labels: { outcome: "failed" }, value: 2 },
+    ],
+  );
+  minuteSamplesTotal.reset();
+});
+
+test("counts all samples failed when latest-sample lookup fails", async () => {
+  const handler = new MinuteHandler({
+    database: {
+      ...database(() => {}),
+      async getLatestVideoMinuteSamples() {
+        throw new Error("latest sample lookup failed");
+      },
+    },
+    loadAccounts: () => [],
+    async sampleVideoStats() {
+      return [
+        { aid: 1n, time: new Date(), view: 1 },
+        { aid: 2n, time: new Date(), view: 2 },
+      ];
+    },
+  });
+
+  minuteSamplesTotal.reset();
+  await assert.rejects(
+    handler.processBatch([
+      { aid: 1n, lastView: null, watchLaterManagedAccountIds: [] },
+      { aid: 2n, lastView: null, watchLaterManagedAccountIds: [] },
+    ]),
+    /latest sample lookup failed/,
+  );
+  assert.deepEqual(
+    (await minuteSamplesTotal.get()).values.map(({ labels, value }) => ({
+      labels,
+      value,
+    })),
+    [{ labels: { outcome: "failed" }, value: 2 }],
   );
   minuteSamplesTotal.reset();
 });

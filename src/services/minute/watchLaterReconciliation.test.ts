@@ -257,6 +257,30 @@ test("an invalid snapshot that consumes the deadline reports deadline", async ()
   watchLaterReconciliationsTotal.reset();
 });
 
+test("a stop during an invalid snapshot scan reports stopped", async () => {
+  let running = true;
+  const context = account([], [], "7");
+  context.toViewClient.get = async () => {
+    running = false;
+    return { data: { code: 0 } };
+  };
+
+  watchLaterReconciliationsTotal.reset();
+  const result = await runAutomaticWatchLaterManagement(
+    database(),
+    [context],
+    undefined,
+    { shouldContinue: () => running },
+  );
+
+  assert.deepEqual(result, []);
+  assert.equal(
+    await metricValue(watchLaterReconciliationsTotal, { outcome: "stopped" }),
+    1,
+  );
+  watchLaterReconciliationsTotal.reset();
+});
+
 test("capacity, ambiguous response, and cancellation do not replay mutations", async () => {
   const cases: Array<{
     name: string;

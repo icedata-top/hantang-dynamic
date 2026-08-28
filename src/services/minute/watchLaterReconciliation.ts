@@ -162,6 +162,11 @@ export async function runAutomaticWatchLaterManagement(
     | "deadline"
     | "stopped"
     | "internal_failure" = "internal_failure";
+  const boundaryOutcome = (): "deadline" | "stopped" | undefined => {
+    if (now() >= deadline) return "deadline";
+    if (options.shouldContinue && !options.shouldContinue()) return "stopped";
+    return undefined;
+  };
   try {
     options.onHealthyAccounts?.(new Set());
     const enabledById = new Map<bigint, WatchLaterAccountContext>();
@@ -180,16 +185,18 @@ export async function runAutomaticWatchLaterManagement(
       snapshot: WatchLaterSnapshot;
     }> = [];
     for (const [id, account] of enabled) {
-      if (now() >= deadline) {
-        cycleOutcome = "deadline";
+      const beforeFetch = boundaryOutcome();
+      if (beforeFetch) {
+        cycleOutcome = beforeFetch;
         return [];
       }
       let snapshot: WatchLaterSnapshot | null = null;
       try {
         snapshot = await fetchWatchLaterSnapshot(account.toViewClient);
       } catch {}
-      if (now() >= deadline) {
-        cycleOutcome = "deadline";
+      const afterFetch = boundaryOutcome();
+      if (afterFetch) {
+        cycleOutcome = afterFetch;
         return [];
       }
       if (!snapshot) continue;
@@ -201,10 +208,16 @@ export async function runAutomaticWatchLaterManagement(
         );
         healthy.push({ accountId: id, account, snapshot });
       } catch {}
-      if (now() >= deadline) {
-        cycleOutcome = "deadline";
+      const afterSync = boundaryOutcome();
+      if (afterSync) {
+        cycleOutcome = afterSync;
         return [];
       }
+    }
+    const afterScan = boundaryOutcome();
+    if (afterScan) {
+      cycleOutcome = afterScan;
+      return [];
     }
     watchLaterEnabledAccounts.reset();
     watchLaterEnabledAccounts.set({ state: "healthy" }, healthy.length);
@@ -217,15 +230,27 @@ export async function runAutomaticWatchLaterManagement(
       cycleOutcome = "no_healthy_accounts";
       return [];
     }
-    if (now() >= deadline) {
-      cycleOutcome = "deadline";
+    const beforeSelection = boundaryOutcome();
+    if (beforeSelection) {
+      cycleOutcome = beforeSelection;
       return [];
     }
-    const desiredAids = await database.getDesiredWatchLaterSet(
-      healthy.length * capacity,
-    );
-    if (now() >= deadline) {
-      cycleOutcome = "deadline";
+    let desiredAids: bigint[];
+    try {
+      desiredAids = await database.getDesiredWatchLaterSet(
+        healthy.length * capacity,
+      );
+    } catch (error) {
+      const afterFailedSelection = boundaryOutcome();
+      if (afterFailedSelection) {
+        cycleOutcome = afterFailedSelection;
+        return [];
+      }
+      throw error;
+    }
+    const afterSelection = boundaryOutcome();
+    if (afterSelection) {
+      cycleOutcome = afterSelection;
       return [];
     }
     const assignments = partitionDesiredWatchLaterAids(
@@ -239,8 +264,9 @@ export async function runAutomaticWatchLaterManagement(
     let hasAccountFailure = healthy.length < enabled.length;
     for (const phase of ["delete", "add"] as const) {
       for (const [index, item] of healthy.entries()) {
-        if (now() >= deadline) {
-          cycleOutcome = "deadline";
+        const beforeAccountPhase = boundaryOutcome();
+        if (beforeAccountPhase) {
+          cycleOutcome = beforeAccountPhase;
           return results;
         }
         const result = await reconcileAccount(
