@@ -55,12 +55,12 @@ enabled accounts without assigning a video to more than one account.
 
 Enabled accounts are dedicated Watch Later lists. Reconciliation can delete
 non-target entries, including manually added entries, and add assigned target
-entries. If an account fails during a cycle, it is excluded for the rest of
-that cycle. Its assigned videos use the existing favorite/history fallback
-in 50-item batches. Account health is checked again and the distribution is
-recomputed in the next cycle, which starts approximately every 15 minutes.
-Environment cookie paths remain authentication-only and do not enable Watch
-Later.
+entries. Only accounts whose complete snapshots are fetched and synchronized
+enter the current cycle's healthy set. Videos not covered by a current healthy
+snapshot use the existing favorite/history fallback in configured batches.
+All enabled accounts are checked again and the distribution is recomputed in
+the next cycle, which starts approximately every 15 minutes. Environment cookie
+paths remain authentication-only and do not enable Watch Later.
 
 ## Proxies
 
