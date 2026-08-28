@@ -47,19 +47,20 @@ operations. `access_key` maps to app authentication.
 
 Set `enable_watch_later = true` on a cookie-file entry to sample that loaded
 account and provision its independent Watch Later state. Each healthy enabled
-account contributes 1,000 slots at startup. The global target gives 60% of
-those slots to positive-priority videos, then gives the remaining 40% to the
-newest eligible processed videos. It is distributed deterministically across
-the healthy enabled accounts without assigning a video to more than one
-account.
+account is assigned up to 980 items, leaving 20 slots below Bilibili's
+1,000-item limit. The global target gives 60% of those assignments to
+positive-priority videos, then gives the remaining 40% to the newest eligible
+processed videos. It is distributed deterministically across the healthy
+enabled accounts without assigning a video to more than one account.
 
 Enabled accounts are dedicated Watch Later lists. Reconciliation can delete
 non-target entries, including manually added entries, and add assigned target
-entries. If an account fails during a process, it is excluded for the rest of
-that process. Its assigned videos use the existing favorite/history fallback
-in 50-item batches. The next restart checks account health again and
-recomputes the distribution. Environment cookie paths remain
-authentication-only and do not enable Watch Later.
+entries. If an account fails during a cycle, it is excluded for the rest of
+that cycle. Its assigned videos use the existing favorite/history fallback
+in 50-item batches. Account health is checked again and the distribution is
+recomputed in the next cycle, which starts approximately every 15 minutes.
+Environment cookie paths remain authentication-only and do not enable Watch
+Later.
 
 ## Proxies
 

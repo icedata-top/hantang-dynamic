@@ -65,23 +65,24 @@ videos by itself. Due-row selection happens when the minute handler ticks.
 
 ## Watch Later convergence
 
-When enabled Watch Later accounts are configured, startup performs one complete
-snapshot and creates the deterministic account layout before minute sampling
-begins. Reconciliation then continues in a managed background task. It deletes
+Minute sampling and the first Watch Later reconciliation start independently.
+Before the first healthy Watch Later layout is available, sampling uses the
+existing favorite/history fallback. Reconciliation continues in a managed
+background task. Each cycle obtains fresh complete snapshots, deletes
 non-target remote entries before adding targets, yields after internal chunks,
 and does not fetch a new snapshot for each chunk. Mutation POSTs remain at
 least one second apart globally across every configured account and internal
-chunk boundary. Each POST is preceded by a durable attempt marker and a fenced
-lease renewal. If either step fails, that account stops without another POST;
-a restart obtains a fresh complete snapshot and recovers durable pending
-operations. An ambiguous request, invalid snapshot, or `90001` capacity result
-also stops that account's convergence.
+chunk boundary. Each POST is preceded by a fenced lease renewal. If renewal
+fails, that account stops without another POST. An ambiguous request, invalid
+snapshot, or `90001` capacity result also stops that account's convergence for
+the current cycle. Later cycles obtain fresh snapshots and converge from the
+observed remote state.
 
 Daily inserts also refresh state through the `video_daily` trigger. This updates
 priority and due time; it does not insert minute samples directly.
 
 When authoritative video detail handling confirms deletion or unavailability,
-an existing active row is made inactive with `priority = 0` and no next due
+an existing active row is made inactive with `priority = -1` and no next due
 time. Positive-priority minute and Watch Later selection queries exclude it.
 
 For every minute batch, a due AID is covered by a complete current To View
