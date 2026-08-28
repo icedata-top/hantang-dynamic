@@ -10,6 +10,8 @@ export interface WatchLaterToViewAccount {
   accountId: bigint;
 }
 
+export const MINUTE_REQUEST_TIMEOUT_MS = 120_000;
+
 export interface ToViewAccountIdentity {
   uid: string;
 }
@@ -18,6 +20,7 @@ export interface ToViewClient {
   get(
     url: string,
     config: {
+      timeout: number;
       params: {
         pn: number;
         ps: number;
@@ -77,6 +80,7 @@ export async function fetchCompleteToViewSnapshot(
   const release = await sharedApiRateLimiter.acquire();
   try {
     const response = await client.get("/web", {
+      timeout: MINUTE_REQUEST_TIMEOUT_MS,
       params: {
         pn: 1,
         ps: 3000,

@@ -142,6 +142,24 @@ test("suppressed and persisted samples preserve view-change semantics", async ()
   );
 });
 
+test("late and equal observations cannot replace newer collection state", async () => {
+  const queries: string[] = [];
+  const pool = {
+    async query(sql: string) {
+      queries.push(sql);
+      return { rows: [], rowCount: 0 };
+    },
+  } as Pool;
+
+  await initCollectionStateSchema(pool);
+
+  const schemaSql = queries.join("\n");
+  assert.match(schemaSql, /o\.observed_at > s\.last_minute_success_at/);
+  assert.match(schemaSql, /l\."time" > s\.last_minute_success_at/);
+  assert.match(schemaSql, /d\.observed_at > s\.last_minute_success_at/);
+  assert.match(schemaSql, /c\."time" > s\.last_minute_success_at/);
+});
+
 test("collection-state schema adds Watch Later state before replacing the due-video function signature", async () => {
   const queries: string[] = [];
   const pool = {

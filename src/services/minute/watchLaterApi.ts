@@ -7,6 +7,7 @@ import { sharedApiRateLimiter } from "../../utils/apiRateLimiter";
 import { logger } from "../../utils/logger";
 import {
   fetchCompleteToViewSnapshot,
+  MINUTE_REQUEST_TIMEOUT_MS,
   type ToViewAccountIdentity,
   type ToViewClient,
 } from "./toview";
@@ -19,6 +20,7 @@ interface WatchLaterMutationRequestConfig {
   headers: { "Content-Type": string };
   noRetry: true;
   rawApiErrors: true;
+  timeout: number;
 }
 
 export interface WatchLaterMutationClient extends ToViewClient {
@@ -128,6 +130,7 @@ export async function mutateWatchLater(
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           noRetry: true,
           rawApiErrors: true,
+          timeout: MINUTE_REQUEST_TIMEOUT_MS,
         },
       );
       recordMutationResult(action, response.data.code);

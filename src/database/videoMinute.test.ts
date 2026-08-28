@@ -1,7 +1,28 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
-import { getLatestVideoMinuteSamples } from "./videoMinute";
+import {
+  getLatestVideoMinuteSamples,
+  insertVideoMinuteSamples,
+} from "./videoMinute";
+
+test("late minute observations remain insertable as history", async () => {
+  let query = "";
+  const pool = {
+    async query(sql: string) {
+      query = sql;
+      return { rows: [], rowCount: 1 };
+    },
+  } as Pool;
+  const lateObservation = new Date("2026-08-18T00:00:00.000Z");
+
+  const inserted = await insertVideoMinuteSamples(pool, [
+    { aid: 1n, time: lateObservation, view: 100 },
+  ]);
+
+  assert.equal(inserted, 1);
+  assert.match(query, /INSERT INTO video_minute/);
+});
 
 test("latest minute batch lookup returns partial rows with nullable counters", async () => {
   let query = "";

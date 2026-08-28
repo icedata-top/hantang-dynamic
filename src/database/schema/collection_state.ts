@@ -759,6 +759,8 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         JOIN observations o ON o.aid = s.aid
         WHERE s.priority > 0
           AND s.next_minute_due_at IS NOT NULL
+          AND (s.last_minute_success_at IS NULL
+            OR o.observed_at > s.last_minute_success_at)
       )
       UPDATE video_collection_state s
       SET next_minute_due_at = CASE
@@ -790,7 +792,9 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           END,
           updated_at = d.observed_at
       FROM state_data d
-      WHERE s.aid = d.aid;
+      WHERE s.aid = d.aid
+        AND (s.last_minute_success_at IS NULL
+          OR d.observed_at > s.last_minute_success_at);
 
       GET DIAGNOSTICS advanced_count = ROW_COUNT;
       RETURN advanced_count;
@@ -883,6 +887,8 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           ORDER BY vm."time" DESC
           LIMIT 1
         ) p ON true
+        WHERE s.last_minute_success_at IS NULL
+          OR l."time" > s.last_minute_success_at
       ),
       gate_crossings_recorded AS (
         INSERT INTO video_collection_gate_crossings (
@@ -929,7 +935,9 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           ),
           updated_at = now()
       FROM computed c
-      WHERE s.aid = c.aid;
+      WHERE s.aid = c.aid
+        AND (s.last_minute_success_at IS NULL
+          OR c."time" > s.last_minute_success_at);
 
       RETURN NULL;
     END;

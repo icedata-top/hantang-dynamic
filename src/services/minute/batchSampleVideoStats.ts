@@ -1,7 +1,6 @@
 import {
-  favoriteClient,
-  favoriteDirectClient,
-  type RequestConfig,
+  favoriteClient as defaultFavoriteClient,
+  favoriteDirectClient as defaultFavoriteDirectClient,
 } from "../../api/client";
 import { config } from "../../config";
 import { minuteFallbackResponseMissesTotal } from "../../metrics/registry";
@@ -11,6 +10,7 @@ import { logger } from "../../utils/logger";
 import { isMinuteCounter } from "./completeSample";
 import { partitionMinuteSamplingCoverage } from "./samplingPlan";
 import {
+  MINUTE_REQUEST_TIMEOUT_MS,
   sampleWatchLaterToViewAccountsWithStatus,
   type ToViewRequestAccount,
 } from "./toview";
@@ -46,6 +46,19 @@ export interface BiliFavoriteResponse {
 
 export interface BatchSampleDependencies {
   fetchStatsBatch(aids: bigint[]): Promise<BiliFavoriteResponse>;
+  favoriteClient: FavoriteRequestClient;
+  favoriteDirectClient: FavoriteRequestClient;
+}
+
+interface FavoriteRequestClient {
+  get(
+    url: string,
+    config: {
+      params: { resources: string };
+      timeout: number;
+      metadata: { silent: true };
+    },
+  ): Promise<{ data: BiliFavoriteResponse }>;
 }
 
 export function selectWatchLaterRouting(
@@ -173,13 +186,13 @@ function recordFallbackResponseMiss(
 
 async function fetchStatsBatch(
   aids: bigint[],
-  useDirect: boolean,
+  client: FavoriteRequestClient,
 ): Promise<BiliFavoriteResponse> {
   const resources = aids.map((aid) => `${aid}:2`).join(",");
-  const client = useDirect ? favoriteDirectClient : favoriteClient;
-  const response = await client.get<BiliFavoriteResponse>("/resource/infos", {
+  const response = await client.get("/resource/infos", {
     params: { resources },
-    ...({ metadata: { silent: true } } as RequestConfig),
+    timeout: MINUTE_REQUEST_TIMEOUT_MS,
+    metadata: { silent: true },
   });
   return response.data;
 }
@@ -250,7 +263,12 @@ export async function batchSampleVideoStats(
       try {
         data = options?.dependencies?.fetchStatsBatch
           ? await options.dependencies.fetchStatsBatch(aidBatch)
-          : await fetchStatsBatchWithFallback(aidBatch);
+          : await fetchStatsBatchWithFallback(
+              aidBatch,
+              options?.dependencies?.favoriteClient ?? defaultFavoriteClient,
+              options?.dependencies?.favoriteDirectClient ??
+                defaultFavoriteDirectClient,
+            );
       } catch (error) {
         recordFallbackResponseMiss("api_failure", aidBatch.length);
         throw error;
@@ -318,16 +336,18 @@ export async function batchSampleVideoStats(
 
 async function fetchStatsBatchWithFallback(
   aidBatch: bigint[],
+  favoriteClient: FavoriteRequestClient,
+  favoriteDirectClient: FavoriteRequestClient,
 ): Promise<BiliFavoriteResponse> {
   try {
-    return await fetchStatsBatch(aidBatch, false);
+    return await fetchStatsBatch(aidBatch, favoriteClient);
   } catch (proxyError) {
     logger.warn("Minute stats proxy request failed; trying direct request");
     logger.debug(proxyError);
   }
 
   try {
-    return await fetchStatsBatch(aidBatch, true);
+    return await fetchStatsBatch(aidBatch, favoriteDirectClient);
   } catch (directError) {
     logger.warn("Minute stats direct request failed");
     logger.debug(directError);

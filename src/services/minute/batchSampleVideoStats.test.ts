@@ -93,6 +93,32 @@ test("routing selects the smallest healthy positive UID only", () => {
   assert.deepEqual([...routing], [[7n, [1n]]]);
 });
 
+test("favorite proxy and direct fallback use the minute request timeout", async () => {
+  const requests: Array<{ source: string; timeout: number }> = [];
+  const samples = await batchSampleVideoStats([1n], {
+    dependencies: {
+      favoriteClient: {
+        async get(_url, request) {
+          requests.push({ source: "proxy", timeout: request.timeout });
+          throw new Error("proxy unavailable");
+        },
+      },
+      favoriteDirectClient: {
+        async get(_url, request) {
+          requests.push({ source: "direct", timeout: request.timeout });
+          return { data: favoriteResponse([1n]) };
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(requests, [
+    { source: "proxy", timeout: 120_000 },
+    { source: "direct", timeout: 120_000 },
+  ]);
+  assert.equal(samples.length, 1);
+});
+
 test("healthy selected UID covers its AID and never queries a larger UID", async () => {
   let smallCalls = 0;
   let largeCalls = 0;

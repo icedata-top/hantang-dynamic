@@ -57,6 +57,21 @@ test("Watch Later mutation uses the selected cookie account CSRF token", async (
   });
 });
 
+test("Watch Later mutation applies the minute request timeout", async () => {
+  await withGlobalCsrfToken("global-token", async () => {
+    const context = account(null, []);
+    let timeout: number | undefined;
+    context.toViewClient.post = async (_url, _body, request) => {
+      timeout = request.timeout;
+      return { data: { code: 0 } };
+    };
+
+    await mutateWatchLater(context, 1n, "add");
+
+    assert.equal(timeout, 120_000);
+  });
+});
+
 test("Watch Later mutation uses the global CSRF token for a legacy account", async () => {
   await withGlobalCsrfToken("global-token", async () => {
     const postedTokens: Array<string | null> = [];
