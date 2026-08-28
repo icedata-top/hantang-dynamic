@@ -55,6 +55,7 @@ interface FavoriteRequestClient {
     url: string,
     config: {
       params: { resources: string };
+      noRetry: true;
       timeout: number;
       metadata: { silent: true };
     },
@@ -191,6 +192,7 @@ async function fetchStatsBatch(
   const resources = aids.map((aid) => `${aid}:2`).join(",");
   const response = await client.get("/resource/infos", {
     params: { resources },
+    noRetry: true,
     timeout: MINUTE_REQUEST_TIMEOUT_MS,
     metadata: { silent: true },
   });

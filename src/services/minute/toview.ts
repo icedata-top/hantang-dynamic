@@ -20,6 +20,7 @@ export interface ToViewClient {
   get(
     url: string,
     config: {
+      noRetry: true;
       timeout: number;
       params: {
         pn: number;
@@ -80,6 +81,7 @@ export async function fetchCompleteToViewSnapshot(
   const release = await sharedApiRateLimiter.acquire();
   try {
     const response = await client.get("/web", {
+      noRetry: true,
       timeout: MINUTE_REQUEST_TIMEOUT_MS,
       params: {
         pn: 1,

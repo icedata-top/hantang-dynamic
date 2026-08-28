@@ -15,13 +15,16 @@ test("To View selects only explicitly configured account IDs", () => {
   assert.deepEqual(selected, [{ uid: "200" }]);
 });
 
-test("To View fetches once per configured account", async () => {
+test("To View fetches once per account with one bounded attempt", async () => {
   let requestCount = 0;
-  const timeouts: number[] = [];
+  const requestOptions: Array<{ noRetry: true; timeout: number }> = [];
   const client: ToViewClient = {
     async get(_url, request) {
       requestCount += 1;
-      timeouts.push(request.timeout);
+      requestOptions.push({
+        noRetry: request.noRetry,
+        timeout: request.timeout,
+      });
       return { data: { code: 0, data: { count: 0, list: [] } } };
     },
   };
@@ -45,7 +48,10 @@ test("To View fetches once per configured account", async () => {
     ]),
   });
   assert.equal(requestCount, 2);
-  assert.deepEqual(timeouts, [120_000, 120_000]);
+  assert.deepEqual(requestOptions, [
+    { noRetry: true, timeout: 120_000 },
+    { noRetry: true, timeout: 120_000 },
+  ]);
 });
 
 test("To View de-duplicates configured account IDs within a pass", async () => {
