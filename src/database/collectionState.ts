@@ -1,5 +1,8 @@
 import type { Pool, PoolClient } from "pg";
-import type { ProcessedVideoCollectionInput } from "../types/models/minute.js";
+import type {
+  PersistableVideoMinuteSample,
+  ProcessedVideoCollectionInput,
+} from "../types/models/minute.js";
 
 export type DatabaseQuery = Pick<PoolClient, "query">;
 
@@ -148,15 +151,18 @@ export async function selectDueMinuteVideos(
   }));
 }
 
-export async function advanceUnchangedMinuteVideos(
+export async function advanceSuppressedMinuteSamples(
   pool: Pool,
-  aids: bigint[],
-  now = new Date(),
+  samples: Pick<PersistableVideoMinuteSample, "aid" | "time" | "view">[],
 ): Promise<number> {
-  if (aids.length === 0) return 0;
+  if (samples.length === 0) return 0;
   const result = await pool.query(
-    "SELECT fn_advance_unchanged_minute_videos($1::bigint[], $2) AS count",
-    [aids.map((a) => a.toString()), now],
+    "SELECT fn_advance_suppressed_minute_samples($1::bigint[], $2::timestamptz[], $3::bigint[]) AS count",
+    [
+      samples.map((sample) => sample.aid.toString()),
+      samples.map((sample) => sample.time),
+      samples.map((sample) => sample.view),
+    ],
   );
   return Number(result.rows[0]?.count ?? 0);
 }

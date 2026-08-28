@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
-import { selectDueMinuteVideos } from "./collectionState";
+import {
+  advanceSuppressedMinuteSamples,
+  selectDueMinuteVideos,
+} from "./collectionState";
 import {
   initCollectionStateSchema,
-  repairDeletedVideoCollectionStates,
+  repairInactiveVideoCollectionStates,
 } from "./schema/collection_state";
 import { initializeSchema } from "./schema/index";
 
-test("deleted collection-state repair only changes stale deleted rows", async () => {
+test("inactive collection-state repair terminals deleted and filtered rows", async () => {
   const queries: string[] = [];
   const pool = {
     async query(sql: string) {
@@ -17,8 +20,8 @@ test("deleted collection-state repair only changes stale deleted rows", async ()
     },
   } as Pool;
 
-  const repaired = await repairDeletedVideoCollectionStates(pool);
-  const repeatedRepair = await repairDeletedVideoCollectionStates(pool);
+  const repaired = await repairInactiveVideoCollectionStates(pool);
+  const repeatedRepair = await repairInactiveVideoCollectionStates(pool);
   const query = queries[0] ?? "";
 
   assert.equal(repaired, 1);
@@ -26,14 +29,17 @@ test("deleted collection-state repair only changes stale deleted rows", async ()
   assert.equal(queries[1], query);
   assert.match(query, /UPDATE video_collection_state AS state/);
   assert.match(query, /FROM processed_videos AS video/);
-  assert.match(query, /video\.is_deleted IS TRUE/);
+  assert.match(
+    query,
+    /video\.is_deleted IS TRUE OR video\.is_filtered IS FALSE/,
+  );
   assert.match(query, /SET priority = -1/);
   assert.match(query, /next_minute_due_at = NULL/);
   assert.match(query, /state\.priority IS DISTINCT FROM -1/);
   assert.match(query, /OR state\.next_minute_due_at IS NOT NULL/);
 });
 
-test("schema initialization reconciles historical deleted collection state", async () => {
+test("schema initialization reconciles historical inactive collection state", async () => {
   const queries: string[] = [];
   const pool = {
     async query(sql: string) {
@@ -54,7 +60,7 @@ test("schema initialization reconciles historical deleted collection state", asy
   assert.ok(repair > processedVideos);
 });
 
-test("daily refresh terminals deleted state and minute predicates exclude it", async () => {
+test("daily refresh terminals deleted and filtered state and excludes it", async () => {
   const queries: string[] = [];
   const pool = {
     async query(sql: string) {
@@ -66,7 +72,10 @@ test("daily refresh terminals deleted state and minute predicates exclude it", a
   await initCollectionStateSchema(pool);
 
   const schemaSql = queries.join("\n");
-  assert.match(schemaSql, /WHEN video\.is_deleted IS TRUE THEN -1/);
+  assert.match(
+    schemaSql,
+    /WHEN video\.is_deleted IS TRUE OR video\.is_filtered IS FALSE THEN -1/,
+  );
   assert.match(
     schemaSql,
     /WHEN video_collection_state\.priority = -1 OR EXCLUDED\.priority = -1 THEN -1/,
@@ -76,6 +85,61 @@ test("daily refresh terminals deleted state and minute predicates exclude it", a
     /WHEN video_collection_state\.priority = -1 OR EXCLUDED\.priority = -1 THEN NULL/,
   );
   assert.match(schemaSql, /FROM video_collection_state\s+WHERE priority > 0/);
+});
+
+test("suppressed samples advance latest observation without inserting history", async () => {
+  let query = "";
+  let values: unknown[] | undefined;
+  const pool = {
+    async query(sql: string, parameters?: unknown[]) {
+      query = sql;
+      values = parameters;
+      return { rows: [{ count: 2 }], rowCount: 1 };
+    },
+  } as Pool;
+  const firstTime = new Date("2026-08-20T00:00:00.000Z");
+  const secondTime = new Date("2026-08-20T00:01:00.000Z");
+
+  const count = await advanceSuppressedMinuteSamples(pool, [
+    { aid: 1n, time: firstTime, view: 100 },
+    { aid: 2n, time: secondTime, view: 200 },
+  ]);
+
+  assert.equal(count, 2);
+  assert.match(query, /fn_advance_suppressed_minute_samples/);
+  assert.doesNotMatch(query, /INSERT INTO video_minute/);
+  assert.deepEqual(values, [
+    ["1", "2"],
+    [firstTime, secondTime],
+    [100, 200],
+  ]);
+});
+
+test("suppressed and persisted samples preserve view-change semantics", async () => {
+  const queries: string[] = [];
+  const pool = {
+    async query(sql: string) {
+      queries.push(sql);
+      return { rows: [], rowCount: 0 };
+    },
+  } as Pool;
+
+  await initCollectionStateSchema(pool);
+
+  const schemaSql = queries.join("\n");
+  assert.match(
+    schemaSql,
+    /o\.observed_view IS DISTINCT FROM s\.last_view AS view_changed/,
+  );
+  assert.match(schemaSql, /last_view = d\.observed_view/);
+  assert.match(
+    schemaSql,
+    /WHEN d\.view_changed THEN d\.observed_at\s+ELSE s\.last_view_change_at/,
+  );
+  assert.match(
+    schemaSql,
+    /WHEN c\.latest_view IS DISTINCT FROM s\.last_view THEN c\."time"\s+ELSE s\.last_view_change_at/,
+  );
 });
 
 test("collection-state schema adds Watch Later state before replacing the due-video function signature", async () => {

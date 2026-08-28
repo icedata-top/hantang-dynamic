@@ -78,10 +78,11 @@ export async function insertVideoMinuteSamples(
   return result.rowCount ?? 0;
 }
 
-export async function getLatestVideoMinuteSample(
+export async function getLatestVideoMinuteSamples(
   pool: Pool,
-  aid: bigint,
-): Promise<PersistableVideoMinuteSample | null> {
+  aids: bigint[],
+): Promise<Map<bigint, PersistableVideoMinuteSample>> {
+  if (aids.length === 0) return new Map();
   const result = await pool.query<{
     aid: string;
     time: Date;
@@ -93,27 +94,32 @@ export async function getLatestVideoMinuteSample(
     share: number | null;
     like: number | null;
   }>(
-    `SELECT aid, "time", coin, favorite, danmaku, "view", reply, share, "like"
+    `SELECT DISTINCT ON (aid)
+       aid, "time", coin, favorite, danmaku, "view", reply, share, "like"
      FROM video_minute
-     WHERE aid = $1
+     WHERE aid = ANY($1::bigint[])
        AND "view" IS NOT NULL
-     ORDER BY "time" DESC
-     LIMIT 1`,
-    [aid.toString()],
+     ORDER BY aid, "time" DESC`,
+    [aids.map((aid) => aid.toString())],
   );
 
-  const row = result.rows[0];
-  if (!row) return null;
-
-  return {
-    aid: BigInt(row.aid),
-    time: new Date(row.time),
-    coin: row.coin,
-    favorite: row.favorite,
-    danmaku: row.danmaku,
-    view: row.view,
-    reply: row.reply,
-    share: row.share,
-    like: row.like,
-  };
+  return new Map(
+    result.rows.map((row) => {
+      const aid = BigInt(row.aid);
+      return [
+        aid,
+        {
+          aid,
+          time: new Date(row.time),
+          coin: row.coin,
+          favorite: row.favorite,
+          danmaku: row.danmaku,
+          view: row.view,
+          reply: row.reply,
+          share: row.share,
+          like: row.like,
+        },
+      ];
+    }),
+  );
 }

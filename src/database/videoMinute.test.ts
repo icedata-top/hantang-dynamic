@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
-import { getLatestVideoMinuteSample } from "./videoMinute";
+import { getLatestVideoMinuteSamples } from "./videoMinute";
 
-test("latest minute lookup returns partial rows with nullable counters", async () => {
+test("latest minute batch lookup returns partial rows with nullable counters", async () => {
   let query = "";
   let values: unknown[] | undefined;
   const pool = {
@@ -28,9 +28,12 @@ test("latest minute lookup returns partial rows with nullable counters", async (
     },
   } as Pool;
 
-  const sample = await getLatestVideoMinuteSample(pool, 9_007_199_254_740_993n);
+  const samples = await getLatestVideoMinuteSamples(pool, [
+    9_007_199_254_740_993n,
+    42n,
+  ]);
 
-  assert.deepEqual(sample, {
+  assert.deepEqual(samples.get(9_007_199_254_740_993n), {
     aid: 9_007_199_254_740_993n,
     time: new Date("2026-08-18T00:00:00.000Z"),
     coin: null,
@@ -41,7 +44,9 @@ test("latest minute lookup returns partial rows with nullable counters", async (
     share: null,
     like: null,
   });
-  assert.match(query, /WHERE aid = \$1\s+AND "view" IS NOT NULL/);
+  assert.equal(samples.has(42n), false);
+  assert.match(query, /SELECT DISTINCT ON \(aid\)/);
+  assert.match(query, /WHERE aid = ANY\(\$1::bigint\[\]\)/);
   assert.doesNotMatch(query, /favorite IS NOT NULL/);
-  assert.deepEqual(values, ["9007199254740993"]);
+  assert.deepEqual(values, [["9007199254740993", "42"]]);
 });

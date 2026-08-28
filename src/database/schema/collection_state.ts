@@ -14,7 +14,7 @@ function sqlIntegerArray(values: number[]): string {
   return values.join(", ");
 }
 
-export async function repairDeletedVideoCollectionStates(
+export async function repairInactiveVideoCollectionStates(
   pool: Pool,
 ): Promise<number> {
   const result = await pool.query(`
@@ -24,7 +24,7 @@ export async function repairDeletedVideoCollectionStates(
         updated_at = now()
     FROM processed_videos AS video
     WHERE state.aid = video.aid
-      AND video.is_deleted IS TRUE
+      AND (video.is_deleted IS TRUE OR video.is_filtered IS FALSE)
       AND (
         state.priority IS DISTINCT FROM -1
         OR state.next_minute_due_at IS NOT NULL
@@ -83,7 +83,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
   `);
 
   // Track when the view count last changed (= last observed Bilibili counter refresh).
-  // Used by advanceUnchangedMinuteVideos to predict the next refresh and
+  // Used by suppressed-sample advancement to predict the next refresh and
   // switch to 1-second polling right before it happens.
   await pool.query(`
     ALTER TABLE video_collection_state
@@ -348,7 +348,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
             ELSE 'processed_backfill'
           END AS daily_delta_source,
           CASE
-            WHEN video.is_deleted IS TRUE THEN -1
+            WHEN video.is_deleted IS TRUE OR video.is_filtered IS FALSE THEN -1
             WHEN m.seven_day_view IS NOT NULL AND m.current_view = m.seven_day_view THEN -2
             WHEN COALESCE(m.daily_delta, 0) > 100 THEN
               fn_video_collection_priority(
@@ -706,26 +706,38 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     $$ LANGUAGE plpgsql
   `);
 
-  // For samples where view count didn't change (Bilibili ~75s refresh window).
+  // Advance scheduling and latest-observation state for valid samples omitted
+  // from the sparse video_minute history.
   // Three scheduling phases:
   //   1. Normal: maintain current interval
   //   2. Pre-burst: jump to predicted burst window start
   //   3. Burst: 1-second polling to catch exact Bilibili refresh second
   await pool.query(`
-    CREATE OR REPLACE FUNCTION fn_advance_unchanged_minute_videos(
+    DROP FUNCTION IF EXISTS fn_advance_unchanged_minute_videos(bigint[], timestamptz)
+  `);
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_advance_suppressed_minute_samples(
       p_aids bigint[],
-      p_now timestamptz DEFAULT now()
+      p_times timestamptz[],
+      p_views bigint[]
     ) RETURNS integer AS $$
     DECLARE
       advanced_count integer;
     BEGIN
-      WITH state_data AS (
+      WITH observations AS (
+        SELECT *
+        FROM unnest(p_aids, p_times, p_views) AS observation(aid, observed_at, observed_view)
+      ),
+      state_data AS (
         SELECT
           s.aid,
-          COALESCE(extract(epoch from p_now - s.last_view_change_at), 9999)::numeric
+          o.observed_at,
+          o.observed_view,
+          o.observed_view IS DISTINCT FROM s.last_view AS view_changed,
+          COALESCE(extract(epoch from o.observed_at - s.last_view_change_at), 9999)::numeric
             AS secs_since_change,
           greatest(
-            COALESCE(extract(epoch from p_now - s.last_minute_success_at), fn_video_collection_interval_secs(s.priority)),
+            COALESCE(extract(epoch from o.observed_at - s.last_minute_success_at), fn_video_collection_interval_secs(s.priority)),
             5
           )::numeric
             AS maintain_secs,
@@ -744,8 +756,8 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
                 <= s.latest_daily_delta::numeric * 150 / 86400
           ) AS near_gate
         FROM video_collection_state s
-        WHERE s.aid = ANY(p_aids)
-          AND s.priority > 0
+        JOIN observations o ON o.aid = s.aid
+        WHERE s.priority > 0
           AND s.next_minute_due_at IS NOT NULL
       )
       UPDATE video_collection_state s
@@ -753,23 +765,30 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
             -- Phase 3: In burst window (55-120s since last Bilibili refresh).
             -- 1-second polling to capture the exact refresh second.
             -- Bilibili refresh varies ~60-90s; cap at 120s to handle outliers.
-            WHEN d.near_gate
+            WHEN NOT d.view_changed
+             AND d.near_gate
              AND d.secs_since_change >= 55
              AND d.secs_since_change < 120
-            THEN p_now + interval '1 second'
+            THEN d.observed_at + interval '1 second'
 
             -- Phase 2: Burst window starts before next maintain-interval sample.
             -- Jump directly to burst start instead of waiting.
-            WHEN d.near_gate
-             AND d.burst_start > p_now
-             AND d.burst_start < p_now + d.maintain_secs * interval '1 second'
+            WHEN NOT d.view_changed
+             AND d.near_gate
+             AND d.burst_start > d.observed_at
+             AND d.burst_start < d.observed_at + d.maintain_secs * interval '1 second'
             THEN d.burst_start
 
             -- Phase 1: Normal — maintain current interval.
-            ELSE p_now + d.maintain_secs * interval '1 second'
+            ELSE d.observed_at + d.maintain_secs * interval '1 second'
           END,
-          last_minute_success_at = p_now,
-          updated_at = p_now
+          last_minute_success_at = d.observed_at,
+          last_view = d.observed_view,
+          last_view_change_at = CASE
+            WHEN d.view_changed THEN d.observed_at
+            ELSE s.last_view_change_at
+          END,
+          updated_at = d.observed_at
       FROM state_data d
       WHERE s.aid = d.aid;
 
@@ -878,7 +897,10 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       UPDATE video_collection_state s
       SET last_minute_success_at = c."time",
           last_view = c.latest_view,
-          last_view_change_at = c."time",
+          last_view_change_at = CASE
+            WHEN c.latest_view IS DISTINCT FROM s.last_view THEN c."time"
+            ELSE s.last_view_change_at
+          END,
           priority = c.next_priority,
           next_minute_due_at = CASE
             WHEN c.next_priority <= 0 THEN NULL

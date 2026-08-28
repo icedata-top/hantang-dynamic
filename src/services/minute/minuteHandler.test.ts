@@ -21,7 +21,7 @@ function database(onSelect: () => void): MinuteDatabase {
     async advanceFailedMinuteVideos() {
       return 0;
     },
-    async advanceUnchangedMinuteVideos() {
+    async advanceSuppressedMinuteSamples() {
       return 0;
     },
     async getWatchLaterAccounts() {
@@ -36,8 +36,8 @@ function database(onSelect: () => void): MinuteDatabase {
     async withWatchLaterAccountLease() {
       throw new Error("not used");
     },
-    async getLatestVideoMinuteSample() {
-      return null;
+    async getLatestVideoMinuteSamples() {
+      return new Map();
     },
     async getNextMinuteDueAt() {
       return null;
@@ -213,30 +213,43 @@ test("failed controller cycle clears prior routing health before minute sampling
   assert.deepEqual(routedAccountIds, [[]]);
 });
 
-test("partial favorite samples persist initially and advance when unchanged", async () => {
+test("partial favorite samples persist initially and advance suppressed observations", async () => {
   const insertedAids: bigint[] = [];
-  const unchangedAids: bigint[] = [];
+  const suppressedSamples: { aid: bigint; time: Date; view: number }[] = [];
   const failedAids: bigint[] = [];
   const sampledAt = new Date("2026-08-18T00:01:00.000Z");
   const db: MinuteDatabase = {
     ...database(() => {}),
-    async getLatestVideoMinuteSample(aid) {
-      return aid === 2n
-        ? {
-            aid,
+    async getLatestVideoMinuteSamples(aids) {
+      assert.deepEqual(aids, [1n, 2n, 3n]);
+      return new Map([
+        [
+          2n,
+          {
+            aid: 2n,
             time: new Date("2026-08-18T00:00:00.000Z"),
             favorite: 1,
             view: 100,
-          }
-        : null;
+          },
+        ],
+        [
+          3n,
+          {
+            aid: 3n,
+            time: new Date("2026-08-18T00:00:00.000Z"),
+            favorite: 1,
+            view: 100,
+          },
+        ],
+      ]);
     },
     async insertVideoMinuteSamples(samples) {
       insertedAids.push(...samples.map((sample) => sample.aid));
       return samples.length;
     },
-    async advanceUnchangedMinuteVideos(aids) {
-      unchangedAids.push(...aids);
-      return aids.length;
+    async advanceSuppressedMinuteSamples(samples) {
+      suppressedSamples.push(...samples);
+      return samples.length;
     },
     async advanceFailedMinuteVideos(aids) {
       failedAids.push(...aids);
@@ -249,7 +262,8 @@ test("partial favorite samples persist initially and advance when unchanged", as
     async sampleVideoStats() {
       return [
         { aid: 1n, time: sampledAt, favorite: 1, view: 100 },
-        { aid: 2n, time: sampledAt, favorite: 1, view: 100 },
+        { aid: 2n, time: sampledAt, favorite: 1, view: 101 },
+        { aid: 3n, time: sampledAt, favorite: 1, view: 100 },
       ];
     },
   });
@@ -257,10 +271,14 @@ test("partial favorite samples persist initially and advance when unchanged", as
   await handler.processBatch([
     { aid: 1n, lastView: null, watchLaterManagedAccountIds: [] },
     { aid: 2n, lastView: 100n, watchLaterManagedAccountIds: [] },
+    { aid: 3n, lastView: 100n, watchLaterManagedAccountIds: [] },
   ]);
 
   assert.deepEqual(insertedAids, [1n]);
-  assert.deepEqual(unchangedAids, [2n]);
+  assert.deepEqual(suppressedSamples, [
+    { aid: 2n, time: sampledAt, favorite: 1, view: 101 },
+    { aid: 3n, time: sampledAt, favorite: 1, view: 100 },
+  ]);
   assert.deepEqual(failedAids, []);
 });
 

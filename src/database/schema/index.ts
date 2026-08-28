@@ -3,7 +3,7 @@ import { logger } from "../../utils/logger.js";
 import { initCollectionQueueSchema } from "./collection_queue.js";
 import {
   initCollectionStateSchema,
-  repairDeletedVideoCollectionStates,
+  repairInactiveVideoCollectionStates,
 } from "./collection_state.js";
 import { initCronUserStats } from "./cron/user_stats.js";
 import { initCronVideoDaily } from "./cron/video_daily.js";
@@ -48,7 +48,7 @@ export async function initializeSchema(
     initCollectionStateSchema(pool),
   ]);
 
-  await repairDeletedVideoCollectionStates(pool);
+  await repairInactiveVideoCollectionStates(pool);
 
   await Promise.all([
     initCollectionQueueSchema(pool),

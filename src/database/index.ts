@@ -71,7 +71,7 @@ function queryOperationLabel(query: unknown): string {
 // Import operation modules
 import {
   advanceFailedMinuteVideos,
-  advanceUnchangedMinuteVideos,
+  advanceSuppressedMinuteSamples,
   getNextMinuteDueAt,
   refreshVideoCollectionStateFromDaily,
   selectDueMinuteVideos,
@@ -108,7 +108,7 @@ import {
 } from "./users.js";
 import { getDailyCollectionCandidates } from "./videoDaily.js";
 import {
-  getLatestVideoMinuteSample,
+  getLatestVideoMinuteSamples,
   insertVideoMinuteSamples,
 } from "./videoMinute.js";
 import {
@@ -120,7 +120,6 @@ import {
   hasProcessedVideo,
   hasProcessedVideoById,
   markVideoDeleted,
-  markVideoProcessed,
   markVideoProcessedWithCollectionState,
   updateProcessedVideoPidV2,
   type VideoDeletionNotes,
@@ -305,16 +304,6 @@ export class Database {
     notes?: VideoDeletionNotes,
   ): Promise<bigint> {
     return markVideoDeleted(this.ensurePool(), identity, notes);
-  }
-
-  /**
-   * Mark a video as processed
-   */
-  public async markVideoProcessed(
-    video: VideoData,
-    filtered: boolean,
-  ): Promise<void> {
-    return markVideoProcessed(this.ensurePool(), video, filtered);
   }
 
   /**
@@ -600,11 +589,10 @@ export class Database {
     return selectDueMinuteVideos(this.ensurePool(), limit, now);
   }
 
-  public async advanceUnchangedMinuteVideos(
-    aids: bigint[],
-    now?: Date,
+  public async advanceSuppressedMinuteSamples(
+    samples: Pick<PersistableVideoMinuteSample, "aid" | "time" | "view">[],
   ): Promise<number> {
-    return advanceUnchangedMinuteVideos(this.ensurePool(), aids, now);
+    return advanceSuppressedMinuteSamples(this.ensurePool(), samples);
   }
 
   public async advanceFailedMinuteVideos(
@@ -620,10 +608,10 @@ export class Database {
     return insertVideoMinuteSamples(this.ensurePool(), samples);
   }
 
-  public async getLatestVideoMinuteSample(
-    aid: bigint,
-  ): Promise<PersistableVideoMinuteSample | null> {
-    return getLatestVideoMinuteSample(this.ensurePool(), aid);
+  public async getLatestVideoMinuteSamples(
+    aids: bigint[],
+  ): Promise<Map<bigint, PersistableVideoMinuteSample>> {
+    return getLatestVideoMinuteSamples(this.ensurePool(), aids);
   }
 
   // ===== Watch-later Operations =====

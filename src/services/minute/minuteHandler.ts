@@ -24,12 +24,12 @@ const BATCH_TIMEOUT_MS = 30_000;
 export type MinuteDatabase = Pick<
   Database,
   | "advanceFailedMinuteVideos"
-  | "advanceUnchangedMinuteVideos"
+  | "advanceSuppressedMinuteSamples"
   | "getWatchLaterAccounts"
   | "getDesiredWatchLaterSet"
   | "syncWatchLaterSnapshot"
   | "withWatchLaterAccountLease"
-  | "getLatestVideoMinuteSample"
+  | "getLatestVideoMinuteSamples"
   | "getNextMinuteDueAt"
   | "insertVideoMinuteSamples"
   | "selectDueMinuteVideos"
@@ -256,7 +256,7 @@ export class MinuteHandler {
       }
 
       const changed: VideoMinuteSample[] = [];
-      const unchangedAids: bigint[] = [];
+      const suppressedSamples: PersistableVideoMinuteSample[] = [];
       const samplesByAid = new Map<string, PersistableVideoMinuteSample>();
       const invalidAids = new Set<string>();
 
@@ -273,13 +273,18 @@ export class MinuteHandler {
         samplesByAid.set(key, sample);
       }
 
+      const previousSamples = await this.db.getLatestVideoMinuteSamples(
+        [...samplesByAid]
+          .filter(([key]) => !invalidAids.has(key))
+          .map(([, sample]) => sample.aid),
+      );
       for (const [key, sample] of samplesByAid) {
         if (invalidAids.has(key)) continue;
-        const previous = await this.db.getLatestVideoMinuteSample(sample.aid);
+        const previous = previousSamples.get(sample.aid) ?? null;
         if (shouldPersistMinuteSample(previous, sample)) {
           changed.push(sample);
         } else {
-          unchangedAids.push(sample.aid);
+          suppressedSamples.push(sample);
         }
       }
 
@@ -299,8 +304,8 @@ export class MinuteHandler {
         }
       }
 
-      if (unchangedAids.length > 0) {
-        await this.db.advanceUnchangedMinuteVideos(unchangedAids);
+      if (suppressedSamples.length > 0) {
+        await this.db.advanceSuppressedMinuteSamples(suppressedSamples);
       }
 
       if (failedAids.length > 0) {
@@ -311,8 +316,11 @@ export class MinuteHandler {
       if (changed.length > 0) {
         minuteSamplesTotal.inc({ outcome: "changed" }, changed.length);
       }
-      if (unchangedAids.length > 0) {
-        minuteSamplesTotal.inc({ outcome: "unchanged" }, unchangedAids.length);
+      if (suppressedSamples.length > 0) {
+        minuteSamplesTotal.inc(
+          { outcome: "unchanged" },
+          suppressedSamples.length,
+        );
       }
       if (failedAids.length > 0) {
         minuteSamplesTotal.inc({ outcome: "failed" }, failedAids.length);
