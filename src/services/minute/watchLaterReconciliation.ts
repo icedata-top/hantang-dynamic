@@ -17,7 +17,7 @@ import {
   type WatchLaterSnapshot,
 } from "./watchLaterApi";
 
-export const WATCH_LATER_CAPACITY = 1_000;
+export const WATCH_LATER_CAPACITY = 980;
 const MUTATION_DELAY_MS = 1_000;
 const CYCLE_DEADLINE_MS = 14 * 60_000;
 const CAPACITY_BLOCKED_CODE = 90001;
@@ -257,7 +257,13 @@ export async function runAutomaticWatchLaterManagement(
         );
         results.push(result);
         watchLaterReconciliationsTotal.inc({ outcome: result.reason });
-        if (result.reason !== "completed") return results;
+        const canContinueAdding =
+          phase === "add" &&
+          (result.reason === "capacity_blocked" ||
+            result.reason === "ambiguous");
+        if (result.reason !== "completed" && !canContinueAdding) {
+          return results;
+        }
       } catch {
         watchLaterReconciliationsTotal.inc({ outcome: "lease_lost" });
         return results;

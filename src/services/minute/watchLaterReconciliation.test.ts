@@ -41,7 +41,7 @@ function snapshot(aids: number[], pidV2ByAid: Map<number, number> = new Map()) {
 
 function account(
   snapshots: Array<ReturnType<typeof snapshot>>,
-  mutationCodes: number[] = [],
+  mutationResults: Array<number | Error> = [],
   uid = "7",
   actions: string[] = [],
 ): WatchLaterAccountContext {
@@ -59,7 +59,9 @@ function account(
       },
       async post(url, body) {
         actions.push(`${url}:${body.get("aid")}`);
-        return { data: { code: mutationCodes.shift() ?? 0 } };
+        const result = mutationResults.shift() ?? 0;
+        if (result instanceof Error) throw result;
+        return { data: { code: result } };
       },
     },
   };
@@ -98,14 +100,14 @@ function database(
 
 test("assigns each desired AID once in deterministic capacity-bounded order", () => {
   for (const accountCount of [1, 2, 3]) {
-    const desired = Array.from({ length: accountCount * 1_000 + 2 }, (_, i) =>
+    const desired = Array.from({ length: accountCount * 980 + 2 }, (_, i) =>
       BigInt(i + 1),
     );
     const assignments = partitionDesiredWatchLaterAids(desired, accountCount);
-    assert.equal(assignments.flat().length, accountCount * 1_000);
+    assert.equal(assignments.flat().length, accountCount * 980);
     assert.equal(
       new Set(assignments.flat().map(String)).size,
-      accountCount * 1_000,
+      accountCount * 980,
     );
     assert.deepEqual(assignments[0]?.slice(0, 3), [
       1n,
@@ -287,4 +289,71 @@ test("capacity, ambiguous response, lease loss, and cancellation do not replay m
       scenario.name,
     );
   }
+});
+
+test("add failures do not prevent later healthy accounts from reconciling", async () => {
+  const actions: string[] = [];
+  const result = await runAutomaticWatchLaterManagement(
+    database({
+      async getWatchLaterAccounts() {
+        return [
+          { accountId: 7n, lastCompleteSnapshotAt: null },
+          { accountId: 8n, lastCompleteSnapshotAt: null },
+          { accountId: 9n, lastCompleteSnapshotAt: null },
+        ];
+      },
+      async getDesiredWatchLaterSet() {
+        return { aids: [1n, 2n, 3n], overflow: false };
+      },
+    }),
+    [
+      account([snapshot([])], [90001], "7", actions),
+      account([snapshot([])], [new Error("network failure")], "8", actions),
+      account([snapshot([])], [], "9", actions),
+    ],
+    undefined,
+    { async delay() {} },
+  );
+
+  assert.deepEqual(actions, ["/add:1", "/add:2", "/add:3"]);
+  assert.deepEqual(
+    result.map((entry) => entry.reason),
+    [
+      "completed",
+      "completed",
+      "completed",
+      "capacity_blocked",
+      "ambiguous",
+      "completed",
+    ],
+  );
+});
+
+test("delete failure suppresses remaining deletes and all additions", async () => {
+  const actions: string[] = [];
+  const result = await runAutomaticWatchLaterManagement(
+    database({
+      async getWatchLaterAccounts() {
+        return [
+          { accountId: 7n, lastCompleteSnapshotAt: null },
+          { accountId: 8n, lastCompleteSnapshotAt: null },
+        ];
+      },
+      async getDesiredWatchLaterSet() {
+        return { aids: [1n, 2n], overflow: false };
+      },
+    }),
+    [
+      account([snapshot([90])], [new Error("network failure")], "7", actions),
+      account([snapshot([91])], [], "8", actions),
+    ],
+    undefined,
+    { async delay() {} },
+  );
+
+  assert.deepEqual(actions, ["/del:90"]);
+  assert.deepEqual(
+    result.map((entry) => entry.reason),
+    ["ambiguous"],
+  );
 });

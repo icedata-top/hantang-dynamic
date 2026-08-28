@@ -55,6 +55,14 @@ export interface WatchLaterMutationOptions {
   beforePost?(): Promise<WatchLaterMutationPrePostAbortReason | undefined>;
 }
 
+function rawApiErrorCode(error: unknown): number | undefined {
+  if (!error || typeof error !== "object" || !("code" in error)) {
+    return undefined;
+  }
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "number" && Number.isFinite(code) ? code : undefined;
+}
+
 async function csrfToken(account: WatchLaterAccountContext): Promise<string> {
   if (!account.cookieJar) {
     if (config.bilibili.csrfToken) return config.bilibili.csrfToken;
@@ -138,16 +146,22 @@ export async function mutateWatchLater(
     if (abortReason) {
       throw new WatchLaterMutationPrePostAbortError(abortReason);
     }
-    const response = await account.toViewClient.post(
-      action === "add" ? "/add" : "/del",
-      body,
-      {
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        noRetry: true,
-        rawApiErrors: true,
-      },
-    );
-    return response.data.code;
+    try {
+      const response = await account.toViewClient.post(
+        action === "add" ? "/add" : "/del",
+        body,
+        {
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          noRetry: true,
+          rawApiErrors: true,
+        },
+      );
+      return response.data.code;
+    } catch (error) {
+      const code = rawApiErrorCode(error);
+      if (code !== undefined) return code;
+      throw error;
+    }
   } finally {
     release();
   }

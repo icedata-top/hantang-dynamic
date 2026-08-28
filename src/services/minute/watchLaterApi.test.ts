@@ -75,3 +75,18 @@ test("Watch Later mutation rejects a cookie account missing bili_jct", async () 
     assert.deepEqual(postedTokens, []);
   });
 });
+
+test("Watch Later mutation returns a structured raw API business code", async () => {
+  await withGlobalCsrfToken("global-token", async () => {
+    const context = account(null, []);
+    context.toViewClient.post = async () =>
+      Promise.reject({
+        message: "API Error: code 90001",
+        status: 200,
+        code: 90001,
+        data: { code: 90001 },
+      });
+
+    assert.equal(await mutateWatchLater(context, 1n, "add"), 90001);
+  });
+});
