@@ -6,7 +6,6 @@ default.
 ```toml
 [minute]
 enabled = false
-consumer_tick_ms = 60000
 claim_batch_size = 50
 batch_size = 50
 target_delta_per_sample = 100
@@ -20,14 +19,7 @@ bootstrap_label_content_types = ["vocaloid", "maybe_vocaloid"]
 bootstrap_label_origin = "rule"
 bootstrap_label_writers = ["classification_apply", "classification_trigger"]
 bootstrap_tid_v2_allowlist = [2022, 2061]
-weekly_zero_delta_days = 7
-weekly_daily_priority = -2
-minute_burst_delta_threshold = 500
-minute_burst_priority = 1
 processed_backfill_new_video_age_days = 7
-gate_lead_time_minutes = 30
-gate_min_lead_ratio = 0.10
-gate_max_lead_views = 500
 collection_business_timezone = "Asia/Shanghai"
 ```
 
@@ -66,17 +58,25 @@ videos by itself. Due-row selection happens when the minute handler ticks.
 ## Watch Later convergence
 
 Minute sampling and the first Watch Later reconciliation start independently.
-Before the first healthy Watch Later layout is available, sampling uses the
-existing favorite/history fallback. Reconciliation continues in a managed
-background task. Each cycle obtains fresh complete snapshots, deletes
-non-target remote entries before adding targets, yields after internal chunks,
-and does not fetch a new snapshot for each chunk. Mutation POSTs remain at
-least one second apart globally across every configured account and internal
-chunk boundary. Each POST is preceded by a fenced lease renewal. If renewal
-fails, that account stops without another POST. An ambiguous request, invalid
-snapshot, or `90001` capacity result also stops that account's convergence for
-the current cycle. Later cycles obtain fresh snapshots and converge from the
-observed remote state.
+The supported topology is one running application client for each database.
+That client may load multiple Bilibili accounts.
+
+At the start of every reconciliation cycle, sampling uses the existing
+favorite/history fallback until all enabled accounts have completed their
+snapshot-health scan. A snapshot is healthy only when the To View response is
+complete and valid and contains at most 1,000 items. Healthy snapshots update
+the observed account membership and available `pid_v2` metadata before the
+healthy account set is published to minute sampling.
+
+The client assigns at most 980 target videos to each healthy account, leaving
+20 Watch Later slots free. Reconciliation first deletes non-target items from
+all healthy accounts, then adds target items. Each item is mutated with its own
+POST, with at least one second between POST attempts across all accounts in the
+cycle. A deletion failure stops the cycle before further changes. During the
+add phase, a `90001` capacity response or an ambiguous request stops work for
+that account while later healthy accounts continue. A shutdown request or the
+cycle deadline stops the whole cycle. The next cycle starts approximately 15
+minutes after the previous cycle began and obtains new snapshots.
 
 Daily inserts also refresh state through the `video_daily` trigger. This updates
 priority and due time; it does not insert minute samples directly.
@@ -88,13 +88,16 @@ time. Positive-priority minute and Watch Later selection queries exclude it.
 For every minute batch, a due AID is covered by a complete current To View
 seven-counter tuple or is sent once through the existing favorite-resource
 path in `batch_size` chunks. Watch Later assignment and reconciliation state
-do not remove AIDs from that fallback. In the live favorite response,
-`cnt_info` supplies `collect`, `play`, `danmaku`, and `reply`; `play` is
-required for a usable sample. The AID and supplied counters may be JSON numbers
-or decimal strings and are normalized exactly. Optional counters that are not
-supplied remain absent and are persisted as `NULL`, rather than as zero. Any
-supplied malformed counter makes the tuple invalid and retryable. A missing
-item or invalid tuple leaves the AID failed for rescheduling and increments
+do not remove AIDs from that fallback. If a healthy account's To View request
+fails during sampling, the account is removed from To View routing until the
+next snapshot-health scan; uncovered AIDs use the fallback. In the live
+favorite response, `cnt_info` supplies `collect`, `play`, `danmaku`, and
+`reply`; `play` is required for a usable sample. The AID and supplied counters
+may be JSON numbers or decimal strings and are normalized exactly. Optional
+counters that are not supplied remain absent and are persisted as `NULL`,
+rather than as zero. Any supplied malformed counter makes the tuple invalid and
+retryable. A missing item or invalid tuple leaves the AID failed for
+rescheduling and increments
 `bili_tracker_minute_fallback_response_misses_total` with one bounded reason:
 `api_failure`, `invalid_response`, `missing_response_item`, or
 `invalid_response_item`.
@@ -104,7 +107,6 @@ item or invalid tuple leaves the AID failed for rescheduling and increments
 | TOML key | Environment variable | Default | Meaning |
 | --- | --- | --- | --- |
 | `enabled` | `MINUTE_ENABLED` | `false` | Start the minute handler. |
-| `consumer_tick_ms` | `MINUTE_CONSUMER_TICK_MS` | `60000` | Handler tick interval in milliseconds. |
 | `claim_batch_size` | `MINUTE_CLAIM_BATCH_SIZE` | `50` | Max due state rows selected per tick. |
 | `batch_size` | `MINUTE_BATCH_SIZE` | `50` | Max AIDs sampled per stats API batch. |
 | `target_delta_per_sample` | `MINUTE_TARGET_DELTA_PER_SAMPLE` | `100` | Target view delta per sample. |
@@ -118,14 +120,7 @@ item or invalid tuple leaves the AID failed for rescheduling and increments
 | `bootstrap_label_origin` | `MINUTE_BOOTSTRAP_LABEL_ORIGIN` | `rule` | Required label origin for bootstrap. |
 | `bootstrap_label_writers` | `MINUTE_BOOTSTRAP_LABEL_WRITERS` | `["classification_apply", "classification_trigger"]` | Label writers eligible for bootstrap. |
 | `bootstrap_tid_v2_allowlist` | `MINUTE_BOOTSTRAP_TID_V2_ALLOWLIST` | `[2022, 2061]` | Fallback type IDs eligible for bootstrap. |
-| `weekly_zero_delta_days` | `MINUTE_WEEKLY_ZERO_DELTA_DAYS` | `7` | Weekly no-growth window. |
-| `weekly_daily_priority` | `MINUTE_WEEKLY_DAILY_PRIORITY` | `-2` | Priority marker for weekly daily-only rows. |
-| `minute_burst_delta_threshold` | `MINUTE_BURST_DELTA_THRESHOLD` | `500` | View delta that tightens minute interval. |
-| `minute_burst_priority` | `MINUTE_BURST_PRIORITY` | `1` | Interval after burst detection. |
 | `processed_backfill_new_video_age_days` | `MINUTE_PROCESSED_BACKFILL_NEW_VIDEO_AGE_DAYS` | `7` | Age cutoff for processed-video bootstrap. |
-| `gate_lead_time_minutes` | `MINUTE_GATE_LEAD_TIME_MINUTES` | `30` | Lead window for gate prediction tasks. |
-| `gate_min_lead_ratio` | `MINUTE_GATE_MIN_LEAD_RATIO` | `0.1` | Ratio for near-threshold gate tasks. |
-| `gate_max_lead_views` | `MINUTE_GATE_MAX_LEAD_VIEWS` | `500` | Max view lead for near-threshold gate tasks. |
 | `collection_business_timezone` | `MINUTE_COLLECTION_BUSINESS_TIMEZONE` | `Asia/Shanghai` | Business date timezone for daily refresh. |
 
 `target_delta_per_sample` is clamped into the
@@ -136,6 +131,28 @@ Use TOML for array settings such as `bootstrap_label_content_types`,
 `bootstrap_label_writers`, and `bootstrap_tid_v2_allowlist`. Unlike
 `BILIBILI_COOKIE_FILES` and the processing filter lists, these minute array
 settings are not parsed from comma-separated environment strings.
+
+## Metrics
+
+The minute and Watch Later metrics use bounded outcome labels:
+
+- `bili_tracker_minute_samples_total{outcome="persisted"}` counts valid
+  observations inserted into `video_minute`.
+- `bili_tracker_minute_samples_total{outcome="suppressed"}` counts valid
+  observations omitted from sparse minute history while the latest observation
+  and scheduling state are advanced.
+- `bili_tracker_minute_samples_total{outcome="failed"}` counts requested AIDs
+  without a usable observation, or AIDs whose batch could not be persisted.
+- `bili_tracker_watch_later_reconciliations_total` records one final result per
+  cycle. Its outcomes are `completed`, `partial`, `no_healthy_accounts`,
+  `deadline`, `stopped`, and `internal_failure`.
+- `bili_tracker_watch_later_mutations_total` counts per-item POST attempts by
+  `action` (`add` or `delete`) and `outcome` (`succeeded`,
+  `capacity_blocked`, `failed`, or `ambiguous`).
+- `bili_tracker_watch_later_enabled_accounts` reports `healthy` and `unhealthy`
+  enabled account counts from the latest completed snapshot-health scan.
+- `bili_tracker_minute_fallback_response_misses_total` counts fallback misses
+  using the reasons listed above.
 
 ## Quick checks
 

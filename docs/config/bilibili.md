@@ -57,21 +57,25 @@ operations. `access_key` maps to app authentication.
 ## Watch-later minute sampling
 
 Set `enable_watch_later = true` on a cookie-file entry to sample that loaded
-account and provision its independent Watch Later state. Each healthy enabled
-account is assigned up to 980 items, leaving 20 slots below Bilibili's
-1,000-item limit. The global target gives 60% of those assignments to
-positive-priority videos, then gives the remaining 40% to the newest eligible
-processed videos. It is distributed deterministically across the healthy
-enabled accounts without assigning a video to more than one account.
+account through To View and manage its Watch Later list. The supported topology
+is one running application client for each database; that client may load
+multiple Bilibili accounts. Each healthy enabled account is assigned up to 980
+items, leaving 20 slots below Bilibili's 1,000-item limit. The global target
+gives 60% of those assignments to positive-priority videos, then gives the
+remaining 40% to the newest eligible processed videos. It is distributed
+deterministically across the healthy enabled accounts without assigning a
+video to more than one account.
 
 Enabled accounts are dedicated Watch Later lists. Reconciliation can delete
 non-target entries, including manually added entries, and add assigned target
-entries. Only accounts whose complete snapshots are fetched and synchronized
-enter the current cycle's healthy set. Videos not covered by a current healthy
-snapshot use the existing favorite/history fallback in configured batches.
-All enabled accounts are checked again and the distribution is recomputed in
-the next cycle, which starts approximately every 15 minutes. Environment cookie
-paths remain authentication-only and do not enable Watch Later.
+entries. Only accounts whose complete, valid snapshots are fetched and
+synchronized enter the current cycle's healthy set. If an account's To View
+request later fails during minute sampling, it is removed from To View routing
+until the next health scan. Videos not covered by a current healthy snapshot
+use the existing favorite/history fallback in configured batches. All enabled
+accounts are checked again and the distribution is recomputed in the next
+cycle, which starts approximately every 15 minutes. Environment cookie paths
+remain authentication-only and do not enable Watch Later.
 
 ## Proxies
 
