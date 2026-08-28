@@ -46,16 +46,19 @@ export interface AccountContext {
 
 let _accounts: AccountContext[] | null = null;
 
-export function loadCookieFileAccount(cookieFile: {
-  path: string;
-  enableWatchLater: boolean;
-}): AccountContext | null {
+export function loadCookieFileAccount(
+  cookieFile: {
+    path: string;
+    enableWatchLater: boolean;
+  },
+  fallbackUid?: string,
+): AccountContext | null {
   const { path: filePath, enableWatchLater } = cookieFile;
   try {
     const cookies = parseNetscapeCookieFile(filePath);
     const jar = createCookieJarFromNetscape(cookies);
 
-    const uid = getDedeUserIDFromCookieFile(filePath) ?? "";
+    const uid = getDedeUserIDFromCookieFile(filePath) ?? fallbackUid ?? "";
     if (!/^\d+$/.test(uid)) {
       throw new Error(
         `Cannot determine uid for cookie file: ${filePath}. ` +
@@ -125,7 +128,8 @@ export function loadCookieFileAccount(cookieFile: {
  * Load all configured accounts.
  *
  * - When `cookie_files` (or `cookie_file`) is set, each file becomes one account.
- *   The uid is extracted from the `DedeUserID` cookie in the file.
+ *   The uid is extracted from the `DedeUserID` cookie in the file. A single
+ *   cookie file may fall back to the configured uid.
  * - When only `sessdata` is configured (legacy mode), a single account is created
  *   using the uid from config and the global dynamic client.
  *
@@ -138,7 +142,12 @@ export function loadAccounts(): AccountContext[] {
 
   if (cookieFiles.length > 0) {
     _accounts = cookieFiles
-      .map(loadCookieFileAccount)
+      .map((cookieFile) =>
+        loadCookieFileAccount(
+          cookieFile,
+          cookieFiles.length === 1 ? config.bilibili.uid : undefined,
+        ),
+      )
       .filter((account): account is AccountContext => account !== null);
 
     if (_accounts.length === 0) {

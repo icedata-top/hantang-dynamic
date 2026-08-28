@@ -92,12 +92,14 @@ test("single TOML cookie paths are authentication-only entries", () => {
   ]);
 });
 
-test("TOML cookie file string arrays are rejected", () => {
-  assert.throws(() =>
-    createBilibiliConfig((tomlPath) => {
-      return tomlPath.join(".") === "bilibili.cookie_files"
-        ? ["./account.txt"]
-        : undefined;
-    }),
-  );
+test("TOML cookie file string arrays remain authentication-only entries", () => {
+  const configuration = createBilibiliConfig((tomlPath) => {
+    return tomlPath.join(".") === "bilibili.cookie_files"
+      ? ["./account.txt"]
+      : undefined;
+  });
+
+  assert.deepEqual(configuration.cookieFiles, [
+    { path: "./account.txt", enableWatchLater: false },
+  ]);
 });

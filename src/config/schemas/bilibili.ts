@@ -1,15 +1,24 @@
 import { z } from "zod";
 
-const cookieFileInputSchema = z
-  .object({
-    path: z.string().min(1),
-    enable_watch_later: z.boolean().default(false),
-  })
-  .strict()
-  .transform(({ path, enable_watch_later }) => ({
-    path,
-    enableWatchLater: enable_watch_later,
-  }));
+const cookieFileInputSchema = z.union([
+  z
+    .string()
+    .min(1)
+    .transform((path) => ({
+      path,
+      enableWatchLater: false,
+    })),
+  z
+    .object({
+      path: z.string().min(1),
+      enable_watch_later: z.boolean().default(false),
+    })
+    .strict()
+    .transform(({ path, enable_watch_later }) => ({
+      path,
+      enableWatchLater: enable_watch_later,
+    })),
+]);
 
 const cookieFileSchema = z
   .object({

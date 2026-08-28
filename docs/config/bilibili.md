@@ -11,7 +11,14 @@ Use cookie files when possible:
 cookie_file = "./.cookies.txt"
 ```
 
-For multiple accounts, use `cookie_files`:
+For multiple authentication-only accounts, `cookie_files` accepts string paths:
+
+```toml
+[bilibili]
+cookie_files = ["./.cookies_account1.txt", "./.cookies_account2.txt"]
+```
+
+Use object entries to configure Watch Later per account:
 
 ```toml
 [bilibili]
@@ -21,9 +28,13 @@ cookie_files = [
 ]
 ```
 
-When cookie files are used, the app extracts `uid` from the `DedeUserID` cookie.
-Cookie-file authentication requires `DedeUserID`; that cookie is the account
-identity. `enable_watch_later` defaults to `false`.
+The app uses a cookie file's numeric `DedeUserID` as the account identity. A
+single `cookie_file`, or a one-entry `cookie_files` array, may instead use the
+configured numeric `uid` when `DedeUserID` is absent. Every file in a
+multi-account configuration must contain its own numeric `DedeUserID`.
+
+String entries set `enable_watch_later` to `false`. Object entries can set it
+explicitly; it also defaults to `false` when omitted.
 
 Legacy direct `sessdata` mode requires `uid`:
 
@@ -90,6 +101,5 @@ dynamic API calls.
 When both `cookie_files` and `cookie_file` are set, `cookie_files` is used.
 `cookie_file` is the single-account fallback.
 
-`cookie_files` previously accepted string paths. It now accepts only object
-entries with `path` and `enable_watch_later`; convert each existing path to an
-object entry during this public TOML migration.
+`cookie_files` accepts string paths and object entries. Use the object form only
+when an account needs `enable_watch_later` configuration.
