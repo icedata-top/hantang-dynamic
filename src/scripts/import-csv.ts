@@ -239,7 +239,7 @@ async function processRelatedQueue(
     seenBvids.add(bvid);
 
     try {
-      const { video, relatedVideos } = await service.processVideoById(bvid, {
+      const { video, relatedVideos } = await service.processVideo(item, {
         processRecommendations,
         processRelated: depth < maxDepth,
         skipCacheCheck: true,

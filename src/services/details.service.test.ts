@@ -62,6 +62,97 @@ test("newly processed eligible videos persist with collection state", async () =
   }
 });
 
+test("new related videos persist pid_v2 supplied by the parent response", async () => {
+  const database = Database.getInstance();
+  const originalHasProcessedVideoById = database.hasProcessedVideoById;
+  const originalHasProcessedVideo = database.hasProcessedVideo;
+  const originalPersist = database.markVideoProcessedWithCollectionState;
+  const originalPidV2Update = database.updateProcessedVideoPidV2;
+  const originalAddDiscoveredUser = database.addDiscoveredUser;
+  const persisted: VideoData[] = [];
+
+  database.hasProcessedVideoById = async () => false;
+  database.hasProcessedVideo = async () => false;
+  database.markVideoProcessedWithCollectionState = async (videoData) => {
+    persisted.push({ ...videoData });
+  };
+  database.updateProcessedVideoPidV2 = async () => 0;
+  database.addDiscoveredUser = async () => undefined;
+
+  const detail = (
+    aid: bigint,
+    bvid: string,
+    related: RecommendedVideo[] = [],
+  ) =>
+    ({
+      View: {
+        aid,
+        bvid,
+        owner: { mid: 7n },
+        tid: 3,
+        title: bvid,
+        desc: "",
+        dynamic: "",
+        pic: "",
+        pubdate: 1,
+        ctime: 1,
+        copyright: 1,
+        duration: 1,
+        videos: 1,
+        state: 0,
+        cid: 1,
+      },
+      Card: {
+        card: { mid: 7n, name: "owner", face: "", fans: 0 },
+      },
+      Related: related,
+    }) as unknown as BiliVideoDetailDataForProcessing;
+
+  const related = {
+    aid: 50,
+    bvid: "BV1related",
+    pid_v2: 33,
+    owner: { mid: 8, name: "related owner", face: "" },
+    pubdate: 2,
+    pic: "",
+    title: "related",
+    stat: { view: 0 },
+  } as unknown as RecommendedVideo;
+
+  try {
+    const service = new DetailsService();
+    const source = await service.processFetchedVideoDetail(
+      "BV1source",
+      detail(42n, "BV1source", [related]),
+      {
+        processRecommendations: false,
+        processRelated: true,
+        storeOwner: false,
+      },
+    );
+    assert.equal(source.relatedVideos.length, 1);
+
+    Reflect.set(service, "fetchVideoDetails", async () =>
+      detail(50n, "BV1related"),
+    );
+    await service.processVideo(source.relatedVideos[0], {
+      processRecommendations: false,
+      processRelated: false,
+      skipCacheCheck: true,
+    });
+
+    assert.equal(persisted.length, 2);
+    assert.equal(persisted[1].bvid, "BV1related");
+    assert.equal(persisted[1].pid_v2, 33);
+  } finally {
+    database.hasProcessedVideoById = originalHasProcessedVideoById;
+    database.hasProcessedVideo = originalHasProcessedVideo;
+    database.markVideoProcessedWithCollectionState = originalPersist;
+    database.updateProcessedVideoPidV2 = originalPidV2Update;
+    database.addDiscoveredUser = originalAddDiscoveredUser;
+  }
+});
+
 test("authoritative detail results carry BVID and AID identities to terminal persistence", async () => {
   const database = Database.getInstance();
   const originalMarkVideoDeleted = database.markVideoDeleted;

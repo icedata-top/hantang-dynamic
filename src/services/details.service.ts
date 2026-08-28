@@ -19,7 +19,14 @@ import type { RateLimiter } from "../utils/rateLimiter";
 interface VideoProcessingOptions {
   processRecommendations?: boolean;
   processRelated?: boolean;
+  skipCacheCheck?: boolean;
 }
+
+const RELATED_PID_V2 = Symbol("relatedPidV2");
+
+type RelatedVideoWorkItem = BiliDynamicCard & {
+  [RELATED_PID_V2]?: number;
+};
 
 const MAX_POSTGRES_INTEGER = 2_147_483_647;
 
@@ -105,7 +112,10 @@ export class DetailsService {
         }
       }
 
-      return await this.processVideoById(bvid, processingOptions);
+      return await this.processVideoById(bvid, {
+        ...processingOptions,
+        pidV2: (dynamic as RelatedVideoWorkItem)[RELATED_PID_V2],
+      });
     } catch (error) {
       if (isAccountAuthError(error)) {
         throw error;
@@ -132,6 +142,7 @@ export class DetailsService {
       processRelated?: boolean;
       storeOwner?: boolean;
       skipCacheCheck?: boolean;
+      pidV2?: number;
     } = {},
   ): Promise<{
     video: VideoData | null;
@@ -142,6 +153,7 @@ export class DetailsService {
       processRelated = true,
       storeOwner = true,
       skipCacheCheck = false,
+      pidV2,
     } = options;
 
     const identity = this.toVideoIdentity(id);
@@ -183,6 +195,10 @@ export class DetailsService {
 
       const { videoData, relatedVideos } =
         await this.processVideoDetailResponse(detailData, { storeOwner });
+
+      if (validPidV2(pidV2)) {
+        videoData.pid_v2 = pidV2;
+      }
 
       // Re-check cache using the true BVID from response (useful if we started with AID)
       if (!bvid && videoData.bvid) {
@@ -639,7 +655,7 @@ export class DetailsService {
 
   private convertRelatedToDynamics(
     relatedVideos: RecommendedVideo[],
-  ): BiliDynamicCard[] {
+  ): RelatedVideoWorkItem[] {
     return relatedVideos.map(
       (video) =>
         ({
@@ -672,7 +688,10 @@ export class DetailsService {
             title: video.title,
             stat: video.stat,
           }),
-        }) as unknown as BiliDynamicCard,
+          ...(validPidV2(video.pid_v2)
+            ? { [RELATED_PID_V2]: video.pid_v2 }
+            : {}),
+        }) as unknown as RelatedVideoWorkItem,
     );
   }
 
