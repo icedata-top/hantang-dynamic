@@ -289,6 +289,63 @@ test("partial favorite samples persist initially and advance suppressed observat
   minuteSamplesTotal.reset();
 });
 
+test("counts persisted samples before a later suppressed-state write fails", async () => {
+  const sampledAt = new Date("2026-08-18T00:01:00.000Z");
+  const db: MinuteDatabase = {
+    ...database(() => {}),
+    async getLatestVideoMinuteSamples() {
+      return new Map([
+        [
+          2n,
+          {
+            aid: 2n,
+            time: new Date("2026-08-18T00:00:00.000Z"),
+            favorite: 1,
+            view: 100,
+          },
+        ],
+      ]);
+    },
+    async insertVideoMinuteSamples(samples) {
+      assert.deepEqual(
+        samples.map((sample) => sample.aid),
+        [1n],
+      );
+      return samples.length;
+    },
+    async advanceSuppressedMinuteSamples() {
+      throw new Error("suppressed state write failed");
+    },
+  };
+  const handler = new MinuteHandler({
+    database: db,
+    loadAccounts: () => [],
+    async sampleVideoStats() {
+      return [
+        { aid: 1n, time: sampledAt, favorite: 1, view: 100 },
+        { aid: 2n, time: sampledAt, favorite: 1, view: 100 },
+      ];
+    },
+  });
+
+  minuteSamplesTotal.reset();
+  await assert.rejects(
+    handler.processBatch([
+      { aid: 1n, lastView: null, watchLaterManagedAccountIds: [] },
+      { aid: 2n, lastView: 100n, watchLaterManagedAccountIds: [] },
+    ]),
+    /suppressed state write failed/,
+  );
+  assert.deepEqual(
+    (await minuteSamplesTotal.get()).values.map(({ labels, value }) => ({
+      labels,
+      value,
+    })),
+    [{ labels: { outcome: "persisted" }, value: 1 }],
+  );
+  minuteSamplesTotal.reset();
+});
+
 test("a failed To View account is removed from subsequent batch routing", async () => {
   const routedAccountIds: bigint[][] = [];
   let calls = 0;

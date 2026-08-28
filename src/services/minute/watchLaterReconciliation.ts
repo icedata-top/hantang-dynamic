@@ -153,6 +153,8 @@ export async function runAutomaticWatchLaterManagement(
   capacity = WATCH_LATER_CAPACITY,
   options: WatchLaterManagementOptions = {},
 ): Promise<WatchLaterReconciliationResult[]> {
+  const now = options.now ?? Date.now;
+  const deadline = now() + CYCLE_DEADLINE_MS;
   let cycleOutcome:
     | "completed"
     | "partial"
@@ -178,9 +180,17 @@ export async function runAutomaticWatchLaterManagement(
       snapshot: WatchLaterSnapshot;
     }> = [];
     for (const [id, account] of enabled) {
+      if (now() >= deadline) {
+        cycleOutcome = "deadline";
+        return [];
+      }
       try {
         const snapshot = await fetchWatchLaterSnapshot(account.toViewClient);
         if (!snapshot) continue;
+        if (now() >= deadline) {
+          cycleOutcome = "deadline";
+          return [];
+        }
         await database.syncWatchLaterSnapshot(
           id,
           [...snapshot.aids].map(BigInt),
@@ -200,22 +210,32 @@ export async function runAutomaticWatchLaterManagement(
       cycleOutcome = "no_healthy_accounts";
       return [];
     }
+    if (now() >= deadline) {
+      cycleOutcome = "deadline";
+      return [];
+    }
     const desiredAids = await database.getDesiredWatchLaterSet(
       healthy.length * capacity,
     );
+    if (now() >= deadline) {
+      cycleOutcome = "deadline";
+      return [];
+    }
     const assignments = partitionDesiredWatchLaterAids(
       desiredAids,
       healthy.length,
       capacity,
     );
     const delay = options.delay ?? sleep;
-    const now = options.now ?? Date.now;
-    const deadline = now() + CYCLE_DEADLINE_MS;
     const pace = createPacer(delay);
     const results: WatchLaterReconciliationResult[] = [];
     let hasAccountFailure = healthy.length < enabled.length;
     for (const phase of ["delete", "add"] as const) {
       for (const [index, item] of healthy.entries()) {
+        if (now() >= deadline) {
+          cycleOutcome = "deadline";
+          return results;
+        }
         const result = await reconcileAccount(
           item.account,
           assignments[index] ?? [],

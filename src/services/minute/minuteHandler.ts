@@ -248,8 +248,8 @@ export class MinuteHandler {
         });
       } catch (error) {
         logger.error("Minute stats batch request failed:", error);
-        minuteSamplesTotal.inc({ outcome: "failed" }, aids.length);
         await this.db.advanceFailedMinuteVideos(aids);
+        minuteSamplesTotal.inc({ outcome: "failed" }, aids.length);
         return aids.length;
       }
 
@@ -294,33 +294,26 @@ export class MinuteHandler {
       if (changed.length > 0) {
         try {
           await this.db.insertVideoMinuteSamples(changed);
+          minuteSamplesTotal.inc({ outcome: "persisted" }, changed.length);
         } catch (error) {
           logger.error("Minute sample write failed:", error);
-          minuteSamplesTotal.inc({ outcome: "failed" }, aids.length);
           await this.db.advanceFailedMinuteVideos(aids);
+          minuteSamplesTotal.inc({ outcome: "failed" }, aids.length);
           return aids.length;
         }
       }
 
       if (suppressedSamples.length > 0) {
         await this.db.advanceSuppressedMinuteSamples(suppressedSamples);
-      }
-
-      if (failedAids.length > 0) {
-        logger.warn(`Minute stats response missed ${failedAids.length} aid(s)`);
-        await this.db.advanceFailedMinuteVideos(failedAids);
-      }
-
-      if (changed.length > 0) {
-        minuteSamplesTotal.inc({ outcome: "persisted" }, changed.length);
-      }
-      if (suppressedSamples.length > 0) {
         minuteSamplesTotal.inc(
           { outcome: "suppressed" },
           suppressedSamples.length,
         );
       }
+
       if (failedAids.length > 0) {
+        logger.warn(`Minute stats response missed ${failedAids.length} aid(s)`);
+        await this.db.advanceFailedMinuteVideos(failedAids);
         minuteSamplesTotal.inc({ outcome: "failed" }, failedAids.length);
       }
 
