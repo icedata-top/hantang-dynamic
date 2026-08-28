@@ -312,11 +312,11 @@ export class MinuteHandler {
       }
 
       if (changed.length > 0) {
-        minuteSamplesTotal.inc({ outcome: "changed" }, changed.length);
+        minuteSamplesTotal.inc({ outcome: "persisted" }, changed.length);
       }
       if (suppressedSamples.length > 0) {
         minuteSamplesTotal.inc(
-          { outcome: "unchanged" },
+          { outcome: "suppressed" },
           suppressedSamples.length,
         );
       }

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { minuteSamplesTotal } from "../../metrics/registry";
 import type { MinuteDatabase } from "./minuteHandler";
 import { MinuteHandler } from "./minuteHandler";
 
@@ -262,6 +263,7 @@ test("partial favorite samples persist initially and advance suppressed observat
     },
   });
 
+  minuteSamplesTotal.reset();
   await handler.processBatch([
     { aid: 1n, lastView: null, watchLaterManagedAccountIds: [] },
     { aid: 2n, lastView: 100n, watchLaterManagedAccountIds: [] },
@@ -274,6 +276,17 @@ test("partial favorite samples persist initially and advance suppressed observat
     { aid: 3n, time: sampledAt, favorite: 1, view: 100 },
   ]);
   assert.deepEqual(failedAids, []);
+  assert.deepEqual(
+    (await minuteSamplesTotal.get()).values.map(({ labels, value }) => ({
+      labels,
+      value,
+    })),
+    [
+      { labels: { outcome: "persisted" }, value: 1 },
+      { labels: { outcome: "suppressed" }, value: 2 },
+    ],
+  );
+  minuteSamplesTotal.reset();
 });
 
 test("a failed To View account is removed from subsequent batch routing", async () => {

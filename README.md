@@ -122,7 +122,7 @@ The endpoint exports process metrics plus application metrics with the
 `bili_tracker_` prefix for fetch cycles, Bilibili API latency and errors, rate
 limiter depth, PostgreSQL query and pool state, adaptive minute sampling,
 Watch Later reconciliation and mutation outcomes, aggregate enabled-account
-availability, minute sample outcomes and fallback misses,
+availability, minute sample persistence outcomes and fallback misses,
 notifications, exports, and fatal exit reasons.
 
 Prometheus scrape example:

@@ -3,6 +3,7 @@ import test from "node:test";
 import { CookieJar } from "tough-cookie";
 import { AccountAuthError } from "../../api/client";
 import { config } from "../../config";
+import { watchLaterMutationsTotal } from "../../metrics/registry";
 import {
   fetchWatchLaterSnapshot,
   mutateWatchLater,
@@ -144,4 +145,56 @@ test("Watch Later mutation preserves account authentication errors", async () =>
       (error: unknown) => error === authError,
     );
   });
+});
+
+test("Watch Later mutation metrics count only attempted POST requests", async () => {
+  await withGlobalCsrfToken(undefined, async () => {
+    watchLaterMutationsTotal.reset();
+    await assert.rejects(
+      mutateWatchLater(account(null, []), 1n, "add"),
+      /requires an authenticated account/,
+    );
+    assert.deepEqual((await watchLaterMutationsTotal.get()).values, []);
+  });
+
+  await withGlobalCsrfToken("global-token", async () => {
+    const succeeded = account(null, []);
+    await mutateWatchLater(succeeded, 1n, "add");
+
+    const capacityBlocked = account(null, []);
+    capacityBlocked.toViewClient.post = async () =>
+      Promise.reject({ code: 90001 });
+    await mutateWatchLater(capacityBlocked, 2n, "add");
+
+    const authFailed = account(null, []);
+    const authError = new AccountAuthError(4100000, "7", "expired");
+    authFailed.toViewClient.post = async () => Promise.reject(authError);
+    await assert.rejects(
+      mutateWatchLater(authFailed, 3n, "add"),
+      (error: unknown) => error === authError,
+    );
+
+    const ambiguous = account(null, []);
+    ambiguous.toViewClient.post = async () =>
+      Promise.reject(new Error("network failure"));
+    await assert.rejects(
+      mutateWatchLater(ambiguous, 4n, "add"),
+      /network failure/,
+    );
+  });
+
+  const { values } = await watchLaterMutationsTotal.get();
+  assert.deepEqual(
+    values.map(({ labels, value }) => ({ labels, value })),
+    [
+      { labels: { action: "add", outcome: "succeeded" }, value: 1 },
+      {
+        labels: { action: "add", outcome: "capacity_blocked" },
+        value: 1,
+      },
+      { labels: { action: "add", outcome: "failed" }, value: 1 },
+      { labels: { action: "add", outcome: "ambiguous" }, value: 1 },
+    ],
+  );
+  watchLaterMutationsTotal.reset();
 });

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CookieJar } from "tough-cookie";
+import {
+  watchLaterEnabledAccounts,
+  watchLaterReconciliationsTotal,
+} from "../../metrics/registry";
 import type { WatchLaterAccountContext } from "./watchLaterApi";
 import {
   partitionDesiredWatchLaterAids,
@@ -75,6 +79,18 @@ function database(
     },
     ...overrides,
   };
+}
+
+async function metricValue(
+  metric: {
+    get(): Promise<{ values: Array<{ labels: object; value: number }> }>;
+  },
+  labels: object,
+): Promise<number | undefined> {
+  const { values } = await metric.get();
+  return values.find(
+    (entry) => JSON.stringify(entry.labels) === JSON.stringify(labels),
+  )?.value;
 }
 
 test("assigns each desired AID once in deterministic capacity-bounded order", () => {
@@ -294,4 +310,108 @@ test("delete failure suppresses remaining deletes and all additions", async () =
     result.map((entry) => entry.reason),
     ["ambiguous"],
   );
+});
+
+test("publishes account health only after a scan completes", async () => {
+  watchLaterEnabledAccounts.reset();
+  watchLaterEnabledAccounts.set({ state: "healthy" }, 2);
+  watchLaterEnabledAccounts.set({ state: "unhealthy" }, 1);
+  let finishScan!: () => void;
+  const scanBlocked = new Promise<void>((resolve) => {
+    finishScan = resolve;
+  });
+  const context = account([], [], "7");
+  context.toViewClient.get = async () => {
+    await scanBlocked;
+    return { data: snapshot([]) };
+  };
+
+  const running = runAutomaticWatchLaterManagement(database(), [context]);
+  await Promise.resolve();
+  assert.equal(
+    await metricValue(watchLaterEnabledAccounts, { state: "healthy" }),
+    2,
+  );
+  assert.equal(
+    await metricValue(watchLaterEnabledAccounts, { state: "unhealthy" }),
+    1,
+  );
+
+  finishScan();
+  await running;
+  assert.equal(
+    await metricValue(watchLaterEnabledAccounts, { state: "healthy" }),
+    1,
+  );
+  assert.equal(
+    await metricValue(watchLaterEnabledAccounts, { state: "unhealthy" }),
+    0,
+  );
+  watchLaterEnabledAccounts.reset();
+});
+
+test("counts one final reconciliation outcome per cycle", async () => {
+  watchLaterReconciliationsTotal.reset();
+  await runAutomaticWatchLaterManagement(
+    database({
+      async getDesiredWatchLaterSet() {
+        return [1n, 2n];
+      },
+    }),
+    [account([snapshot([])], [90001], "7"), account([snapshot([])], [], "8")],
+    undefined,
+    { async delay() {} },
+  );
+  await runAutomaticWatchLaterManagement(database(), []);
+  await runAutomaticWatchLaterManagement(database(), [
+    account([snapshot([])], [], "7"),
+  ]);
+  let nowCalls = 0;
+  await runAutomaticWatchLaterManagement(
+    database({
+      async getDesiredWatchLaterSet() {
+        return [1n];
+      },
+    }),
+    [account([snapshot([])], [], "7")],
+    undefined,
+    { now: () => (nowCalls++ === 0 ? 0 : 14 * 60_000) },
+  );
+  await runAutomaticWatchLaterManagement(
+    database({
+      async getDesiredWatchLaterSet() {
+        return [1n];
+      },
+    }),
+    [account([snapshot([])], [], "7")],
+    undefined,
+    { shouldContinue: () => false },
+  );
+  await assert.rejects(
+    runAutomaticWatchLaterManagement(
+      database({
+        async getDesiredWatchLaterSet() {
+          throw new Error("query failed");
+        },
+      }),
+      [account([snapshot([])], [], "7")],
+    ),
+    /query failed/,
+  );
+
+  const { values } = await watchLaterReconciliationsTotal.get();
+  assert.deepEqual(
+    Object.fromEntries(
+      values.map(({ labels, value }) => [labels.outcome, value]),
+    ),
+    {
+      completed: 1,
+      deadline: 1,
+      internal_failure: 1,
+      no_healthy_accounts: 1,
+      partial: 1,
+      stopped: 1,
+    },
+  );
+  watchLaterReconciliationsTotal.reset();
 });

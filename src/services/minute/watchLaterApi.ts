@@ -2,6 +2,7 @@ import type { CookieJar } from "tough-cookie";
 import { isAccountAuthError } from "../../api/client";
 import { config } from "../../config";
 import type { WatchLaterAction } from "../../database/watchLater";
+import { watchLaterMutationsTotal } from "../../metrics/registry";
 import { sharedApiRateLimiter } from "../../utils/apiRateLimiter";
 import { logger } from "../../utils/logger";
 import {
@@ -52,6 +53,14 @@ export class WatchLaterMutationPrePostAbortError extends Error {
 
 export interface WatchLaterMutationOptions {
   beforePost?(): Promise<WatchLaterMutationPrePostAbortReason | undefined>;
+}
+
+function recordMutationResult(action: WatchLaterAction, code: number): void {
+  watchLaterMutationsTotal.inc({
+    action,
+    outcome:
+      code === 0 ? "succeeded" : code === 90001 ? "capacity_blocked" : "failed",
+  });
 }
 
 function rawApiErrorCode(error: unknown): number | undefined {
@@ -121,11 +130,19 @@ export async function mutateWatchLater(
           rawApiErrors: true,
         },
       );
+      recordMutationResult(action, response.data.code);
       return response.data.code;
     } catch (error) {
-      if (isAccountAuthError(error)) throw error;
+      if (isAccountAuthError(error)) {
+        watchLaterMutationsTotal.inc({ action, outcome: "failed" });
+        throw error;
+      }
       const code = rawApiErrorCode(error);
-      if (code !== undefined) return code;
+      if (code !== undefined) {
+        recordMutationResult(action, code);
+        return code;
+      }
+      watchLaterMutationsTotal.inc({ action, outcome: "ambiguous" });
       throw error;
     }
   } finally {

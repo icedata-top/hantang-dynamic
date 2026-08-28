@@ -1,7 +1,6 @@
 import type { WatchLaterAction } from "../../database/watchLater";
 import {
   watchLaterEnabledAccounts,
-  watchLaterMutationsTotal,
   watchLaterReconciliationsTotal,
 } from "../../metrics/registry";
 import { sleep } from "../../utils/datetime";
@@ -110,21 +109,15 @@ async function reconcileAccount(
       if (error instanceof WatchLaterMutationPrePostAbortError) {
         return error.reason;
       }
-      watchLaterMutationsTotal.inc({ action, outcome: "ambiguous" });
       return "ambiguous";
     }
     if (code === 0) {
-      watchLaterMutationsTotal.inc({ action, outcome: "succeeded" });
       if (action === "add") added += 1;
       else deleted += 1;
       return undefined;
     }
     const reason =
       code === CAPACITY_BLOCKED_CODE ? "capacity_blocked" : "ambiguous";
-    watchLaterMutationsTotal.inc({
-      action,
-      outcome: reason === "capacity_blocked" ? "capacity_blocked" : "failed",
-    });
     return reason;
   };
   const aids = phase === "delete" ? deletes : adds;
@@ -160,79 +153,100 @@ export async function runAutomaticWatchLaterManagement(
   capacity = WATCH_LATER_CAPACITY,
   options: WatchLaterManagementOptions = {},
 ): Promise<WatchLaterReconciliationResult[]> {
-  watchLaterEnabledAccounts.reset();
-  watchLaterEnabledAccounts.set({ state: "healthy" }, 0);
-  watchLaterEnabledAccounts.set({ state: "unhealthy" }, 0);
-  options.onHealthyAccounts?.(new Set());
-  const enabledById = new Map<bigint, WatchLaterAccountContext>();
-  for (const account of accounts) {
-    const id = accountId(account);
-    if (account.enableWatchLater && id !== null) {
-      enabledById.set(id, account);
-    }
-  }
-  const enabled = [...enabledById].sort(([left], [right]) =>
-    left < right ? -1 : left > right ? 1 : 0,
-  );
-  const healthy: Array<{
-    accountId: bigint;
-    account: WatchLaterAccountContext;
-    snapshot: WatchLaterSnapshot;
-  }> = [];
-  for (const [id, account] of enabled) {
-    try {
-      const snapshot = await fetchWatchLaterSnapshot(account.toViewClient);
-      if (!snapshot) continue;
-      await database.syncWatchLaterSnapshot(
-        id,
-        [...snapshot.aids].map(BigInt),
-        snapshot.pidV2Metadata,
-      );
-      healthy.push({ accountId: id, account, snapshot });
-    } catch {}
-  }
-  watchLaterEnabledAccounts.reset();
-  watchLaterEnabledAccounts.set({ state: "healthy" }, healthy.length);
-  watchLaterEnabledAccounts.set(
-    { state: "unhealthy" },
-    enabled.length - healthy.length,
-  );
-  options.onHealthyAccounts?.(new Set(healthy.map((item) => item.accountId)));
-  if (healthy.length === 0) return [];
-  const desiredAids = await database.getDesiredWatchLaterSet(
-    healthy.length * capacity,
-  );
-  const assignments = partitionDesiredWatchLaterAids(
-    desiredAids,
-    healthy.length,
-    capacity,
-  );
-  const delay = options.delay ?? sleep;
-  const now = options.now ?? Date.now;
-  const deadline = now() + CYCLE_DEADLINE_MS;
-  const pace = createPacer(delay);
-  const results: WatchLaterReconciliationResult[] = [];
-  for (const phase of ["delete", "add"] as const) {
-    for (const [index, item] of healthy.entries()) {
-      const result = await reconcileAccount(
-        item.account,
-        assignments[index] ?? [],
-        item.snapshot,
-        pace,
-        deadline,
-        now,
-        phase,
-        options.shouldContinue,
-      );
-      results.push(result);
-      watchLaterReconciliationsTotal.inc({ outcome: result.reason });
-      const canContinueAdding =
-        phase === "add" &&
-        (result.reason === "capacity_blocked" || result.reason === "ambiguous");
-      if (result.reason !== "completed" && !canContinueAdding) {
-        return results;
+  let cycleOutcome:
+    | "completed"
+    | "partial"
+    | "no_healthy_accounts"
+    | "deadline"
+    | "stopped"
+    | "internal_failure" = "internal_failure";
+  try {
+    options.onHealthyAccounts?.(new Set());
+    const enabledById = new Map<bigint, WatchLaterAccountContext>();
+    for (const account of accounts) {
+      const id = accountId(account);
+      if (account.enableWatchLater && id !== null) {
+        enabledById.set(id, account);
       }
     }
+    const enabled = [...enabledById].sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    );
+    const healthy: Array<{
+      accountId: bigint;
+      account: WatchLaterAccountContext;
+      snapshot: WatchLaterSnapshot;
+    }> = [];
+    for (const [id, account] of enabled) {
+      try {
+        const snapshot = await fetchWatchLaterSnapshot(account.toViewClient);
+        if (!snapshot) continue;
+        await database.syncWatchLaterSnapshot(
+          id,
+          [...snapshot.aids].map(BigInt),
+          snapshot.pidV2Metadata,
+        );
+        healthy.push({ accountId: id, account, snapshot });
+      } catch {}
+    }
+    watchLaterEnabledAccounts.reset();
+    watchLaterEnabledAccounts.set({ state: "healthy" }, healthy.length);
+    watchLaterEnabledAccounts.set(
+      { state: "unhealthy" },
+      enabled.length - healthy.length,
+    );
+    options.onHealthyAccounts?.(new Set(healthy.map((item) => item.accountId)));
+    if (healthy.length === 0) {
+      cycleOutcome = "no_healthy_accounts";
+      return [];
+    }
+    const desiredAids = await database.getDesiredWatchLaterSet(
+      healthy.length * capacity,
+    );
+    const assignments = partitionDesiredWatchLaterAids(
+      desiredAids,
+      healthy.length,
+      capacity,
+    );
+    const delay = options.delay ?? sleep;
+    const now = options.now ?? Date.now;
+    const deadline = now() + CYCLE_DEADLINE_MS;
+    const pace = createPacer(delay);
+    const results: WatchLaterReconciliationResult[] = [];
+    let hasAccountFailure = healthy.length < enabled.length;
+    for (const phase of ["delete", "add"] as const) {
+      for (const [index, item] of healthy.entries()) {
+        const result = await reconcileAccount(
+          item.account,
+          assignments[index] ?? [],
+          item.snapshot,
+          pace,
+          deadline,
+          now,
+          phase,
+          options.shouldContinue,
+        );
+        results.push(result);
+        if (result.reason === "deadline" || result.reason === "stopped") {
+          cycleOutcome = result.reason;
+          return results;
+        }
+        const canContinueAdding =
+          phase === "add" &&
+          (result.reason === "capacity_blocked" ||
+            result.reason === "ambiguous");
+        if (result.reason !== "completed") {
+          hasAccountFailure = true;
+          if (!canContinueAdding) {
+            cycleOutcome = "partial";
+            return results;
+          }
+        }
+      }
+    }
+    cycleOutcome = hasAccountFailure ? "partial" : "completed";
+    return results;
+  } finally {
+    watchLaterReconciliationsTotal.inc({ outcome: cycleOutcome });
   }
-  return results;
 }
