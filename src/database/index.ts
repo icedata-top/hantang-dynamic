@@ -22,7 +22,6 @@ import type {
 import type {
   DailyCollectionCandidate,
   PersistableVideoMinuteSample,
-  ProcessedVideoCollectionInput,
   VideoMinuteSample,
 } from "../types/models/minute.js";
 import type { VideoData } from "../types/models/video.js";
@@ -74,7 +73,6 @@ import {
   getNextMinuteDueAt,
   refreshVideoCollectionStateFromDaily,
   selectDueMinuteVideos,
-  upsertCollectionStateFromProcessedVideo,
 } from "./collectionState.js";
 import { getCachedForwardBvid, saveDynamic } from "./dynamics.js";
 import {
@@ -531,27 +529,6 @@ export class Database {
       maxPositivePriority: config.minute.maxPositivePriority,
       businessTimezone: config.minute.collectionBusinessTimezone,
     });
-  }
-
-  public async upsertCollectionStateFromProcessedVideo(
-    input: ProcessedVideoCollectionInput,
-    now?: Date,
-  ): Promise<string> {
-    return upsertCollectionStateFromProcessedVideo(
-      this.ensurePool(),
-      input,
-      now,
-      {
-        bootstrapPriority: config.minute.bootstrapPriority,
-        bootstrapTtlHours: config.minute.bootstrapTtlHours,
-        bootstrapLabelContentTypes: config.minute.bootstrapLabelContentTypes,
-        bootstrapLabelOrigin: config.minute.bootstrapLabelOrigin,
-        bootstrapLabelWriters: config.minute.bootstrapLabelWriters,
-        bootstrapTidV2Allowlist: config.minute.bootstrapTidV2Allowlist,
-        processedBackfillNewVideoAgeDays:
-          config.minute.processedBackfillNewVideoAgeDays,
-      },
-    );
   }
 
   // ===== Queue-free minute collection =====

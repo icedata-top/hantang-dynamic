@@ -52,22 +52,11 @@ function accountId(account: { uid: string }): bigint | null {
 function createPacer(
   delay: Delay,
 ): (action: () => Promise<void>) => Promise<void> {
-  let tail = Promise.resolve();
   let used = false;
   return async (action) => {
-    const previous = tail;
-    let release: () => void = () => {};
-    tail = new Promise((resolve) => {
-      release = resolve;
-    });
-    await previous;
-    try {
-      if (used) await delay(MUTATION_DELAY_MS);
-      used = true;
-      await action();
-    } finally {
-      release();
-    }
+    if (used) await delay(MUTATION_DELAY_MS);
+    used = true;
+    await action();
   };
 }
 

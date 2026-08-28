@@ -40,7 +40,6 @@ test("To View fetches once per account with one bounded attempt", async () => {
   );
 
   assert.deepEqual(result, {
-    samples: [],
     failedAccountIds: [],
     samplesByAccountId: new Map([
       [100n, []],
@@ -86,7 +85,6 @@ test("To View rejects an incomplete response before sampling", async () => {
   );
 
   assert.deepEqual(result, {
-    samples: [],
     failedAccountIds: [100n],
     samplesByAccountId: new Map(),
   });
@@ -106,5 +104,5 @@ test("To View rejects a success response without snapshot data", async () => {
   );
 
   assert.deepEqual(result.failedAccountIds, [100n]);
-  assert.deepEqual(result.samples, []);
+  assert.deepEqual(result.samplesByAccountId, new Map());
 });
