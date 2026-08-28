@@ -4,8 +4,11 @@ import cliProgress from "cli-progress";
 import { parse } from "csv-parse";
 import { config } from "../config";
 import { Database } from "../database";
-import { DetailsService } from "../services/details.service";
-import type { BiliDynamicCard, VideoData } from "../types";
+import {
+  DetailsService,
+  type RelatedVideoWorkItem,
+} from "../services/details.service";
+import type { VideoData } from "../types";
 import { exportData } from "../utils/exporter/exporter";
 import { logger } from "../utils/logger";
 import { notifyNewVideos } from "../utils/notifier/notifier";
@@ -222,7 +225,7 @@ export async function runImportCsv() {
 
 async function processRelatedQueue(
   service: DetailsService,
-  queue: BiliDynamicCard[],
+  queue: RelatedVideoWorkItem[],
   depth: number,
   maxDepth: number,
   results: VideoData[],
@@ -231,19 +234,23 @@ async function processRelatedQueue(
 ) {
   if (depth >= maxDepth || queue.length === 0) return;
 
-  const nextQueue: BiliDynamicCard[] = [];
+  const nextQueue: RelatedVideoWorkItem[] = [];
 
   for (const item of queue) {
-    const bvid = item.desc?.bvid;
+    const bvid = item.dynamic.desc?.bvid;
     if (!bvid || seenBvids.has(bvid)) continue;
     seenBvids.add(bvid);
 
     try {
-      const { video, relatedVideos } = await service.processVideo(item, {
-        processRecommendations,
-        processRelated: depth < maxDepth,
-        skipCacheCheck: true,
-      });
+      const { video, relatedVideos } = await service.processVideo(
+        item.dynamic,
+        {
+          pidV2: item.pidV2,
+          processRecommendations,
+          processRelated: depth < maxDepth,
+          skipCacheCheck: true,
+        },
+      );
       if (video) {
         results.push(video);
         nextQueue.push(...relatedVideos);

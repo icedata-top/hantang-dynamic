@@ -17,16 +17,16 @@ import { logger } from "../utils/logger";
 import type { RateLimiter } from "../utils/rateLimiter";
 
 interface VideoProcessingOptions {
+  pidV2?: number;
   processRecommendations?: boolean;
   processRelated?: boolean;
   skipCacheCheck?: boolean;
 }
 
-const RELATED_PID_V2 = Symbol("relatedPidV2");
-
-type RelatedVideoWorkItem = BiliDynamicCard & {
-  [RELATED_PID_V2]?: number;
-};
+export interface RelatedVideoWorkItem {
+  dynamic: BiliDynamicCard;
+  pidV2?: number;
+}
 
 const MAX_POSTGRES_INTEGER = 2_147_483_647;
 
@@ -39,27 +39,27 @@ function validPidV2(value: unknown): value is number {
   );
 }
 
+function compareTagNames(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 function parseTagSnapshot(value: unknown): {
   names: string[];
   tags: Array<{ tagId: bigint; tagName: string }>;
 } | null {
   if (!Array.isArray(value)) return null;
-  const names: string[] = [];
+  const retainedTags: Array<{ tagId?: number; tagName: string }> = [];
   const tagsById = new Map<bigint, string>();
+  let hasUsableItem = value.length === 0;
   for (const item of value) {
-    if (typeof item !== "object" || item === null) return null;
+    if (typeof item !== "object" || item === null) continue;
     const tagType = "tag_type" in item ? item.tag_type : undefined;
-    if (tagType !== undefined && typeof tagType !== "string") return null;
+    if (tagType !== undefined && typeof tagType !== "string") continue;
     const tagName = "tag_name" in item ? item.tag_name : undefined;
-    if (typeof tagName !== "string") return null;
-    const tagId = "tag_id" in item ? item.tag_id : undefined;
-    if (
-      typeof tagId !== "number" ||
-      !Number.isSafeInteger(tagId) ||
-      tagId < 0
-    ) {
-      return null;
-    }
+    if (typeof tagName !== "string") continue;
+    hasUsableItem = true;
     if (
       tagType !== undefined &&
       tagType !== "old_channel" &&
@@ -67,11 +67,36 @@ function parseTagSnapshot(value: unknown): {
     ) {
       continue;
     }
-    names.push(tagName);
-    if (tagId !== 0) tagsById.set(BigInt(tagId), tagName);
+    const tagId = "tag_id" in item ? item.tag_id : undefined;
+    const hasValidTagId =
+      typeof tagId === "number" && Number.isSafeInteger(tagId) && tagId > 0;
+    retainedTags.push({
+      tagName,
+      ...(hasValidTagId ? { tagId } : {}),
+    });
   }
+
+  retainedTags.sort((left, right) => {
+    if (left.tagId !== undefined && right.tagId !== undefined) {
+      return (
+        left.tagId - right.tagId || compareTagNames(left.tagName, right.tagName)
+      );
+    }
+    if (left.tagId !== undefined) return -1;
+    if (right.tagId !== undefined) return 1;
+    return compareTagNames(left.tagName, right.tagName);
+  });
+
+  if (!hasUsableItem) return null;
+
+  for (const tag of retainedTags) {
+    if (tag.tagId === undefined) continue;
+    const tagId = BigInt(tag.tagId);
+    if (!tagsById.has(tagId)) tagsById.set(tagId, tag.tagName);
+  }
+
   return {
-    names,
+    names: retainedTags.map(({ tagName }) => tagName),
     tags: [...tagsById].map(([tagId, tagName]) => ({ tagId, tagName })),
   };
 }
@@ -96,7 +121,7 @@ export class DetailsService {
     options: boolean | VideoProcessingOptions = {},
   ): Promise<{
     video: VideoData | null;
-    relatedVideos: BiliDynamicCard[];
+    relatedVideos: RelatedVideoWorkItem[];
   }> {
     const processingOptions =
       typeof options === "boolean" ? { processRelated: options } : options;
@@ -114,7 +139,6 @@ export class DetailsService {
 
       return await this.processVideoById(bvid, {
         ...processingOptions,
-        pidV2: (dynamic as RelatedVideoWorkItem)[RELATED_PID_V2],
       });
     } catch (error) {
       if (isAccountAuthError(error)) {
@@ -146,7 +170,7 @@ export class DetailsService {
     } = {},
   ): Promise<{
     video: VideoData | null;
-    relatedVideos: BiliDynamicCard[];
+    relatedVideos: RelatedVideoWorkItem[];
   }> {
     const {
       processRecommendations = true,
@@ -365,7 +389,7 @@ export class DetailsService {
     } = {},
   ): Promise<{
     video: VideoData | null;
-    relatedVideos: BiliDynamicCard[];
+    relatedVideos: RelatedVideoWorkItem[];
   }> {
     const {
       processRecommendations = true,
@@ -421,7 +445,7 @@ export class DetailsService {
     },
   ): Promise<{
     video: VideoData | null;
-    relatedVideos: BiliDynamicCard[];
+    relatedVideos: RelatedVideoWorkItem[];
   }> {
     const filtered = await filterVideo(videoData);
 
@@ -656,43 +680,40 @@ export class DetailsService {
   private convertRelatedToDynamics(
     relatedVideos: RecommendedVideo[],
   ): RelatedVideoWorkItem[] {
-    return relatedVideos.map(
-      (video) =>
-        ({
-          desc: {
-            bvid: video.bvid,
-            dynamic_id: 0,
-            type: 8,
-            timestamp: video.pubdate,
-            user_profile: {
-              info: {
-                uid: video.owner.mid,
-                uname: video.owner.name,
-                face: video.owner.face,
-              },
+    return relatedVideos.map((video) => ({
+      dynamic: {
+        desc: {
+          bvid: video.bvid,
+          dynamic_id: 0,
+          type: 8,
+          timestamp: video.pubdate,
+          user_profile: {
+            info: {
+              uid: video.owner.mid,
+              uname: video.owner.name,
+              face: video.owner.face,
             },
-            uid: video.owner.mid,
-            rid: BigInt(video.aid),
-            view: video.stat.view,
-            repost: 0,
-            comment: 0,
-            like: 0,
-            is_liked: 0,
-            acl: 0,
-            status: 1,
           },
-          card: JSON.stringify({
-            aid: video.aid,
-            owner: video.owner,
-            pic: video.pic,
-            title: video.title,
-            stat: video.stat,
-          }),
-          ...(validPidV2(video.pid_v2)
-            ? { [RELATED_PID_V2]: video.pid_v2 }
-            : {}),
-        }) as unknown as RelatedVideoWorkItem,
-    );
+          uid: video.owner.mid,
+          rid: BigInt(video.aid),
+          view: video.stat.view,
+          repost: 0,
+          comment: 0,
+          like: 0,
+          is_liked: 0,
+          acl: 0,
+          status: 1,
+        },
+        card: JSON.stringify({
+          aid: video.aid,
+          owner: video.owner,
+          pic: video.pic,
+          title: video.title,
+          stat: video.stat,
+        }),
+      } as unknown as BiliDynamicCard,
+      ...(validPidV2(video.pid_v2) ? { pidV2: video.pid_v2 } : {}),
+    }));
   }
 
   private buildRecommendationInputs(

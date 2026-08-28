@@ -135,7 +135,8 @@ test("new related videos persist pid_v2 supplied by the parent response", async 
     Reflect.set(service, "fetchVideoDetails", async () =>
       detail(50n, "BV1related"),
     );
-    await service.processVideo(source.relatedVideos[0], {
+    await service.processVideo(source.relatedVideos[0].dynamic, {
+      pidV2: source.relatedVideos[0].pidV2,
       processRecommendations: false,
       processRelated: false,
       skipCacheCheck: true,
@@ -239,12 +240,12 @@ test("detail metadata retains recognized ordinary and topic TAGs", async () => {
     },
     Card: { card: {} },
     Tags: [
-      { tag_id: 10, tag_name: "ordinary" },
-      { tag_id: 11, tag_name: "channel", tag_type: "old_channel" },
       { tag_id: 12, tag_name: "topic", tag_type: "topic" },
+      { tag_id: 11, tag_name: "channel", tag_type: "old_channel" },
       { tag_id: 20, tag_name: "song", tag_type: "bgm" },
       { tag_id: 30, tag_name: "future", tag_type: "future_type" },
       { tag_id: 0, tag_name: "legacy-name" },
+      { tag_id: 10, tag_name: "ordinary" },
     ],
   } as unknown as BiliVideoDetailDataForProcessing;
 
@@ -267,7 +268,7 @@ test("detail metadata retains recognized ordinary and topic TAGs", async () => {
   ]);
 });
 
-test("missing or malformed detail TAG arrays do not create authoritative relations", async () => {
+test("tag parsing retains valid items when another item is malformed", async () => {
   const service = new DetailsService();
   const base = {
     View: {
@@ -289,18 +290,82 @@ test("missing or malformed detail TAG arrays do not create authoritative relatio
     },
     Card: { card: {} },
   };
-  for (const Tags of [
-    undefined,
-    [{ tag_name: "missing identity" }],
-    [{ tag_id: 20, tag_type: "bgm" }],
-  ]) {
-    const { videoData } = await service.processVideoDetailResponse(
-      { ...base, Tags } as unknown as BiliVideoDetailDataForProcessing,
-      { storeOwner: false },
-    );
-    assert.equal(videoData.tagSnapshot, undefined);
-    assert.equal(videoData.mission_id, undefined);
-  }
+  const { videoData } = await service.processVideoDetailResponse(
+    {
+      ...base,
+      Tags: [
+        { tag_id: 12, tag_name: "topic", tag_type: "topic" },
+        { tag_id: "bad", tag_name: "fallback" },
+        { tag_id: 10, tag_name: "ordinary" },
+        { tag_id: 11, tag_name: 42 },
+        null,
+      ],
+    } as unknown as BiliVideoDetailDataForProcessing,
+    { storeOwner: false },
+  );
+
+  assert.equal(videoData.tag, "ordinary;topic;fallback");
+  assert.deepEqual(videoData.tag_new, ["ordinary", "topic", "fallback"]);
+  assert.deepEqual(videoData.tagSnapshot, [
+    { tagId: 10n, tagName: "ordinary" },
+    { tagId: 12n, tagName: "topic" },
+  ]);
+
+  const malformedOnly = await service.processVideoDetailResponse(
+    {
+      ...base,
+      Tags: [null, { tag_id: 11, tag_name: 42 }],
+    } as unknown as BiliVideoDetailDataForProcessing,
+    { storeOwner: false },
+  );
+  assert.equal(malformedOnly.videoData.tagSnapshot, undefined);
+});
+
+test("equivalent tag responses produce the same stored order", async () => {
+  const service = new DetailsService();
+  const base = {
+    View: {
+      aid: 42n,
+      bvid: "BV1test",
+      owner: { mid: 7n },
+      tid: 3,
+      title: "video",
+      desc: "",
+      dynamic: "",
+      pic: "",
+      pubdate: 1,
+      ctime: 1,
+      copyright: 1,
+      duration: 1,
+      videos: 1,
+      state: 0,
+      cid: 1,
+    },
+    Card: { card: {} },
+  };
+  const tags = [
+    { tag_id: 30, tag_name: "third" },
+    { tag_name: "fallback-b" },
+    { tag_id: 10, tag_name: "first" },
+    { tag_name: "fallback-a" },
+  ];
+
+  const first = await service.processVideoDetailResponse(
+    { ...base, Tags: tags } as unknown as BiliVideoDetailDataForProcessing,
+    { storeOwner: false },
+  );
+  const second = await service.processVideoDetailResponse(
+    {
+      ...base,
+      Tags: [...tags].reverse(),
+    } as unknown as BiliVideoDetailDataForProcessing,
+    { storeOwner: false },
+  );
+
+  assert.equal(first.videoData.tag, "first;third;fallback-a;fallback-b");
+  assert.equal(second.videoData.tag, first.videoData.tag);
+  assert.deepEqual(second.videoData.tag_new, first.videoData.tag_new);
+  assert.deepEqual(second.videoData.tagSnapshot, first.videoData.tagSnapshot);
 });
 
 test("an empty detail TAG array is an authoritative empty snapshot", async () => {
