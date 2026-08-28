@@ -679,8 +679,13 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
   `);
 
   await pool.query(`
+    DROP FUNCTION IF EXISTS fn_advance_failed_minute_videos(bigint[], timestamptz)
+  `);
+
+  await pool.query(`
     CREATE OR REPLACE FUNCTION fn_advance_failed_minute_videos(
       p_aids bigint[],
+      p_attempt_started_at timestamptz,
       p_now timestamptz DEFAULT now()
     ) RETURNS integer AS $$
     DECLARE
@@ -698,7 +703,11 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           updated_at = p_now
       WHERE s.aid = ANY(p_aids)
         AND s.priority > 0
-        AND s.next_minute_due_at IS NOT NULL;
+        AND s.next_minute_due_at IS NOT NULL
+        AND (
+          s.last_minute_success_at IS NULL
+          OR s.last_minute_success_at < p_attempt_started_at
+        );
 
       GET DIAGNOSTICS advanced_count = ROW_COUNT;
       RETURN advanced_count;

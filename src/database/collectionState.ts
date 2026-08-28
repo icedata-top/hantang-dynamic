@@ -170,12 +170,13 @@ export async function advanceSuppressedMinuteSamples(
 export async function advanceFailedMinuteVideos(
   pool: Pool,
   aids: bigint[],
+  attemptStartedAt: Date,
   now = new Date(),
 ): Promise<number> {
   if (aids.length === 0) return 0;
   const result = await pool.query(
-    "SELECT fn_advance_failed_minute_videos($1::bigint[], $2) AS count",
-    [aids.map((a) => a.toString()), now],
+    "SELECT fn_advance_failed_minute_videos($1::bigint[], $2, $3) AS count",
+    [aids.map((a) => a.toString()), attemptStartedAt, now],
   );
   return Number(result.rows[0]?.count ?? 0);
 }

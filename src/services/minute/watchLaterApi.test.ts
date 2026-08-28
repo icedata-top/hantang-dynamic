@@ -178,7 +178,7 @@ test("Watch Later mutation metrics count only attempted POST requests", async ()
 
     const capacityBlocked = account(null, []);
     capacityBlocked.toViewClient.post = async () =>
-      Promise.reject({ code: 90001 });
+      Promise.reject({ status: 200, code: 90001 });
     await mutateWatchLater(capacityBlocked, 2n, "add");
 
     const authFailed = account(null, []);
@@ -212,4 +212,26 @@ test("Watch Later mutation metrics count only attempted POST requests", async ()
     ],
   );
   watchLaterMutationsTotal.reset();
+});
+
+test("Watch Later mutation treats HTTP failures as ambiguous", async () => {
+  await withGlobalCsrfToken("global-token", async () => {
+    watchLaterMutationsTotal.reset();
+    const context = account(null, []);
+    const httpError = { status: 502, code: 502, message: "Bad Gateway" };
+    context.toViewClient.post = async () => Promise.reject(httpError);
+
+    await assert.rejects(
+      mutateWatchLater(context, 1n, "add"),
+      (error: unknown) => error === httpError,
+    );
+
+    assert.deepEqual(
+      (await watchLaterMutationsTotal.get()).values.map(
+        ({ labels, value }) => ({ labels, value }),
+      ),
+      [{ labels: { action: "add", outcome: "ambiguous" }, value: 1 }],
+    );
+    watchLaterMutationsTotal.reset();
+  });
 });

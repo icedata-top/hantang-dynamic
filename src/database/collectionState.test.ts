@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
 import {
+  advanceFailedMinuteVideos,
   advanceSuppressedMinuteSamples,
   selectDueMinuteVideos,
 } from "./collectionState";
@@ -10,6 +11,34 @@ import {
   repairInactiveVideoCollectionStates,
 } from "./schema/collection_state";
 import { initializeSchema } from "./schema/index";
+
+test("failed minute advancement carries attempt and completion times", async () => {
+  let query = "";
+  let values: unknown[] | undefined;
+  const pool = {
+    async query(sql: string, parameters?: unknown[]) {
+      query = sql;
+      values = parameters;
+      return { rows: [{ count: 1 }], rowCount: 1 };
+    },
+  } as Pool;
+  const attemptStartedAt = new Date("2026-08-20T00:00:00.000Z");
+  const completedAt = new Date("2026-08-20T00:02:00.000Z");
+
+  const count = await advanceFailedMinuteVideos(
+    pool,
+    [1n],
+    attemptStartedAt,
+    completedAt,
+  );
+
+  assert.equal(count, 1);
+  assert.match(
+    query,
+    /fn_advance_failed_minute_videos\(\$1::bigint\[\], \$2, \$3\)/,
+  );
+  assert.deepEqual(values, [["1"], attemptStartedAt, completedAt]);
+});
 
 test("inactive collection-state repair terminals deleted and filtered rows", async () => {
   const queries: string[] = [];
@@ -158,6 +187,29 @@ test("late and equal observations cannot replace newer collection state", async 
   assert.match(schemaSql, /l\."time" > s\.last_minute_success_at/);
   assert.match(schemaSql, /d\.observed_at > s\.last_minute_success_at/);
   assert.match(schemaSql, /c\."time" > s\.last_minute_success_at/);
+});
+
+test("failed attempts only reschedule state without a newer successful observation", async () => {
+  const queries: string[] = [];
+  const pool = {
+    async query(sql: string) {
+      queries.push(sql);
+      return { rows: [], rowCount: 0 };
+    },
+  } as Pool;
+
+  await initCollectionStateSchema(pool);
+
+  const failureAdvanceSql = queries.find((sql) =>
+    sql.includes("CREATE OR REPLACE FUNCTION fn_advance_failed_minute_videos"),
+  );
+  assert.ok(failureAdvanceSql);
+  assert.match(
+    failureAdvanceSql,
+    /last_minute_success_at IS NULL\s+OR s\.last_minute_success_at < p_attempt_started_at/,
+  );
+  assert.match(failureAdvanceSql, /p_now \+ interval '1 second'/);
+  assert.match(failureAdvanceSql, /updated_at = p_now/);
 });
 
 test("collection-state schema adds Watch Later state before replacing the due-video function signature", async () => {

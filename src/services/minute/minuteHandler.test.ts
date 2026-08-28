@@ -416,6 +416,32 @@ test("counts failed samples when retry-state advancement also fails", async () =
   minuteSamplesTotal.reset();
 });
 
+test("failed sampling advances retry state against the attempt start", async () => {
+  let attemptStartedAt: Date | undefined;
+  const beforeAttempt = new Date();
+  const handler = new MinuteHandler({
+    database: {
+      ...database(() => {}),
+      async advanceFailedMinuteVideos(_aids, startedAt) {
+        attemptStartedAt = startedAt;
+        return 1;
+      },
+    },
+    loadAccounts: () => [],
+    async sampleVideoStats() {
+      throw new Error("sampling failed");
+    },
+  });
+
+  await handler.processBatch([
+    { aid: 1n, lastView: null, watchLaterManagedAccountIds: [] },
+  ]);
+
+  assert.ok(attemptStartedAt);
+  assert.ok(attemptStartedAt >= beforeAttempt);
+  assert.ok(attemptStartedAt <= new Date());
+});
+
 test("a failed To View account is removed from subsequent batch routing", async () => {
   const routedAccountIds: bigint[][] = [];
   let calls = 0;

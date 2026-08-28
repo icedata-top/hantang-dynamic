@@ -583,9 +583,15 @@ export class Database {
 
   public async advanceFailedMinuteVideos(
     aids: bigint[],
+    attemptStartedAt: Date,
     now?: Date,
   ): Promise<number> {
-    return advanceFailedMinuteVideos(this.ensurePool(), aids, now);
+    return advanceFailedMinuteVideos(
+      this.ensurePool(),
+      aids,
+      attemptStartedAt,
+      now,
+    );
   }
 
   public async insertVideoMinuteSamples(

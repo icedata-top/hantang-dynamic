@@ -66,7 +66,13 @@ function recordMutationResult(action: WatchLaterAction, code: number): void {
 }
 
 function rawApiErrorCode(error: unknown): number | undefined {
-  if (!error || typeof error !== "object" || !("code" in error)) {
+  if (
+    !error ||
+    typeof error !== "object" ||
+    !("code" in error) ||
+    !("status" in error) ||
+    (error as { status?: unknown }).status !== 200
+  ) {
     return undefined;
   }
   const code = (error as { code?: unknown }).code;

@@ -225,6 +225,7 @@ export class MinuteHandler {
   ): Promise<number> {
     if (due.length === 0) return 0;
     const endBatch = minuteBatchDurationSeconds.startTimer();
+    const attemptStartedAt = new Date();
 
     const aids = due.map((d) => d.aid);
     let samples: VideoMinuteSample[] = [];
@@ -249,7 +250,7 @@ export class MinuteHandler {
       } catch (error) {
         logger.error("Minute stats batch request failed:", error);
         minuteSamplesTotal.inc({ outcome: "failed" }, aids.length);
-        await this.db.advanceFailedMinuteVideos(aids);
+        await this.db.advanceFailedMinuteVideos(aids, attemptStartedAt);
         return aids.length;
       }
 
@@ -304,7 +305,7 @@ export class MinuteHandler {
         } catch (error) {
           logger.error("Minute sample write failed:", error);
           minuteSamplesTotal.inc({ outcome: "failed" }, aids.length);
-          await this.db.advanceFailedMinuteVideos(aids);
+          await this.db.advanceFailedMinuteVideos(aids, attemptStartedAt);
           return aids.length;
         }
       }
@@ -328,7 +329,7 @@ export class MinuteHandler {
       if (failedAids.length > 0) {
         logger.warn(`Minute stats response missed ${failedAids.length} aid(s)`);
         minuteSamplesTotal.inc({ outcome: "failed" }, failedAids.length);
-        await this.db.advanceFailedMinuteVideos(failedAids);
+        await this.db.advanceFailedMinuteVideos(failedAids, attemptStartedAt);
       }
 
       return aids.length;
