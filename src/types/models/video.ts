@@ -13,6 +13,8 @@ export interface VideoData {
   // === Category ===
   type_id: number; // tid
   tid_v2?: number;
+  pid_v2?: number;
+  mission_id?: bigint;
 
   // === Content ===
   title: string;
@@ -21,6 +23,7 @@ export interface VideoData {
   pic: string;
   tag: string; // 保留分号分隔
   tag_new?: string[];
+  tagSnapshot?: Array<{ tagId: bigint; tagName: string }>;
   participle?: string[]; // 分词
 
   // === Timing ===

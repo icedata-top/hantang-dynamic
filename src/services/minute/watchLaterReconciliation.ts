@@ -30,6 +30,7 @@ export interface WatchLaterDatabase {
   syncWatchLaterSnapshot(
     accountId: bigint,
     aids: bigint[],
+    pidV2Metadata: ReadonlyArray<{ aid: bigint; pidV2: number }>,
     completedAt: Date,
   ): Promise<number>;
   withWatchLaterAccountLease<T>(
@@ -209,6 +210,7 @@ export async function runAutomaticWatchLaterManagement(
       await database.syncWatchLaterSnapshot(
         row.accountId,
         [...snapshot.aids].map(BigInt),
+        snapshot.pidV2Metadata,
         snapshot.completedAt,
       );
       healthy.push({ account, row, snapshot });

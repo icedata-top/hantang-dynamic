@@ -45,10 +45,18 @@ test("complete snapshots synchronize one UID without creating remote-only state"
     } as Pool,
     7n,
     [1n],
+    [{ aid: 1n, pidV2: 22 }],
     new Date(),
+  );
+  const enrichmentIndex = queries.findIndex((sql) =>
+    sql.includes("UPDATE processed_videos"),
   );
   const membership =
     queries.find((sql) => sql.includes("UPDATE video_collection_state")) ?? "";
+  assert.equal(queries[0], "BEGIN");
+  assert.ok(enrichmentIndex > 0);
+  assert.ok(enrichmentIndex < queries.indexOf(membership));
+  assert.equal(queries[queries.length - 1], "COMMIT");
   assert.match(membership, /aid = ANY\(\$2::bigint\[\]\)/);
   assert.match(membership, /array_append/);
   assert.match(membership, /array_remove/);
@@ -76,6 +84,7 @@ test("snapshot synchronization adds and removes only the observed account UID", 
     } as Pool,
     7n,
     [1n, 2n],
+    [],
     new Date(),
   );
   const membership =

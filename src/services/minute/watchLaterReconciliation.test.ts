@@ -12,9 +12,10 @@ import {
   type WatchLaterDatabase,
 } from "./watchLaterReconciliation";
 
-function item(aid: number) {
+function item(aid: number, pidV2?: number) {
   return {
     aid,
+    ...(pidV2 === undefined ? {} : { pid_v2: pidV2 }),
     stat: {
       aid,
       coin: 1,
@@ -28,8 +29,14 @@ function item(aid: number) {
   };
 }
 
-function snapshot(aids: number[]) {
-  return { code: 0, data: { count: aids.length, list: aids.map(item) } };
+function snapshot(aids: number[], pidV2ByAid: Map<number, number> = new Map()) {
+  return {
+    code: 0,
+    data: {
+      count: aids.length,
+      list: aids.map((aid) => item(aid, pidV2ByAid.get(aid))),
+    },
+  };
 }
 
 function account(
@@ -111,6 +118,7 @@ test("assigns each desired AID once in deterministic capacity-bounded order", ()
 test("syncs healthy snapshots, deletes globally before adding, and shares pacing", async () => {
   const actions: string[] = [];
   const delays: number[] = [];
+  const metadata: Array<ReadonlyArray<{ aid: bigint; pidV2: number }>> = [];
   let target = 0;
   const result = await runAutomaticWatchLaterManagement(
     database({
@@ -124,9 +132,13 @@ test("syncs healthy snapshots, deletes globally before adding, and shares pacing
         target = requested;
         return { aids: [1n, 2n, 3n, 4n], overflow: false };
       },
+      async syncWatchLaterSnapshot(_accountId, _aids, pidV2Metadata) {
+        metadata.push(pidV2Metadata);
+        return 0;
+      },
     }),
     [
-      account([snapshot([90])], [], "7", actions),
+      account([snapshot([90], new Map([[90, 22]]))], [], "7", actions),
       account([snapshot([91])], [], "8", actions),
     ],
     2,
@@ -137,6 +149,7 @@ test("syncs healthy snapshots, deletes globally before adding, and shares pacing
     },
   );
   assert.equal(target, 4);
+  assert.deepEqual(metadata, [[{ aid: 90n, pidV2: 22 }], []]);
   assert.deepEqual(actions, [
     "/del:90",
     "/del:91",

@@ -7,6 +7,7 @@ const sampledAt = new Date("2026-08-18T00:00:00.000Z");
 function item(aid = 1) {
   return {
     aid,
+    pid_v2: 11,
     stat: {
       aid,
       coin: 1,
@@ -26,6 +27,8 @@ test("To View validator accepts only complete matching int32 tuples", () => {
     sampledAt,
   );
   assert.equal(result.invalidItemCount, 0);
+  assert.equal(result.invalidPidV2Count, 0);
+  assert.deepEqual(result.pidV2Metadata, [{ aid: 1n, pidV2: 11 }]);
   assert.deepEqual(result.samples[0], {
     ...item().stat,
     aid: 1n,
@@ -53,4 +56,19 @@ test("To View validator rejects malformed counters, mismatched aids, and duplica
   );
   assert.equal(result.samples.length, 1);
   assert.equal(result.invalidItemCount, 5);
+});
+
+test("To View validator keeps valid items when pid_v2 is absent, null, or malformed", () => {
+  const absent = item(1) as Record<string, unknown>;
+  delete absent.pid_v2;
+  const nullPid = { ...item(2), pid_v2: null };
+  const malformed = { ...item(3), pid_v2: "music" };
+  const result = validateToViewResponse(
+    { code: 0, data: { count: 3, list: [absent, nullPid, malformed] } },
+    sampledAt,
+  );
+  assert.equal(result.samples.length, 3);
+  assert.equal(result.invalidItemCount, 0);
+  assert.equal(result.invalidPidV2Count, 1);
+  assert.deepEqual(result.pidV2Metadata, []);
 });

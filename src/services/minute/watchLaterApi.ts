@@ -2,6 +2,7 @@ import type { CookieJar } from "tough-cookie";
 import { config } from "../../config";
 import type { WatchLaterAction } from "../../database/watchLater";
 import { sharedApiRateLimiter } from "../../utils/apiRateLimiter";
+import { logger } from "../../utils/logger";
 import type { ToViewAccountIdentity, ToViewClient } from "./toview";
 import { validateToViewResponse } from "./toviewContract";
 
@@ -32,7 +33,10 @@ export interface WatchLaterAccountContext extends ToViewAccountIdentity {
 export interface WatchLaterSnapshot {
   aids: Set<string>;
   completedAt: Date;
+  pidV2Metadata: Array<{ aid: bigint; pidV2: number }>;
 }
+
+const WATCH_LATER_MEMBERSHIP_CAPACITY = 1_000;
 
 export type WatchLaterMutationPrePostAbortReason =
   | "deadline"
@@ -90,13 +94,20 @@ export async function fetchWatchLaterSnapshot(
       validated.invalidItemCount !== 0 ||
       expected === undefined ||
       listed === undefined ||
-      expected !== listed
+      expected !== listed ||
+      listed > WATCH_LATER_MEMBERSHIP_CAPACITY
     ) {
       return null;
+    }
+    if (validated.invalidPidV2Count > 0) {
+      logger.warn(
+        `Watch Later snapshot ignored pid_v2 metadata for ${validated.invalidPidV2Count} item(s)`,
+      );
     }
     return {
       aids: new Set(validated.samples.map((sample) => sample.aid.toString())),
       completedAt: now,
+      pidV2Metadata: validated.pidV2Metadata,
     };
   } catch {
     return null;

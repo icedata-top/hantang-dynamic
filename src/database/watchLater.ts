@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
+import { updateProcessedVideoPidV2 } from "./videos.js";
 
 export type WatchLaterAction = "add" | "delete";
 
@@ -87,10 +88,7 @@ export async function getDesiredWatchLaterSet(
            WHERE priority_candidates.aid = state.aid
          )
        ORDER BY video.pubdate DESC NULLS LAST, video.aid DESC
-       LIMIT LEAST(
-         GREATEST($1 - (SELECT count(*) FROM priority_candidates), 0),
-         ($1 * 2 / 5)
-       )
+       LIMIT ($1 * 2 / 5)
      )
      SELECT aid, 0 AS section, priority AS priority_order,
             aid AS priority_aid_order, NULL::bigint AS pubdate_order,
@@ -166,6 +164,7 @@ export async function syncWatchLaterSnapshot(
   pool: Pool,
   accountId: bigint,
   observedAids: bigint[],
+  pidV2Metadata: ReadonlyArray<{ aid: bigint; pidV2: number }>,
   completedAt: Date,
 ): Promise<number> {
   const client = await pool.connect();
@@ -181,6 +180,8 @@ export async function syncWatchLaterSnapshot(
     if ((accountResult.rowCount ?? 0) !== 1) {
       throw new Error(`Watch-later account ${accountId} does not exist`);
     }
+
+    await updateProcessedVideoPidV2(client, pidV2Metadata);
 
     const membershipResult = await client.query(
       `UPDATE video_collection_state
