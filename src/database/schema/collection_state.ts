@@ -299,6 +299,14 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
 
       SET LOCAL work_mem = '256MB';
 
+      IF p_aids IS NOT NULL THEN
+        PERFORM 1
+        FROM video_collection_state
+        WHERE aid = ANY(p_aids)
+        ORDER BY aid
+        FOR UPDATE;
+      END IF;
+
       WITH daily_snapshot AS (
         SELECT vd.aid, vd.record_date, vd."view"::bigint AS vw
         FROM video_daily vd
@@ -387,6 +395,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           p_now
         FROM calculated c
         WHERE c.crossed_gate IS NOT NULL
+        ORDER BY c.aid
         ON CONFLICT (aid, gate_value) DO NOTHING
         RETURNING aid
       )
@@ -407,6 +416,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         fn_next_subtitle_state(NULL, c.last_view, c.crossed_gate),
         p_now
       FROM calculated c
+      ORDER BY c.aid
       ON CONFLICT (aid) DO UPDATE SET
         latest_daily_delta     = EXCLUDED.latest_daily_delta,
         weekly_avg_daily_delta = EXCLUDED.weekly_avg_daily_delta,
@@ -815,6 +825,15 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     CREATE OR REPLACE FUNCTION fn_apply_video_minute_collection_update()
     RETURNS trigger AS $$
     BEGIN
+      PERFORM 1
+      FROM video_collection_state AS state
+      JOIN (
+        SELECT DISTINCT aid
+        FROM new_video_minute_rows
+      ) AS affected ON affected.aid = state.aid
+      ORDER BY state.aid
+      FOR UPDATE OF state;
+
       WITH latest_rows AS (
         SELECT DISTINCT ON (aid)
           aid,
@@ -906,6 +925,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         SELECT c.aid, c.crossed_gate, c.previous_view, c.latest_view, c."time"
         FROM computed c
         WHERE c.crossed_gate IS NOT NULL
+        ORDER BY c.aid
         ON CONFLICT (aid, gate_value) DO NOTHING
         RETURNING aid, gate_value
       )
@@ -969,8 +989,11 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     DECLARE
       affected_aids bigint[];
     BEGIN
-      SELECT array_agg(DISTINCT aid) INTO affected_aids
+      SELECT array_agg(DISTINCT aid ORDER BY aid) INTO affected_aids
       FROM new_video_daily_rows;
+      IF affected_aids IS NULL THEN
+        RETURN NULL;
+      END IF;
       PERFORM fn_refresh_video_collection_state_from_daily(affected_aids, now());
       RETURN NULL;
     END;
@@ -983,6 +1006,16 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
   await pool.query(`
     CREATE TRIGGER trg_video_daily_collection_state
     AFTER INSERT ON video_daily
+    REFERENCING NEW TABLE AS new_video_daily_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION fn_apply_video_daily_collection_update()
+  `);
+
+  await pool.query(`
+    DROP TRIGGER IF EXISTS trg_video_daily_collection_state_update ON video_daily
+  `);
+  await pool.query(`
+    CREATE TRIGGER trg_video_daily_collection_state_update
+    AFTER UPDATE ON video_daily
     REFERENCING NEW TABLE AS new_video_daily_rows
     FOR EACH STATEMENT EXECUTE FUNCTION fn_apply_video_daily_collection_update()
   `);

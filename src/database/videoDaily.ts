@@ -1,6 +1,29 @@
 import type { Pool } from "pg";
 import type { DailyCollectionCandidate } from "../types/models/minute.js";
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+export async function syncVideoDailyRange(
+  pool: Pool,
+  options: { startDate: string; endDate: string; batchSize?: number },
+): Promise<void> {
+  const { startDate, endDate, batchSize = 5_000 } = options;
+  if (!ISO_DATE.test(startDate) || !ISO_DATE.test(endDate)) {
+    throw new Error("Video daily sync dates must use YYYY-MM-DD");
+  }
+  if (startDate > endDate) {
+    throw new Error("Video daily sync start date must not be after end date");
+  }
+  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 50_000) {
+    throw new Error("Video daily sync batch size must be between 1 and 50000");
+  }
+
+  await pool.query(
+    "CALL sync_video_daily_from_mysql($1::date, $2::date, $3::integer)",
+    [startDate, endDate, batchSize],
+  );
+}
+
 function mapCandidate(row: Record<string, unknown>): DailyCollectionCandidate {
   return {
     aid: BigInt(row.aid as string | number),
