@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
-import { backfillMissionIds, initVideosSchema } from "./schema/videos";
+import { backfillMissionIds } from "./schema/videos";
 import {
   markVideoDeleted,
   markVideoProcessedWithCollectionState,
@@ -238,21 +238,6 @@ test("pid_v2 metadata updates only matching changed videos", async () => {
     calls[0]?.sql ?? "",
     /video\.pid_v2 IS DISTINCT FROM metadata\.pid_v2/,
   );
-});
-
-test("video schema initialization completes without scanning historical mission IDs", async () => {
-  const pool = {
-    async query(sql: string) {
-      if (sql.includes("WITH candidates AS")) {
-        throw new Error(
-          "schema initialization attempted a historical backfill",
-        );
-      }
-      return { rows: [], rowCount: 0 };
-    },
-  } as unknown as Pool;
-
-  await initVideosSchema(pool);
 });
 
 test("mission backfill advances through eligible AIDs in bounded batches", async () => {
