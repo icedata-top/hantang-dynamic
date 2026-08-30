@@ -243,10 +243,7 @@ test("pid_v2 metadata updates only matching changed videos", async () => {
 test("video schema initialization completes without scanning historical mission IDs", async () => {
   const pool = {
     async query(sql: string) {
-      if (
-        sql.includes("count(*)::text AS remaining") ||
-        sql.includes("WITH candidates AS")
-      ) {
+      if (sql.includes("WITH candidates AS")) {
         throw new Error(
           "schema initialization attempted a historical backfill",
         );
@@ -269,16 +266,8 @@ test("mission backfill advances through eligible AIDs in bounded batches", async
       aid: String(index + 20_001),
     })),
   ];
-  let countCalls = 0;
   const pool = {
     async query(sql: string, values?: unknown[]) {
-      if (sql.includes("count(*)::text AS remaining")) {
-        countCalls += 1;
-        return {
-          rows: [{ remaining: countCalls === 1 ? "25000" : "0" }],
-          rowCount: 1,
-        };
-      }
       if (sql.includes("WITH candidates AS")) {
         backfillCursors.push(values?.[0]);
         const rows = batches.shift() ?? [];
@@ -290,7 +279,6 @@ test("mission backfill advances through eligible AIDs in bounded batches", async
 
   await backfillMissionIds(pool);
 
-  assert.deepEqual(backfillCursors, [null, "10000", "20000"]);
-  assert.equal(countCalls, 2);
+  assert.deepEqual(backfillCursors, [null, "10000", "20000", "25000"]);
   assert.equal(batches.length, 0);
 });

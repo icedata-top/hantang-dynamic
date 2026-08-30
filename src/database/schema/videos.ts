@@ -4,25 +4,9 @@ import { logger } from "../../utils/logger.js";
 const MISSION_BACKFILL_BATCH_SIZE = 10_000;
 
 export async function backfillMissionIds(pool: Pool): Promise<void> {
-  const countRemaining = async (): Promise<number> => {
-    const result = await pool.query<{ remaining: string }>(`
-      SELECT count(*)::text AS remaining
-      FROM processed_videos
-      WHERE mission_id IS NULL
-        AND CASE
-              WHEN btrim(extras->>'mission_id', E' \\t\\n\\r\\f\\013') ~ '^[+-]?[0-9]+$'
-                AND length(regexp_replace(btrim(extras->>'mission_id', E' \\t\\n\\r\\f\\013'), '^[+-]?0*', '')) <= 19
-              THEN btrim(extras->>'mission_id', E' \\t\\n\\r\\f\\013')::numeric BETWEEN -9223372036854775808 AND 9223372036854775807
-              ELSE FALSE
-            END
-    `);
-    return Number(result.rows[0]?.remaining ?? 0);
-  };
-
-  let remaining = await countRemaining();
+  let processed = 0;
   let lastAid: bigint | null = null;
-  logger.info(`Processed-video mission backfill remaining: ${remaining}`);
-  while (remaining > 0) {
+  while (true) {
     const result: QueryResult<{ aid: string }> = await pool.query(
       `
       WITH candidates AS (
@@ -58,28 +42,14 @@ export async function backfillMissionIds(pool: Pool): Promise<void> {
       [lastAid?.toString() ?? null],
     );
     const updated = result.rowCount ?? 0;
-    if (updated === 0) {
-      remaining = await countRemaining();
-      logger.info(`Processed-video mission backfill remaining: ${remaining}`);
-      if (remaining > 0) {
-        lastAid = null;
-        continue;
-      }
-      break;
-    }
+    if (updated === 0) break;
+
     for (const row of result.rows) {
       const aid = BigInt(row.aid);
       if (lastAid === null || aid > lastAid) lastAid = aid;
     }
-    remaining = Math.max(remaining - updated, 0);
-    logger.info(`Processed-video mission backfill remaining: ${remaining}`);
-    if (remaining === 0) {
-      remaining = await countRemaining();
-      if (remaining > 0) {
-        lastAid = null;
-        logger.info(`Processed-video mission backfill remaining: ${remaining}`);
-      }
-    }
+    processed += updated;
+    logger.info(`Processed-video mission backfill processed: ${processed}`);
   }
 }
 
