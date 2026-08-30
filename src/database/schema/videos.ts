@@ -1,9 +1,9 @@
 import type { Pool, QueryResult } from "pg";
 import { logger } from "../../utils/logger.js";
 
-const MISSION_BACKFILL_BATCH_SIZE = 1_000;
+const MISSION_BACKFILL_BATCH_SIZE = 10_000;
 
-async function backfillMissionIds(pool: Pool): Promise<void> {
+export async function backfillMissionIds(pool: Pool): Promise<void> {
   const countRemaining = async (): Promise<number> => {
     const result = await pool.query<{ remaining: string }>(`
       SELECT count(*)::text AS remaining
@@ -52,6 +52,7 @@ async function backfillMissionIds(pool: Pool): Promise<void> {
       SET mission_id = candidates.mission_id
       FROM candidates
       WHERE video.aid = candidates.aid
+        AND video.mission_id IS NULL
       RETURNING video.aid
     `,
       [lastAid?.toString() ?? null],
@@ -159,6 +160,4 @@ export async function initVideosSchema(pool: Pool): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_video_tags_tag_id_video_aid
     ON video_tags(tag_id, video_aid)
   `);
-
-  await backfillMissionIds(pool);
 }

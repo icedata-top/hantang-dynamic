@@ -33,3 +33,19 @@ or with an executable:
 This command runs DDL. Use it only when you intend to install or upgrade schema
 objects.
 
+The schema command leaves historical `processed_videos.mission_id` values
+nullable. To populate valid values already present in `extras`, run the optional
+maintenance command after schema initialization:
+
+```bash
+pnpm backfill-mission-ids
+```
+
+or with an executable:
+
+```bash
+./bilibili-dynamic-subscribe-linux --backfill-mission-ids
+```
+
+The command commits updates in batches of 10,000. It is safe to interrupt and
+rerun because each pass selects only rows whose `mission_id` is still null.

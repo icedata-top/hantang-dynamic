@@ -60,6 +60,19 @@ pnpm start
 `pnpm init-schema` runs database DDL. Run it during install or upgrade only.
 Normal startup and restarts do not create or alter database objects.
 
+Upgrades that add `processed_videos.mission_id` do not delay schema
+initialization by rewriting historical rows. To populate that optional metadata
+from existing `extras`, run the resumable maintenance command separately:
+
+```bash
+pnpm backfill-mission-ids
+```
+
+For a pre-built executable, run
+`./bilibili-dynamic-subscribe-linux --backfill-mission-ids`. The command updates
+10,000 rows at a time and can be interrupted and rerun; rows already populated
+are skipped.
+
 ## Configuration
 
 The application is configured via `config.toml`. See the

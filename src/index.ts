@@ -85,6 +85,14 @@ async function main() {
     return;
   }
 
+  if (args.includes("--backfill-mission-ids")) {
+    const { runMissionIdBackfill } = await import(
+      "./scripts/backfill-mission-ids"
+    );
+    await runMissionIdBackfill();
+    return;
+  }
+
   // Check for tool mode
   if (args.includes("--repair")) {
     const repairIndex = args.indexOf("--repair");

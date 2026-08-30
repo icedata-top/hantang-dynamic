@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
-import { initVideosSchema } from "./schema/videos";
+import { backfillMissionIds, initVideosSchema } from "./schema/videos";
 import {
   markVideoDeleted,
   markVideoProcessedWithCollectionState,
@@ -240,15 +240,33 @@ test("pid_v2 metadata updates only matching changed videos", async () => {
   );
 });
 
+test("video schema initialization completes without scanning historical mission IDs", async () => {
+  const pool = {
+    async query(sql: string) {
+      if (
+        sql.includes("count(*)::text AS remaining") ||
+        sql.includes("WITH candidates AS")
+      ) {
+        throw new Error(
+          "schema initialization attempted a historical backfill",
+        );
+      }
+      return { rows: [], rowCount: 0 };
+    },
+  } as unknown as Pool;
+
+  await initVideosSchema(pool);
+});
+
 test("mission backfill advances through eligible AIDs in bounded batches", async () => {
   const backfillCursors: unknown[] = [];
   const batches = [
-    Array.from({ length: 1_000 }, (_, index) => ({ aid: String(index + 1) })),
-    Array.from({ length: 1_000 }, (_, index) => ({
-      aid: String(index + 1_001),
+    Array.from({ length: 10_000 }, (_, index) => ({ aid: String(index + 1) })),
+    Array.from({ length: 10_000 }, (_, index) => ({
+      aid: String(index + 10_001),
     })),
-    Array.from({ length: 500 }, (_, index) => ({
-      aid: String(index + 2_001),
+    Array.from({ length: 5_000 }, (_, index) => ({
+      aid: String(index + 20_001),
     })),
   ];
   let countCalls = 0;
@@ -257,7 +275,7 @@ test("mission backfill advances through eligible AIDs in bounded batches", async
       if (sql.includes("count(*)::text AS remaining")) {
         countCalls += 1;
         return {
-          rows: [{ remaining: countCalls === 1 ? "2500" : "0" }],
+          rows: [{ remaining: countCalls === 1 ? "25000" : "0" }],
           rowCount: 1,
         };
       }
@@ -270,9 +288,9 @@ test("mission backfill advances through eligible AIDs in bounded batches", async
     },
   } as unknown as Pool;
 
-  await initVideosSchema(pool);
+  await backfillMissionIds(pool);
 
-  assert.deepEqual(backfillCursors, [null, "1000", "2000"]);
+  assert.deepEqual(backfillCursors, [null, "10000", "20000"]);
   assert.equal(countCalls, 2);
   assert.equal(batches.length, 0);
 });
