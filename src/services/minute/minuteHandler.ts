@@ -191,7 +191,6 @@ export class MinuteHandler {
   private async runWatchLaterController(signal: AbortSignal): Promise<void> {
     while (this.isRunning) {
       const startedAt = Date.now();
-      this.watchLaterCycle += 1;
       this.setHealthyWatchLaterAccounts(new Set());
       try {
         await this.runWatchLaterManagement(
@@ -215,6 +214,7 @@ export class MinuteHandler {
       }
       const nextDelay = Math.max(0, 15 * 60_000 - (Date.now() - startedAt));
       await cancellableSleep(nextDelay, signal);
+      this.watchLaterCycle += 1;
     }
   }
 

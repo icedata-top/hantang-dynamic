@@ -163,6 +163,50 @@ test("watch-later cycles schedule fifteen minutes from the prior start", async (
   assert.ok(delay <= fifteenMinutes * 1.05);
 });
 
+test("startup sampling -702 waits for the next scheduled cycle before retry", async () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const controller = new AbortController();
+  const rateLimitedAtCycleStart: boolean[] = [];
+  let cycles = 0;
+  const handler = new MinuteHandler({
+    database: database(() => {}),
+    loadAccounts: () => [],
+    async sampleVideoStats(_aids, options) {
+      options?.onWatchLaterToViewAccountRateLimit?.(7n);
+      return [];
+    },
+    async runWatchLaterManagement(_database, _accounts, _capacity, options) {
+      rateLimitedAtCycleStart.push(
+        options?.isAccountRateLimited?.(7n) ?? false,
+      );
+      cycles += 1;
+      if (cycles === 2) {
+        Reflect.set(handler, "isRunning", false);
+        controller.abort();
+      }
+      return [];
+    },
+  });
+  await handler.processBatch([
+    { aid: 1n, lastView: null, watchLaterManagedAccountIds: [7n] },
+  ]);
+  globalThis.setTimeout = ((callback: () => void) => {
+    queueMicrotask(callback);
+    return {} as NodeJS.Timeout;
+  }) as typeof setTimeout;
+  Reflect.set(handler, "isRunning", true);
+  try {
+    const run = Reflect.get(handler, "runWatchLaterController") as (
+      signal: AbortSignal,
+    ) => Promise<void>;
+    await run.call(handler, controller.signal);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
+
+  assert.deepEqual(rateLimitedAtCycleStart, [true, false]);
+});
+
 test("failed controller cycle clears prior routing health before minute sampling", async () => {
   const originalSetTimeout = globalThis.setTimeout;
   const controller = new AbortController();
