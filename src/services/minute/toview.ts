@@ -21,6 +21,7 @@ export interface ToViewClient {
     url: string,
     config: {
       noRetry: true;
+      rawApiErrors: true;
       timeout: number;
       params: {
         pn: number;
@@ -41,6 +42,13 @@ export interface ToViewRequestAccount extends ToViewAccountIdentity {
 export interface ToViewSamplesResult {
   failedAccountIds: bigint[];
   samplesByAccountId: ReadonlyMap<bigint, CompleteVideoMinuteTuple[]>;
+}
+
+export class ToViewRateLimitError extends Error {
+  constructor() {
+    super("To View request rate limited");
+    this.name = "ToViewRateLimitError";
+  }
 }
 
 export type ToViewAccount = AccountContext;
@@ -81,6 +89,7 @@ export async function fetchCompleteToViewSnapshot(
   try {
     const response = await client.get("/web", {
       noRetry: true,
+      rawApiErrors: true,
       timeout: MINUTE_REQUEST_TIMEOUT_MS,
       params: {
         pn: 1,
@@ -91,6 +100,7 @@ export async function fetchCompleteToViewSnapshot(
         need_split: true,
       },
     });
+    if (response.data.code === -702) throw new ToViewRateLimitError();
     const result = validateToViewResponse(response.data, sampledAt);
     if (!result.complete) {
       logger.warn("To View API response was incomplete or invalid");
@@ -98,6 +108,17 @@ export async function fetchCompleteToViewSnapshot(
     }
     return result;
   } catch (error) {
+    if (
+      error instanceof ToViewRateLimitError ||
+      (error !== null &&
+        typeof error === "object" &&
+        "status" in error &&
+        "code" in error &&
+        error.status === 200 &&
+        error.code === -702)
+    ) {
+      throw new ToViewRateLimitError();
+    }
     logger.warn("To View API request failed");
     logger.debug(error);
     return null;
@@ -110,6 +131,7 @@ export async function sampleWatchLaterToViewAccountsWithStatus(
   accounts: ToViewRequestAccount[],
   selectedWatchLaterAccounts: WatchLaterToViewAccount[],
   sampledAt: Date,
+  onRateLimitedAccount?: (accountId: bigint) => void,
 ): Promise<ToViewSamplesResult> {
   const selectedAccounts = selectWatchLaterToViewAccounts(
     accounts,
@@ -119,10 +141,17 @@ export async function sampleWatchLaterToViewAccountsWithStatus(
   const samplesByAccountId = new Map<bigint, CompleteVideoMinuteTuple[]>();
 
   for (const account of selectedAccounts) {
-    const snapshot = await fetchCompleteToViewSnapshot(
-      account.toViewClient,
-      sampledAt,
-    );
+    let snapshot: ToViewValidationResult | null = null;
+    try {
+      snapshot = await fetchCompleteToViewSnapshot(
+        account.toViewClient,
+        sampledAt,
+      );
+    } catch (error) {
+      if (!(error instanceof ToViewRateLimitError)) throw error;
+      const id = accountId(account);
+      if (id !== null) onRateLimitedAccount?.(id);
+    }
     if (snapshot === null) {
       const id = accountId(account);
       if (id !== null) failedAccountIds.push(id);

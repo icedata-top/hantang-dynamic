@@ -90,7 +90,12 @@ seven-counter tuple or is sent once through the existing favorite-resource
 path in `batch_size` chunks. Watch Later assignment and reconciliation state
 do not remove AIDs from that fallback. If a healthy account's To View request
 fails during sampling, the account is removed from To View routing until the
-next snapshot-health scan; uncovered AIDs use the fallback. In the live
+next snapshot-health scan; uncovered AIDs use the fallback. A To View or Watch
+Later mutation `-702` response removes that account from routing for the
+current reconciliation cycle. The next 15-minute cycle retries it. A repeated
+`-702` then starts a 30-minute cooldown that skips intervening cycles. A later
+successful snapshot-health scan clears the rate-limit state and restores the
+account. In the live
 favorite response, `cnt_info` supplies `collect`, `play`, `danmaku`, and
 `reply`; `play` is required for a usable sample. The AID and supplied counters
 may be JSON numbers or decimal strings and are normalized exactly. Optional

@@ -20,6 +20,7 @@ const MAX_SLEEP_MS = 60_000;
 const MIN_SLEEP_MS = 100;
 /** Non-gate videos wait at most this long before being flushed. */
 const BATCH_TIMEOUT_MS = 30_000;
+export const WATCH_LATER_RATE_LIMIT_COOLDOWN_MS = 30 * 60_000;
 
 export type MinuteDatabase = Pick<
   Database,
@@ -64,6 +65,11 @@ export class MinuteHandler {
   private abortController: AbortController | null = null;
   private watchLaterManagementPromise: Promise<void> | null = null;
   private readonly healthyWatchLaterAccountIds = new Set<bigint>();
+  private watchLaterCycle = 0;
+  private readonly watchLaterRateLimits = new Map<
+    bigint,
+    { lastCycle: number; cooldownUntil: number | null }
+  >();
 
   constructor(dependencies: MinuteHandlerDependencies = {}) {
     this.db = dependencies.database ?? Database.getInstance();
@@ -185,6 +191,7 @@ export class MinuteHandler {
   private async runWatchLaterController(signal: AbortSignal): Promise<void> {
     while (this.isRunning) {
       const startedAt = Date.now();
+      this.watchLaterCycle += 1;
       this.setHealthyWatchLaterAccounts(new Set());
       try {
         await this.runWatchLaterManagement(
@@ -195,6 +202,12 @@ export class MinuteHandler {
             shouldContinue: () => this.isRunning,
             onHealthyAccounts: (accountIds) =>
               this.setHealthyWatchLaterAccounts(accountIds),
+            isAccountRateLimited: (accountId) =>
+              this.isWatchLaterAccountRateLimited(accountId),
+            onAccountRateLimited: (accountId) =>
+              this.recordWatchLaterRateLimit(accountId),
+            onAccountRecovered: (accountId) =>
+              this.watchLaterRateLimits.delete(accountId),
           },
         );
       } catch (error) {
@@ -208,8 +221,35 @@ export class MinuteHandler {
   private setHealthyWatchLaterAccounts(accountIds: ReadonlySet<bigint>): void {
     this.healthyWatchLaterAccountIds.clear();
     for (const accountId of accountIds) {
-      this.healthyWatchLaterAccountIds.add(accountId);
+      if (!this.isWatchLaterAccountRateLimited(accountId)) {
+        this.healthyWatchLaterAccountIds.add(accountId);
+      }
     }
+  }
+
+  private isWatchLaterAccountRateLimited(accountId: bigint): boolean {
+    const rateLimit = this.watchLaterRateLimits.get(accountId);
+    if (!rateLimit) return false;
+    if (rateLimit.lastCycle === this.watchLaterCycle) return true;
+    return (
+      rateLimit.cooldownUntil !== null && Date.now() < rateLimit.cooldownUntil
+    );
+  }
+
+  private recordWatchLaterRateLimit(accountId: bigint): void {
+    const previous = this.watchLaterRateLimits.get(accountId);
+    if (!previous) {
+      this.watchLaterRateLimits.set(accountId, {
+        lastCycle: this.watchLaterCycle,
+        cooldownUntil: null,
+      });
+    } else if (previous.lastCycle !== this.watchLaterCycle) {
+      this.watchLaterRateLimits.set(accountId, {
+        lastCycle: this.watchLaterCycle,
+        cooldownUntil: Date.now() + WATCH_LATER_RATE_LIMIT_COOLDOWN_MS,
+      });
+    }
+    this.healthyWatchLaterAccountIds.delete(accountId);
   }
 
   /**
@@ -245,6 +285,9 @@ export class MinuteHandler {
           healthyWatchLaterAccountIds: this.healthyWatchLaterAccountIds,
           onWatchLaterToViewAccountFailure: (accountId) => {
             this.healthyWatchLaterAccountIds.delete(accountId);
+          },
+          onWatchLaterToViewAccountRateLimit: (accountId) => {
+            this.recordWatchLaterRateLimit(accountId);
           },
         });
       } catch (error) {

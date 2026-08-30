@@ -208,6 +208,7 @@ export async function batchSampleVideoStats(
     observedWatchLaterAccountIdsByAid?: ReadonlyMap<string, readonly bigint[]>;
     healthyWatchLaterAccountIds?: ReadonlySet<bigint>;
     onWatchLaterToViewAccountFailure?(accountId: bigint): void;
+    onWatchLaterToViewAccountRateLimit?(accountId: bigint): void;
     dependencies?: Partial<BatchSampleDependencies>;
   },
 ): Promise<VideoMinuteSample[]> {
@@ -227,6 +228,7 @@ export async function batchSampleVideoStats(
       options.toViewAccounts,
       [...routing.keys()].map((accountId) => ({ accountId })),
       sampledAt,
+      options.onWatchLaterToViewAccountRateLimit,
     );
     for (const accountId of toViewResult.failedAccountIds) {
       options.onWatchLaterToViewAccountFailure?.(accountId);

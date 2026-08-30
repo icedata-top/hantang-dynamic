@@ -207,6 +207,45 @@ test("empty, sentinel, disabled, failed, missing, and duplicate coverage fall ba
   assert.equal(samples.length, 5);
 });
 
+test("To View -702 cools the account and sends its AIDs through configured fallback batches", async () => {
+  const cooled: bigint[] = [];
+  const fallbackBatches: bigint[][] = [];
+  const aids = Array.from({ length: 51 }, (_, index) => BigInt(index + 1));
+
+  await batchSampleVideoStats(aids, {
+    batchSize: 50,
+    toViewAccounts: [
+      {
+        uid: "7",
+        toViewClient: {
+          async get() {
+            return { data: { code: -702 } };
+          },
+        },
+      },
+    ],
+    observedWatchLaterAccountIdsByAid: new Map(
+      aids.map((aid) => [aid.toString(), [7n]]),
+    ),
+    healthyWatchLaterAccountIds: new Set([7n]),
+    onWatchLaterToViewAccountRateLimit(accountId) {
+      cooled.push(accountId);
+    },
+    dependencies: {
+      async fetchStatsBatch(batch) {
+        fallbackBatches.push(batch);
+        return favoriteResponse(batch);
+      },
+    },
+  });
+
+  assert.deepEqual(cooled, [7n]);
+  assert.deepEqual(
+    fallbackBatches.map((batch) => batch.length),
+    [50, 1],
+  );
+});
+
 test("fallback conserves unique large bigint AIDs in fifty-item chunks", async () => {
   const aids = Array.from(
     { length: 51 },

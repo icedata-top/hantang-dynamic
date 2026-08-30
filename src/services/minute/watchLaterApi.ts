@@ -44,7 +44,10 @@ export interface WatchLaterSnapshot {
 
 const WATCH_LATER_MEMBERSHIP_CAPACITY = 1_000;
 
-export type WatchLaterMutationPrePostAbortReason = "deadline" | "stopped";
+export type WatchLaterMutationPrePostAbortReason =
+  | "deadline"
+  | "stopped"
+  | "rate_limited";
 
 export class WatchLaterMutationPrePostAbortError extends Error {
   constructor(readonly reason: WatchLaterMutationPrePostAbortReason) {

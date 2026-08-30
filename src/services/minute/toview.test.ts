@@ -17,12 +17,17 @@ test("To View selects only explicitly configured account IDs", () => {
 
 test("To View fetches once per account with one bounded attempt", async () => {
   let requestCount = 0;
-  const requestOptions: Array<{ noRetry: true; timeout: number }> = [];
+  const requestOptions: Array<{
+    noRetry: true;
+    rawApiErrors: true;
+    timeout: number;
+  }> = [];
   const client: ToViewClient = {
     async get(_url, request) {
       requestCount += 1;
       requestOptions.push({
         noRetry: request.noRetry,
+        rawApiErrors: request.rawApiErrors,
         timeout: request.timeout,
       });
       return { data: { code: 0, data: { count: 0, list: [] } } };
@@ -48,8 +53,8 @@ test("To View fetches once per account with one bounded attempt", async () => {
   });
   assert.equal(requestCount, 2);
   assert.deepEqual(requestOptions, [
-    { noRetry: true, timeout: 120_000 },
-    { noRetry: true, timeout: 120_000 },
+    { noRetry: true, rawApiErrors: true, timeout: 120_000 },
+    { noRetry: true, rawApiErrors: true, timeout: 120_000 },
   ]);
 });
 

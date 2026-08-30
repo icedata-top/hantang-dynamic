@@ -71,8 +71,11 @@ non-target entries, including manually added entries, and add assigned target
 entries. Only accounts whose complete, valid snapshots are fetched and
 synchronized enter the current cycle's healthy set. If an account's To View
 request later fails during minute sampling, it is removed from To View routing
-until the next health scan. Videos not covered by a current healthy snapshot
-use the existing favorite/history fallback in configured batches. All enabled
+until the next health scan. A `-702` response from To View or a Watch Later
+mutation removes that account until the next 15-minute cycle retries it. If
+that retry also returns `-702`, the account cools down for 30 minutes. Videos
+not covered by a current healthy snapshot use the existing favorite/history
+fallback in configured batches. All enabled
 accounts are checked again and the distribution is recomputed in the next
 cycle, which starts approximately every 15 minutes. Environment cookie paths
 remain authentication-only and do not enable Watch Later.

@@ -4,6 +4,7 @@ import {
   watchLaterReconciliationsTotal,
 } from "../../metrics/registry";
 import { sleep } from "../../utils/datetime";
+import { ToViewRateLimitError } from "./toview";
 import {
   fetchWatchLaterSnapshot,
   mutateWatchLater,
@@ -33,6 +34,7 @@ export interface WatchLaterReconciliationResult {
     | "deadline"
     | "stopped"
     | "capacity_blocked"
+    | "rate_limited"
     | "ambiguous";
   added: number;
   deleted: number;
@@ -43,6 +45,9 @@ export interface WatchLaterManagementOptions {
   delay?: Delay;
   now?(): number;
   onHealthyAccounts?(accountIds: ReadonlySet<bigint>): void;
+  isAccountRateLimited?(accountId: bigint): boolean;
+  onAccountRateLimited?(accountId: bigint): void;
+  onAccountRecovered?(accountId: bigint): void;
 }
 
 function accountId(account: { uid: string }): bigint | null {
@@ -69,6 +74,8 @@ async function reconcileAccount(
   now: () => number,
   phase: "delete" | "add",
   shouldContinue?: () => boolean,
+  isAccountRateLimited?: () => boolean,
+  onAccountRateLimited?: () => void,
 ): Promise<WatchLaterReconciliationResult> {
   const desired = new Set(desiredAids.map(String));
   const deletes = [...snapshot.aids]
@@ -83,6 +90,7 @@ async function reconcileAccount(
   ): Promise<WatchLaterReconciliationResult["reason"] | undefined> => {
     if (now() >= deadline) return "deadline";
     if (shouldContinue && !shouldContinue()) return "stopped";
+    if (isAccountRateLimited?.()) return "rate_limited";
     let code: number | undefined;
     try {
       await pace(async () => {
@@ -90,6 +98,7 @@ async function reconcileAccount(
           async beforePost() {
             if (now() >= deadline) return "deadline";
             if (shouldContinue && !shouldContinue()) return "stopped";
+            if (isAccountRateLimited?.()) return "rate_limited";
             return undefined;
           },
         });
@@ -104,6 +113,10 @@ async function reconcileAccount(
       if (action === "add") added += 1;
       else deleted += 1;
       return undefined;
+    }
+    if (code === -702) {
+      onAccountRateLimited?.();
+      return "rate_limited";
     }
     const reason =
       code === CAPACITY_BLOCKED_CODE ? "capacity_blocked" : "ambiguous";
@@ -174,6 +187,7 @@ export async function runAutomaticWatchLaterManagement(
       snapshot: WatchLaterSnapshot;
     }> = [];
     for (const [id, account] of enabled) {
+      if (options.isAccountRateLimited?.(id)) continue;
       const beforeFetch = boundaryOutcome();
       if (beforeFetch) {
         cycleOutcome = beforeFetch;
@@ -182,19 +196,24 @@ export async function runAutomaticWatchLaterManagement(
       let snapshot: WatchLaterSnapshot | null = null;
       try {
         snapshot = await fetchWatchLaterSnapshot(account.toViewClient);
-      } catch {}
+      } catch (error) {
+        if (error instanceof ToViewRateLimitError) {
+          options.onAccountRateLimited?.(id);
+        }
+      }
       const afterFetch = boundaryOutcome();
       if (afterFetch) {
         cycleOutcome = afterFetch;
         return [];
       }
-      if (!snapshot) continue;
+      if (!snapshot || options.isAccountRateLimited?.(id)) continue;
       try {
         await database.syncWatchLaterSnapshot(
           id,
           [...snapshot.aids].map(BigInt),
           snapshot.pidV2Metadata,
         );
+        options.onAccountRecovered?.(id);
         healthy.push({ accountId: id, account, snapshot });
       } catch {}
       const afterSync = boundaryOutcome();
@@ -208,14 +227,22 @@ export async function runAutomaticWatchLaterManagement(
       cycleOutcome = afterScan;
       return [];
     }
+    const availableHealthy = healthy.filter(
+      ({ accountId }) => !options.isAccountRateLimited?.(accountId),
+    );
     watchLaterEnabledAccounts.reset();
-    watchLaterEnabledAccounts.set({ state: "healthy" }, healthy.length);
+    watchLaterEnabledAccounts.set(
+      { state: "healthy" },
+      availableHealthy.length,
+    );
     watchLaterEnabledAccounts.set(
       { state: "unhealthy" },
-      enabled.length - healthy.length,
+      enabled.length - availableHealthy.length,
     );
-    options.onHealthyAccounts?.(new Set(healthy.map((item) => item.accountId)));
-    if (healthy.length === 0) {
+    options.onHealthyAccounts?.(
+      new Set(availableHealthy.map((item) => item.accountId)),
+    );
+    if (availableHealthy.length === 0) {
       cycleOutcome = "no_healthy_accounts";
       return [];
     }
@@ -227,7 +254,7 @@ export async function runAutomaticWatchLaterManagement(
     let desiredAids: bigint[];
     try {
       desiredAids = await database.getDesiredWatchLaterSet(
-        healthy.length * capacity,
+        availableHealthy.length * capacity,
       );
     } catch (error) {
       const afterFailedSelection = boundaryOutcome();
@@ -244,15 +271,15 @@ export async function runAutomaticWatchLaterManagement(
     }
     const assignments = partitionDesiredWatchLaterAids(
       desiredAids,
-      healthy.length,
+      availableHealthy.length,
       capacity,
     );
     const delay = options.delay ?? sleep;
     const pace = createPacer(delay);
     const results: WatchLaterReconciliationResult[] = [];
-    let hasAccountFailure = healthy.length < enabled.length;
+    let hasAccountFailure = availableHealthy.length < enabled.length;
     for (const phase of ["delete", "add"] as const) {
-      for (const [index, item] of healthy.entries()) {
+      for (const [index, item] of availableHealthy.entries()) {
         const beforeAccountPhase = boundaryOutcome();
         if (beforeAccountPhase) {
           cycleOutcome = beforeAccountPhase;
@@ -267,6 +294,8 @@ export async function runAutomaticWatchLaterManagement(
           now,
           phase,
           options.shouldContinue,
+          () => options.isAccountRateLimited?.(item.accountId) ?? false,
+          () => options.onAccountRateLimited?.(item.accountId),
         );
         results.push(result);
         if (result.reason === "deadline" || result.reason === "stopped") {
@@ -276,6 +305,7 @@ export async function runAutomaticWatchLaterManagement(
         const canContinueAdding =
           phase === "add" &&
           (result.reason === "capacity_blocked" ||
+            result.reason === "rate_limited" ||
             result.reason === "ambiguous");
         if (result.reason !== "completed") {
           hasAccountFailure = true;

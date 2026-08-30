@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { minuteSamplesTotal } from "../../metrics/registry";
 import type { MinuteDatabase } from "./minuteHandler";
-import { MinuteHandler } from "./minuteHandler";
+import {
+  MinuteHandler,
+  WATCH_LATER_RATE_LIMIT_COOLDOWN_MS,
+} from "./minuteHandler";
 
 interface Deferred {
   promise: Promise<void>;
@@ -469,4 +472,50 @@ test("a failed To View account is removed from subsequent batch routing", async 
   await handler.processBatch(due);
 
   assert.deepEqual(routedAccountIds, [[7n], []]);
+});
+
+test("repeated -702 retries on the next cycle, then cools the account for 30 minutes", async () => {
+  const originalNow = Date.now;
+  const routedAccountIds: bigint[][] = [];
+  let now = 0;
+  let calls = 0;
+  const handler = new MinuteHandler({
+    database: database(() => {}),
+    loadAccounts: () => [],
+    async sampleVideoStats(_aids, options) {
+      routedAccountIds.push([
+        ...(options?.healthyWatchLaterAccountIds ?? new Set()),
+      ]);
+      if (calls === 0 || calls === 2) {
+        options?.onWatchLaterToViewAccountRateLimit?.(7n);
+      }
+      calls += 1;
+      return [];
+    },
+  });
+  const publish = Reflect.get(handler, "setHealthyWatchLaterAccounts") as (
+    accountIds: ReadonlySet<bigint>,
+  ) => void;
+  const due = [{ aid: 1n, lastView: null, watchLaterManagedAccountIds: [7n] }];
+  Date.now = () => now;
+  try {
+    publish.call(handler, new Set([7n]));
+    await handler.processBatch(due);
+    publish.call(handler, new Set([7n]));
+    await handler.processBatch(due);
+    Reflect.set(handler, "watchLaterCycle", 1);
+    publish.call(handler, new Set([7n]));
+    await handler.processBatch(due);
+    Reflect.set(handler, "watchLaterCycle", 2);
+    publish.call(handler, new Set([7n]));
+    await handler.processBatch(due);
+    now = WATCH_LATER_RATE_LIMIT_COOLDOWN_MS;
+    Reflect.set(handler, "watchLaterCycle", 3);
+    publish.call(handler, new Set([7n]));
+    await handler.processBatch(due);
+  } finally {
+    Date.now = originalNow;
+  }
+
+  assert.deepEqual(routedAccountIds, [[7n], [], [7n], [], [7n]]);
 });

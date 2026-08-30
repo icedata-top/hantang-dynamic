@@ -350,6 +350,73 @@ test("add failures do not prevent later healthy accounts from reconciling", asyn
   );
 });
 
+test("mutation -702 cools that account and stops its remaining mutations", async () => {
+  const actions: string[] = [];
+  const cooled = new Set<bigint>();
+  const result = await runAutomaticWatchLaterManagement(
+    database({
+      async getDesiredWatchLaterSet() {
+        return [1n, 2n, 3n];
+      },
+    }),
+    [
+      account([snapshot([])], [-702], "7", actions),
+      account([snapshot([])], [], "8", actions),
+    ],
+    undefined,
+    {
+      async delay() {},
+      isAccountRateLimited: (accountId) => cooled.has(accountId),
+      onAccountRateLimited: (accountId) => cooled.add(accountId),
+    },
+  );
+
+  assert.deepEqual(actions, ["/add:1", "/add:2"]);
+  assert.deepEqual(
+    result.map(({ reason }) => reason),
+    ["completed", "completed", "rate_limited", "completed"],
+  );
+});
+
+test("snapshot -702 reports the account and excludes it while rate-limited", async () => {
+  let cooled = false;
+  let requests = 0;
+  const context = account([], [], "7");
+  context.toViewClient.get = async () => {
+    requests += 1;
+    if (requests === 1) return { data: { code: -702 } };
+    return { data: snapshot([]) };
+  };
+  const options = {
+    isAccountRateLimited: () => cooled,
+    onAccountRateLimited: () => {
+      cooled = true;
+    },
+  };
+
+  await runAutomaticWatchLaterManagement(
+    database(),
+    [context],
+    undefined,
+    options,
+  );
+  await runAutomaticWatchLaterManagement(
+    database(),
+    [context],
+    undefined,
+    options,
+  );
+  cooled = false;
+  await runAutomaticWatchLaterManagement(
+    database(),
+    [context],
+    undefined,
+    options,
+  );
+
+  assert.equal(requests, 2);
+});
+
 test("delete failure suppresses remaining deletes and all additions", async () => {
   const actions: string[] = [];
   const result = await runAutomaticWatchLaterManagement(
