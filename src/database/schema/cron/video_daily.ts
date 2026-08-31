@@ -36,8 +36,8 @@ export async function initCronVideoDaily(
       IF p_start_date > p_end_date THEN
         RAISE EXCEPTION 'video_daily sync start date must not be after end date';
       END IF;
-      IF p_batch_size IS NULL OR p_batch_size < 1 OR p_batch_size > 50000 THEN
-        RAISE EXCEPTION 'video_daily sync batch size must be between 1 and 50000';
+      IF p_batch_size IS NULL OR p_batch_size < 1 THEN
+        RAISE EXCEPTION 'video_daily sync batch size must be positive';
       END IF;
 
       PERFORM pg_advisory_lock(

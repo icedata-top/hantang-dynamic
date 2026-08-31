@@ -56,6 +56,20 @@ test("explicit video daily backfill requires a valid fixed range", async () => {
   });
   assert.match(calls[1]?.sql ?? "", /pg_advisory_unlock/);
   assert.deepEqual(calls[1]?.values, ["hantang_dynamic"]);
+  calls.length = 0;
+  await syncVideoDailyRange(pool, {
+    startDate: "2026-06-09",
+    endDate: "2026-08-29",
+    schema: "hantang_dynamic",
+    batchSize: 500_000,
+  });
+
+  assert.deepEqual(calls[0], {
+    sql: "CALL sync_video_daily_from_mysql($1::date, $2::date, $3::integer)",
+    values: ["2026-06-09", "2026-08-29", 500_000],
+  });
+  assert.match(calls[1]?.sql ?? "", /pg_advisory_unlock/);
+  assert.deepEqual(calls[1]?.values, ["hantang_dynamic"]);
   await assert.rejects(
     syncVideoDailyRange(pool, {
       startDate: "2026-08-30",
@@ -64,6 +78,36 @@ test("explicit video daily backfill requires a valid fixed range", async () => {
     }),
     /start date must not be after end date/,
   );
+});
+
+test("video daily backfill rejects batch sizes PostgreSQL cannot accept", async () => {
+  let connections = 0;
+  const pool = {
+    async connect() {
+      connections += 1;
+      throw new Error("should not connect");
+    },
+  } as unknown as Pool;
+
+  for (const batchSize of [
+    0,
+    -1,
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+    2_147_483_648,
+  ]) {
+    await assert.rejects(
+      syncVideoDailyRange(pool, {
+        startDate: "2026-06-09",
+        endDate: "2026-06-09",
+        schema: "hantang_dynamic",
+        batchSize,
+      }),
+      /batch size must be a positive PostgreSQL integer/,
+    );
+  }
+
+  assert.equal(connections, 0);
 });
 
 test("failed video daily backfill unlocks before releasing the client", async () => {

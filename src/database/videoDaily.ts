@@ -27,8 +27,14 @@ export async function syncVideoDailyRange(
   if (startDate > endDate) {
     throw new Error("Video daily sync start date must not be after end date");
   }
-  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 50_000) {
-    throw new Error("Video daily sync batch size must be between 1 and 50000");
+  if (
+    !Number.isSafeInteger(batchSize) ||
+    batchSize < 1 ||
+    batchSize > 2_147_483_647
+  ) {
+    throw new Error(
+      "Video daily sync batch size must be a positive PostgreSQL integer",
+    );
   }
 
   const client = await pool.connect();

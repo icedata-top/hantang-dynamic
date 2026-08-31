@@ -18,6 +18,11 @@ test("daily sync targets one fixed-date TimescaleDB chunk", async () => {
   await initCronVideoDaily(pool, "hantang_dynamic");
 
   const procedureSql = queries[0] ?? "";
+  assert.match(
+    procedureSql,
+    /IF p_batch_size IS NULL OR p_batch_size < 1 THEN[\s\S]*?batch size must be positive/,
+  );
+  assert.doesNotMatch(procedureSql, /p_batch_size > 50000/);
   const updateSql = procedureSql.match(
     /EXECUTE \$sync_update\$([\s\S]*?)\$sync_update\$ USING v_record_date;/,
   )?.[1];
