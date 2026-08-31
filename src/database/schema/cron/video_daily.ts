@@ -40,6 +40,10 @@ export async function initCronVideoDaily(
         RAISE EXCEPTION 'video_daily sync batch size must be between 1 and 50000';
       END IF;
 
+      PERFORM pg_advisory_lock(
+        hashtextextended('${schema}.video_daily_mysql_sync', 0)
+      );
+
       CREATE TEMP TABLE IF NOT EXISTS video_daily_sync_day (
         record_date date NOT NULL,
         aid bigint PRIMARY KEY,
@@ -112,12 +116,6 @@ export async function initCronVideoDaily(
           INTO v_batch_first_aid, v_last_aid
           FROM pg_temp.video_daily_sync_batch;
 
-          -- Both cron and maintenance calls use this transaction-scoped lock.
-          -- COMMIT releases it, so each bounded batch acquires it independently.
-          PERFORM pg_advisory_xact_lock(
-            hashtextextended('${schema}.video_daily_mysql_sync', 0)
-          );
-
           -- Plan each date separately so TimescaleDB prunes historical chunks
           -- before applying the hypertable UPDATE.
           EXECUTE $sync_update$
@@ -182,6 +180,10 @@ export async function initCronVideoDaily(
 
         v_record_date := v_record_date + 1;
       END LOOP;
+
+      PERFORM pg_advisory_unlock(
+        hashtextextended('${schema}.video_daily_mysql_sync', 0)
+      );
     END;
     $$
   `);
