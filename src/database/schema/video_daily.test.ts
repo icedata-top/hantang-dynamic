@@ -53,7 +53,7 @@ function normalizeSql(sql: string): string {
   return sql.replace(/\s+/g, " ").trim();
 }
 
-test("video_daily initialization validates the canonical unique index before dropping redundant indexes", async () => {
+test("video_daily initialization skips duplicate scans when the canonical index exists", async () => {
   const { pool, queries } = createPool(async (sql) => {
     if (sql.includes("FROM pg_index AS index_definition")) {
       return { rows: [canonicalIndex], rowCount: 1 };
@@ -63,30 +63,39 @@ test("video_daily initialization validates the canonical unique index before dro
 
   await initializeVideoDaily(pool);
 
-  const createUniqueIndex = queries.findIndex(({ sql }) =>
-    sql.includes(
-      "CREATE UNIQUE INDEX IF NOT EXISTS uq_video_daily_aid_record_date",
-    ),
-  );
   const validateIndex = queries.findIndex(({ sql }) =>
     sql.includes("FROM pg_index AS index_definition"),
   );
   const dropLegacyIndex = queries.findIndex(({ sql }) =>
     sql.includes("DROP INDEX IF EXISTS idx_video_daily_aid_date"),
   );
-  const commit = queries.findIndex(({ sql }) => sql === "COMMIT");
   const createHypertable = queries.findIndex(({ sql }) =>
     sql.includes("SELECT create_hypertable"),
   );
 
-  assert.ok(createUniqueIndex < validateIndex);
   assert.ok(validateIndex < dropLegacyIndex);
-  assert.ok(dropLegacyIndex < commit);
-  assert.ok(commit < createHypertable);
+  assert.ok(dropLegacyIndex < createHypertable);
+  assert.equal(
+    queries.some(({ sql }) =>
+      sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS"),
+    ),
+    false,
+  );
+  assert.equal(
+    queries.some(({ sql }) => sql.includes("WITH date_bounds AS")),
+    false,
+  );
+  assert.equal(
+    queries.some(
+      ({ sql }) => sql === "LOCK TABLE video_daily IN SHARE ROW EXCLUSIVE MODE",
+    ),
+    false,
+  );
 });
 
 test("video_daily initialization replaces duplicate dates with deterministic minimum-view rows", async () => {
   let createAttempts = 0;
+  let indexChecks = 0;
   let recompressionQueued = false;
   const { pool, queries } = createPool(async (sql) => {
     if (sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS")) {
@@ -125,7 +134,19 @@ test("video_daily initialization replaces duplicate dates with deterministic min
       recompressionQueued = false;
     }
     if (sql.includes("FROM pg_index AS index_definition")) {
+      indexChecks += 1;
+      if (indexChecks === 1) return { rows: [], rowCount: 0 };
       return { rows: [canonicalIndex], rowCount: 1 };
+    }
+    if (sql.includes("SELECT to_regclass(format")) {
+      return {
+        rows: [
+          {
+            relation_name: "_timescaledb_internal._hyper_11_213_chunk",
+          },
+        ],
+        rowCount: 1,
+      };
     }
     return { rows: [], rowCount: 0 };
   });
@@ -137,6 +158,7 @@ test("video_daily initialization replaces duplicate dates with deterministic min
     queries.find(({ sql }) => sql.includes("WITH date_bounds AS"))?.sql ?? "",
   );
   assert.doesNotMatch(dateEnumeration, /GROUP BY|HAVING/);
+  assert.match(dateEnumeration, /to_char\(.+?, 'YYYY-MM-DD'\)/);
   const duplicateChecks = queries.filter(({ sql }) =>
     sql.includes("AS has_duplicates"),
   );
@@ -205,6 +227,16 @@ test("video_daily initialization retries queued recompression before uniqueness 
     if (sql.includes("DELETE FROM video_daily_recompression_queue")) {
       queued = false;
     }
+    if (sql.includes("SELECT to_regclass(format")) {
+      return {
+        rows: [
+          {
+            relation_name: "_timescaledb_internal._hyper_11_213_chunk",
+          },
+        ],
+        rowCount: 1,
+      };
+    }
     if (sql.includes("FROM pg_index AS index_definition")) {
       return { rows: [canonicalIndex], rowCount: 1 };
     }
@@ -216,10 +248,60 @@ test("video_daily initialization retries queued recompression before uniqueness 
   const recompress = queries.findIndex(({ sql }) =>
     sql.includes("SELECT recompress_chunk"),
   );
-  const uniquenessLock = queries.findIndex(
-    ({ sql }) => sql === "LOCK TABLE video_daily IN SHARE ROW EXCLUSIVE MODE",
+  const indexValidation = queries.findIndex(({ sql }) =>
+    sql.includes("FROM pg_index AS index_definition"),
   );
-  assert.ok(recompress < uniquenessLock);
+  assert.ok(recompress < indexValidation);
+  assert.equal(
+    queries.some(
+      ({ sql }) => sql === "LOCK TABLE video_daily IN SHARE ROW EXCLUSIVE MODE",
+    ),
+    false,
+  );
+  assert.equal(
+    queries.some(({ sql }) => sql.includes("WITH date_bounds AS")),
+    false,
+  );
+  assert.equal(
+    queries.some(({ sql }) =>
+      sql.includes("DELETE FROM video_daily_recompression_queue"),
+    ),
+    true,
+  );
+});
+
+test("video_daily initialization removes stale queue entries for missing chunks", async () => {
+  let queued = true;
+  const { pool, queries } = createPool(async (sql) => {
+    if (sql.includes("SELECT chunk_schema::text, chunk_name::text") && queued) {
+      return {
+        rows: [
+          {
+            chunk_name: "_hyper_11_999_chunk",
+            chunk_schema: "_timescaledb_internal",
+          },
+        ],
+        rowCount: 1,
+      };
+    }
+    if (sql.includes("SELECT to_regclass(format")) {
+      return { rows: [{ relation_name: null }], rowCount: 1 };
+    }
+    if (sql.includes("DELETE FROM video_daily_recompression_queue")) {
+      queued = false;
+    }
+    if (sql.includes("FROM pg_index AS index_definition")) {
+      return { rows: [canonicalIndex], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 0 };
+  });
+
+  await initializeVideoDaily(pool);
+
+  assert.equal(
+    queries.some(({ sql }) => sql.includes("SELECT recompress_chunk")),
+    false,
+  );
   assert.equal(
     queries.some(({ sql }) =>
       sql.includes("DELETE FROM video_daily_recompression_queue"),
@@ -237,6 +319,16 @@ test("video_daily initialization keeps failed recompression queued", async () =>
           {
             chunk_name: "_hyper_11_213_chunk",
             chunk_schema: "_timescaledb_internal",
+          },
+        ],
+        rowCount: 1,
+      };
+    }
+    if (sql.includes("SELECT to_regclass(format")) {
+      return {
+        rows: [
+          {
+            relation_name: "_timescaledb_internal._hyper_11_213_chunk",
           },
         ],
         rowCount: 1,

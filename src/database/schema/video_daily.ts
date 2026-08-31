@@ -55,6 +55,53 @@ async function createVideoDailyUniqueIndex(client: PoolClient): Promise<void> {
   `);
 }
 
+async function getVideoDailyUniqueIndex(
+  client: PoolClient,
+): Promise<VideoDailyUniqueIndex | undefined> {
+  const uniqueIndexResult = await client.query<VideoDailyUniqueIndex>(`
+    SELECT
+      index_definition.indexrelid::regclass::text AS index_name,
+      index_definition.indisunique AS is_unique,
+      index_definition.indisvalid AS is_valid,
+      index_definition.indpred IS NULL AS is_full_table,
+      array_agg(attribute.attname ORDER BY index_key.ordinality) AS key_columns,
+      pg_get_indexdef(index_definition.indexrelid) AS index_definition
+    FROM pg_index AS index_definition
+    CROSS JOIN LATERAL unnest(index_definition.indkey::smallint[])
+      WITH ORDINALITY AS index_key(attnum, ordinality)
+    JOIN pg_attribute AS attribute
+      ON attribute.attrelid = index_definition.indrelid
+     AND attribute.attnum = index_key.attnum
+    WHERE index_definition.indrelid = 'video_daily'::regclass
+      AND index_definition.indexrelid = to_regclass('${VIDEO_DAILY_UNIQUE_INDEX}')
+      AND index_key.ordinality <= index_definition.indnkeyatts
+    GROUP BY
+      index_definition.indexrelid,
+      index_definition.indisunique,
+      index_definition.indisvalid,
+      index_definition.indpred
+  `);
+  return uniqueIndexResult.rows[0];
+}
+
+function assertCanonicalVideoDailyIndex(
+  index: VideoDailyUniqueIndex | undefined,
+): void {
+  if (!index || !isCanonicalVideoDailyIndex(index)) {
+    throw new Error(
+      `video_daily index ${VIDEO_DAILY_UNIQUE_INDEX} must be a valid unique btree index on (aid, record_date)`,
+    );
+  }
+}
+
+async function dropRedundantVideoDailyIndexes(
+  client: PoolClient,
+): Promise<void> {
+  for (const indexName of REDUNDANT_VIDEO_DAILY_INDEXES) {
+    await client.query(`DROP INDEX IF EXISTS ${indexName}`);
+  }
+}
+
 async function recompressQueuedVideoDailyChunks(
   client: PoolClient,
 ): Promise<void> {
@@ -69,6 +116,25 @@ async function recompressQueuedVideoDailyChunks(
     try {
       await client.query("BEGIN");
       transactionStarted = true;
+      const relationResult = await client.query<{
+        relation_name: string | null;
+      }>("SELECT to_regclass(format('%I.%I', $1, $2))::text AS relation_name", [
+        chunk.chunk_schema,
+        chunk.chunk_name,
+      ]);
+      if (!relationResult.rows[0]?.relation_name) {
+        await client.query(
+          `
+            DELETE FROM video_daily_recompression_queue
+            WHERE chunk_schema = $1
+              AND chunk_name = $2
+          `,
+          [chunk.chunk_schema, chunk.chunk_name],
+        );
+        await client.query("COMMIT");
+        transactionStarted = false;
+        continue;
+      }
       await client.query(
         "SELECT recompress_chunk(format('%I.%I', $1, $2)::regclass)",
         [chunk.chunk_schema, chunk.chunk_name],
@@ -98,7 +164,8 @@ async function cleanVideoDailyDuplicates(client: PoolClient): Promise<void> {
       SELECT min(record_date) AS first_date, max(record_date) AS last_date
       FROM video_daily
     )
-    SELECT (date_bounds.first_date + day_offset)::text AS record_date
+    SELECT
+      to_char(date_bounds.first_date + day_offset, 'YYYY-MM-DD') AS record_date
     FROM date_bounds
     CROSS JOIN LATERAL generate_series(
       0,
@@ -202,45 +269,21 @@ async function enforceVideoDailyUniqueness(pool: Pool): Promise<void> {
   let transactionStarted = false;
   try {
     await recompressQueuedVideoDailyChunks(client);
+    const existingIndex = await getVideoDailyUniqueIndex(client);
+    if (existingIndex) {
+      assertCanonicalVideoDailyIndex(existingIndex);
+      await dropRedundantVideoDailyIndexes(client);
+      return;
+    }
+
     await client.query("BEGIN");
     transactionStarted = true;
     await client.query("LOCK TABLE video_daily IN SHARE ROW EXCLUSIVE MODE");
     await cleanVideoDailyDuplicates(client);
     await createVideoDailyUniqueIndex(client);
 
-    const uniqueIndexResult = await client.query<VideoDailyUniqueIndex>(`
-      SELECT
-        index_definition.indexrelid::regclass::text AS index_name,
-        index_definition.indisunique AS is_unique,
-        index_definition.indisvalid AS is_valid,
-        index_definition.indpred IS NULL AS is_full_table,
-        array_agg(attribute.attname ORDER BY index_key.ordinality) AS key_columns,
-        pg_get_indexdef(index_definition.indexrelid) AS index_definition
-      FROM pg_index AS index_definition
-      CROSS JOIN LATERAL unnest(index_definition.indkey::smallint[])
-        WITH ORDINALITY AS index_key(attnum, ordinality)
-      JOIN pg_attribute AS attribute
-        ON attribute.attrelid = index_definition.indrelid
-       AND attribute.attnum = index_key.attnum
-      WHERE index_definition.indrelid = 'video_daily'::regclass
-        AND index_definition.indexrelid = '${VIDEO_DAILY_UNIQUE_INDEX}'::regclass
-        AND index_key.ordinality <= index_definition.indnkeyatts
-      GROUP BY
-        index_definition.indexrelid,
-        index_definition.indisunique,
-        index_definition.indisvalid,
-        index_definition.indpred
-    `);
-    const uniqueIndex = uniqueIndexResult.rows[0];
-    if (!uniqueIndex || !isCanonicalVideoDailyIndex(uniqueIndex)) {
-      throw new Error(
-        `video_daily index ${VIDEO_DAILY_UNIQUE_INDEX} must be a valid unique btree index on (aid, record_date)`,
-      );
-    }
-
-    for (const indexName of REDUNDANT_VIDEO_DAILY_INDEXES) {
-      await client.query(`DROP INDEX IF EXISTS ${indexName}`);
-    }
+    assertCanonicalVideoDailyIndex(await getVideoDailyUniqueIndex(client));
+    await dropRedundantVideoDailyIndexes(client);
     await client.query("COMMIT");
     transactionStarted = false;
     await recompressQueuedVideoDailyChunks(client);
