@@ -988,13 +988,25 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     RETURNS trigger AS $$
     DECLARE
       affected_aids bigint[];
+      refresh_now timestamptz := now();
+      business_today date := (
+        refresh_now AT TIME ZONE '${sqlText(config.minute.collectionBusinessTimezone)}'
+      )::date;
     BEGIN
       SELECT array_agg(DISTINCT aid ORDER BY aid) INTO affected_aids
-      FROM new_video_daily_rows;
+      FROM new_video_daily_rows
+      WHERE record_date IN (
+        business_today,
+        business_today - 1,
+        business_today - 7
+      );
       IF affected_aids IS NULL THEN
         RETURN NULL;
       END IF;
-      PERFORM fn_refresh_video_collection_state_from_daily(affected_aids, now());
+      PERFORM fn_refresh_video_collection_state_from_daily(
+        affected_aids,
+        refresh_now
+      );
       RETURN NULL;
     END;
     $$ LANGUAGE plpgsql
