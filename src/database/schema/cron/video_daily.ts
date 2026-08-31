@@ -40,6 +40,13 @@ export async function initCronVideoDaily(
         RAISE EXCEPTION 'video_daily sync batch size must be positive';
       END IF;
 
+      -- Hold one transaction-scoped lock for the complete run.  The procedure
+      -- intentionally keeps a single transaction so concurrent runs cannot
+      -- interleave batches or publish an older snapshot after a newer run.
+      PERFORM pg_advisory_xact_lock(
+        hashtextextended('${schema}.video_daily_mysql_sync', 0)
+      );
+
       CREATE TEMP TABLE IF NOT EXISTS video_daily_sync_day (
         record_date date NOT NULL,
         aid bigint PRIMARY KEY,
@@ -58,11 +65,6 @@ export async function initCronVideoDaily(
 
       v_record_date := p_start_date;
       WHILE v_record_date <= p_end_date LOOP
-        -- The lock is transaction-scoped so failures release it automatically.
-        -- Reacquire it for each batch because batches commit independently.
-        PERFORM pg_advisory_xact_lock(
-          hashtextextended('${schema}.video_daily_mysql_sync', 0)
-        );
         TRUNCATE pg_temp.video_daily_sync_day;
 
         INSERT INTO pg_temp.video_daily_sync_day (
@@ -89,9 +91,6 @@ export async function initCronVideoDaily(
         v_last_aid := NULL;
 
         LOOP
-          PERFORM pg_advisory_xact_lock(
-            hashtextextended('${schema}.video_daily_mysql_sync', 0)
-          );
           TRUNCATE pg_temp.video_daily_sync_batch;
 
           INSERT INTO pg_temp.video_daily_sync_batch (
@@ -176,7 +175,6 @@ export async function initCronVideoDaily(
 
           GET DIAGNOSTICS v_inserted_rows = ROW_COUNT;
 
-          COMMIT;
           RAISE NOTICE 'video_daily sync: completed date %, aids %..%, batch rows %, updated %, inserted %',
             v_record_date, v_batch_first_aid, v_last_aid, v_batch_rows,
             v_updated_rows, v_inserted_rows;
