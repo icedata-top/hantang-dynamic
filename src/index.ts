@@ -120,6 +120,7 @@ async function main() {
       await syncVideoDailyRange(db.getPool(), {
         startDate,
         endDate,
+        schema: config.database.schema,
         batchSize,
         onProgress: (message) => logger.info(message),
       });
