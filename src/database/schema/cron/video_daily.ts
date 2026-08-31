@@ -17,7 +17,7 @@ export async function initCronVideoDaily(
     CREATE OR REPLACE PROCEDURE "${schema}".sync_video_daily_from_mysql(
       p_start_date date,
       p_end_date date,
-      p_batch_size integer DEFAULT ${VIDEO_DAILY_SYNC_BATCH_SIZE}
+      p_batch_size integer DEFAULT NULL
     )
     LANGUAGE plpgsql
     AS $$
@@ -36,7 +36,7 @@ export async function initCronVideoDaily(
       IF p_start_date > p_end_date THEN
         RAISE EXCEPTION 'video_daily sync start date must not be after end date';
       END IF;
-      IF p_batch_size IS NULL OR p_batch_size < 1 THEN
+      IF p_batch_size IS NOT NULL AND p_batch_size < 1 THEN
         RAISE EXCEPTION 'video_daily sync batch size must be positive';
       END IF;
 

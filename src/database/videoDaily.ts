@@ -14,13 +14,7 @@ export async function syncVideoDailyRange(
     onProgress?: (message: string) => void;
   },
 ): Promise<void> {
-  const {
-    startDate,
-    endDate,
-    schema,
-    batchSize = VIDEO_DAILY_SYNC_BATCH_SIZE,
-    onProgress,
-  } = options;
+  const { startDate, endDate, schema, batchSize, onProgress } = options;
   if (!ISO_DATE.test(startDate) || !ISO_DATE.test(endDate)) {
     throw new Error("Video daily sync dates must use YYYY-MM-DD");
   }
@@ -28,9 +22,10 @@ export async function syncVideoDailyRange(
     throw new Error("Video daily sync start date must not be after end date");
   }
   if (
-    !Number.isSafeInteger(batchSize) ||
-    batchSize < 1 ||
-    batchSize > 2_147_483_647
+    batchSize !== undefined &&
+    (!Number.isSafeInteger(batchSize) ||
+      batchSize < 1 ||
+      batchSize > 2_147_483_647)
   ) {
     throw new Error(
       "Video daily sync batch size must be a positive PostgreSQL integer",
@@ -49,7 +44,7 @@ export async function syncVideoDailyRange(
   try {
     await client.query(
       "CALL sync_video_daily_from_mysql($1::date, $2::date, $3::integer)",
-      [startDate, endDate, batchSize],
+      [startDate, endDate, batchSize ?? null],
     );
   } catch (error) {
     callError = error;

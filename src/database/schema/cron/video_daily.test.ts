@@ -20,9 +20,12 @@ test("daily sync targets one fixed-date TimescaleDB chunk", async () => {
   const procedureSql = queries[0] ?? "";
   assert.match(
     procedureSql,
-    /IF p_batch_size IS NULL OR p_batch_size < 1 THEN[\s\S]*?batch size must be positive/,
+    /IF p_batch_size IS NOT NULL AND p_batch_size < 1 THEN[\s\S]*?batch size must be positive/,
   );
   assert.doesNotMatch(procedureSql, /p_batch_size > 50000/);
+  assert.match(procedureSql, /p_batch_size integer DEFAULT NULL/);
+  assert.match(procedureSql, /LIMIT p_batch_size/);
+  assert.match(queries[2] ?? "", /sync_video_daily_from_mysql\([\s\S]*?50000/);
   const updateSql = procedureSql.match(
     /EXECUTE \$sync_update\$([\s\S]*?)\$sync_update\$ USING v_record_date;/,
   )?.[1];

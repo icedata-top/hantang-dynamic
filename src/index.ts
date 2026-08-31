@@ -107,13 +107,9 @@ async function main() {
         "--backfill-video-daily requires --from and --through dates",
       );
     }
-    const { syncVideoDailyRange, VIDEO_DAILY_SYNC_BATCH_SIZE } = await import(
-      "./database/videoDaily"
-    );
+    const { syncVideoDailyRange } = await import("./database/videoDaily");
     const batchSize =
-      batchSizeValue === undefined
-        ? VIDEO_DAILY_SYNC_BATCH_SIZE
-        : Number(batchSizeValue);
+      batchSizeValue === undefined ? undefined : Number(batchSizeValue);
     const db = Database.getInstance();
     try {
       await db.init();
