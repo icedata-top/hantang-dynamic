@@ -38,7 +38,8 @@ test("explicit video daily backfill requires a valid fixed range", async () => {
     sql: "CALL sync_video_daily_from_mysql($1::date, $2::date, $3::integer)",
     values: ["2026-06-09", "2026-08-29", null],
   });
-  assert.equal(calls.length, 1);
+  assert.match(calls[1]?.sql ?? "", /pg_advisory_unlock/);
+  assert.deepEqual(calls[1]?.values, ["hantang_dynamic"]);
   assert.deepEqual(progress, ["video_daily sync: completed date 2026-06-09"]);
 
   calls.length = 0;
@@ -53,7 +54,8 @@ test("explicit video daily backfill requires a valid fixed range", async () => {
     sql: "CALL sync_video_daily_from_mysql($1::date, $2::date, $3::integer)",
     values: ["2026-06-09", "2026-08-29", 2_000],
   });
-  assert.equal(calls.length, 1);
+  assert.match(calls[1]?.sql ?? "", /pg_advisory_unlock/);
+  assert.deepEqual(calls[1]?.values, ["hantang_dynamic"]);
   calls.length = 0;
   await syncVideoDailyRange(pool, {
     startDate: "2026-06-09",
@@ -66,7 +68,8 @@ test("explicit video daily backfill requires a valid fixed range", async () => {
     sql: "CALL sync_video_daily_from_mysql($1::date, $2::date, $3::integer)",
     values: ["2026-06-09", "2026-08-29", 500_000],
   });
-  assert.equal(calls.length, 1);
+  assert.match(calls[1]?.sql ?? "", /pg_advisory_unlock/);
+  assert.deepEqual(calls[1]?.values, ["hantang_dynamic"]);
   await assert.rejects(
     syncVideoDailyRange(pool, {
       startDate: "2026-08-30",
@@ -107,13 +110,16 @@ test("video daily backfill rejects batch sizes PostgreSQL cannot accept", async 
   assert.equal(connections, 0);
 });
 
-test("failed video daily backfill releases the client", async () => {
+test("failed video daily backfill unlocks before releasing the client", async () => {
   const calls: string[] = [];
   let released = false;
   const client = Object.assign(new EventEmitter(), {
     async query(sql: string) {
       calls.push(sql);
-      throw new Error("sync failed");
+      if (calls.length === 1) {
+        throw new Error("sync failed");
+      }
+      return { rows: [], rowCount: 1 };
     },
     release() {
       released = true;
@@ -134,7 +140,8 @@ test("failed video daily backfill releases the client", async () => {
     /sync failed/,
   );
 
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
+  assert.match(calls[1] ?? "", /pg_advisory_unlock/);
   assert.equal(client.listenerCount("notice"), 0);
   assert.equal(released, true);
 });

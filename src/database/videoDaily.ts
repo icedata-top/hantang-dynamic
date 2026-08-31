@@ -14,7 +14,7 @@ export async function syncVideoDailyRange(
     onProgress?: (message: string) => void;
   },
 ): Promise<void> {
-  const { startDate, endDate, batchSize, onProgress } = options;
+  const { startDate, endDate, schema, batchSize, onProgress } = options;
   if (!ISO_DATE.test(startDate) || !ISO_DATE.test(endDate)) {
     throw new Error("Video daily sync dates must use YYYY-MM-DD");
   }
@@ -40,6 +40,7 @@ export async function syncVideoDailyRange(
   };
   client.on("notice", handleNotice);
   let callError: unknown;
+  let cleanupError: unknown;
   try {
     await client.query(
       "CALL sync_video_daily_from_mysql($1::date, $2::date, $3::integer)",
@@ -48,12 +49,28 @@ export async function syncVideoDailyRange(
   } catch (error) {
     callError = error;
   } finally {
-    client.removeListener("notice", handleNotice);
-    client.release();
+    try {
+      await client.query(
+        `
+          SELECT pg_advisory_unlock(
+            hashtextextended($1 || '.video_daily_mysql_sync', 0)
+          )
+        `,
+        [schema],
+      );
+    } catch (error) {
+      cleanupError = error;
+    } finally {
+      client.removeListener("notice", handleNotice);
+      client.release(cleanupError instanceof Error ? cleanupError : undefined);
+    }
   }
 
   if (callError !== undefined) {
     throw callError;
+  }
+  if (cleanupError !== undefined) {
+    throw cleanupError;
   }
 }
 
