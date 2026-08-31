@@ -1,8 +1,7 @@
 import type { Pool } from "pg";
 import { config } from "../../../config/index.js";
 import { logger } from "../../../utils/logger.js";
-
-const VIDEO_DAILY_SYNC_BATCH_SIZE = 5_000;
+import { VIDEO_DAILY_SYNC_BATCH_SIZE } from "../../videoDaily.js";
 
 // every day at UTC 21:30 (Beijing 05:30)
 export async function initCronVideoDaily(
@@ -25,7 +24,11 @@ export async function initCronVideoDaily(
     DECLARE
       v_record_date date;
       v_last_aid bigint;
+      v_batch_first_aid bigint;
       v_batch_rows integer;
+      v_staged_rows integer;
+      v_updated_rows integer;
+      v_inserted_rows integer;
     BEGIN
       IF p_start_date IS NULL OR p_end_date IS NULL THEN
         RAISE EXCEPTION 'video_daily sync requires fixed start and end dates';
@@ -37,7 +40,7 @@ export async function initCronVideoDaily(
         RAISE EXCEPTION 'video_daily sync batch size must be between 1 and 50000';
       END IF;
 
-      CREATE TEMP TABLE IF NOT EXISTS video_daily_sync_batch (
+      CREATE TEMP TABLE IF NOT EXISTS video_daily_sync_day (
         record_date date NOT NULL,
         aid bigint PRIMARY KEY,
         coin integer,
@@ -49,8 +52,35 @@ export async function initCronVideoDaily(
         "like" integer
       ) ON COMMIT PRESERVE ROWS;
 
+      CREATE TEMP TABLE IF NOT EXISTS video_daily_sync_batch
+        (LIKE pg_temp.video_daily_sync_day INCLUDING ALL)
+        ON COMMIT PRESERVE ROWS;
+
       v_record_date := p_start_date;
       WHILE v_record_date <= p_end_date LOOP
+        TRUNCATE pg_temp.video_daily_sync_day;
+
+        INSERT INTO pg_temp.video_daily_sync_day (
+          record_date, aid, coin, favorite, danmaku, "view", reply, share, "like"
+        )
+        SELECT
+          source.record_date,
+          source.aid,
+          source.coin,
+          source.favorite,
+          source.danmaku,
+          source."view",
+          source.reply,
+          source.share,
+          source."like"
+        FROM "${schema}".mysql_video_daily AS source
+        WHERE source.record_date = v_record_date;
+
+        GET DIAGNOSTICS v_staged_rows = ROW_COUNT;
+        ANALYZE pg_temp.video_daily_sync_day;
+        RAISE NOTICE 'video_daily sync: staged date %, rows %',
+          v_record_date, v_staged_rows;
+
         v_last_aid := NULL;
 
         LOOP
@@ -69,7 +99,7 @@ export async function initCronVideoDaily(
             source.reply,
             source.share,
             source."like"
-          FROM "${schema}".mysql_video_daily AS source
+          FROM pg_temp.video_daily_sync_day AS source
           WHERE source.record_date = v_record_date
             AND (v_last_aid IS NULL OR source.aid > v_last_aid)
           ORDER BY source.aid
@@ -78,7 +108,8 @@ export async function initCronVideoDaily(
           GET DIAGNOSTICS v_batch_rows = ROW_COUNT;
           EXIT WHEN v_batch_rows = 0;
 
-          SELECT max(aid) INTO v_last_aid
+          SELECT min(aid), max(aid)
+          INTO v_batch_first_aid, v_last_aid
           FROM pg_temp.video_daily_sync_batch;
 
           -- Both cron and maintenance calls use this transaction-scoped lock.
@@ -107,6 +138,8 @@ export async function initCronVideoDaily(
               source.reply, source.share, source."like"
             );
 
+          GET DIAGNOSTICS v_updated_rows = ROW_COUNT;
+
           INSERT INTO "${schema}".video_daily (
             record_date, aid, coin, favorite, danmaku, "view", reply, share, "like"
           )
@@ -129,7 +162,12 @@ export async function initCronVideoDaily(
           )
           ORDER BY source.aid;
 
+          GET DIAGNOSTICS v_inserted_rows = ROW_COUNT;
+
           COMMIT;
+          RAISE NOTICE 'video_daily sync: completed date %, aids %..%, batch rows %, updated %, inserted %',
+            v_record_date, v_batch_first_aid, v_last_aid, v_batch_rows,
+            v_updated_rows, v_inserted_rows;
         END LOOP;
 
         v_record_date := v_record_date + 1;

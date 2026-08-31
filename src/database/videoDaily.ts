@@ -2,12 +2,23 @@ import type { Pool } from "pg";
 import type { DailyCollectionCandidate } from "../types/models/minute.js";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+export const VIDEO_DAILY_SYNC_BATCH_SIZE = 50_000;
 
 export async function syncVideoDailyRange(
   pool: Pool,
-  options: { startDate: string; endDate: string; batchSize?: number },
+  options: {
+    startDate: string;
+    endDate: string;
+    batchSize?: number;
+    onProgress?: (message: string) => void;
+  },
 ): Promise<void> {
-  const { startDate, endDate, batchSize = 5_000 } = options;
+  const {
+    startDate,
+    endDate,
+    batchSize = VIDEO_DAILY_SYNC_BATCH_SIZE,
+    onProgress,
+  } = options;
   if (!ISO_DATE.test(startDate) || !ISO_DATE.test(endDate)) {
     throw new Error("Video daily sync dates must use YYYY-MM-DD");
   }
@@ -18,10 +29,22 @@ export async function syncVideoDailyRange(
     throw new Error("Video daily sync batch size must be between 1 and 50000");
   }
 
-  await pool.query(
-    "CALL sync_video_daily_from_mysql($1::date, $2::date, $3::integer)",
-    [startDate, endDate, batchSize],
-  );
+  const client = await pool.connect();
+  const handleNotice = (notice: { message?: string }): void => {
+    if (notice.message?.startsWith("video_daily sync:")) {
+      onProgress?.(notice.message);
+    }
+  };
+  client.on("notice", handleNotice);
+  try {
+    await client.query(
+      "CALL sync_video_daily_from_mysql($1::date, $2::date, $3::integer)",
+      [startDate, endDate, batchSize],
+    );
+  } finally {
+    client.removeListener("notice", handleNotice);
+    client.release();
+  }
 }
 
 function mapCandidate(row: Record<string, unknown>): DailyCollectionCandidate {
