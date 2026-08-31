@@ -86,27 +86,43 @@ test("video_daily initialization validates the canonical unique index before dro
 });
 
 test("video_daily initialization replaces duplicate dates with deterministic minimum-view rows", async () => {
-  const duplicateError = Object.assign(
-    new Error("Key (aid, record_date)=(1, 2026-06-03) already exists."),
-    { code: "23505" },
-  );
   let createAttempts = 0;
+  let recompressionQueued = false;
   const { pool, queries } = createPool(async (sql) => {
     if (sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS")) {
       createAttempts += 1;
-      if (createAttempts === 1) throw duplicateError;
     }
-    if (sql.includes("SELECT duplicate_keys.record_date::text")) {
+    if (sql.includes("WITH date_bounds AS")) {
       return {
-        rows: [{ record_date: "2026-06-03" }],
+        rows: [{ record_date: "2026-06-02" }, { record_date: "2026-06-03" }],
+        rowCount: 2,
+      };
+    }
+    if (sql.includes("AS has_duplicates")) {
+      return {
+        rows: [{ has_duplicates: sql.includes("DATE '2026-06-03'") }],
         rowCount: 1,
       };
     }
-    if (sql.includes("timescaledb_information.chunks")) {
+    if (sql.includes("INSERT INTO video_daily_recompression_queue")) {
+      recompressionQueued = true;
+    }
+    if (
+      sql.includes("SELECT chunk_schema::text, chunk_name::text") &&
+      recompressionQueued
+    ) {
       return {
-        rows: [{ chunk_name: "_timescaledb_internal._hyper_11_213_chunk" }],
+        rows: [
+          {
+            chunk_name: "_hyper_11_213_chunk",
+            chunk_schema: "_timescaledb_internal",
+          },
+        ],
         rowCount: 1,
       };
+    }
+    if (sql.includes("DELETE FROM video_daily_recompression_queue")) {
+      recompressionQueued = false;
     }
     if (sql.includes("FROM pg_index AS index_definition")) {
       return { rows: [canonicalIndex], rowCount: 1 };
@@ -116,7 +132,17 @@ test("video_daily initialization replaces duplicate dates with deterministic min
 
   await initializeVideoDaily(pool);
 
-  assert.equal(createAttempts, 2);
+  assert.equal(createAttempts, 1);
+  const dateEnumeration = normalizeSql(
+    queries.find(({ sql }) => sql.includes("WITH date_bounds AS"))?.sql ?? "",
+  );
+  assert.doesNotMatch(dateEnumeration, /GROUP BY|HAVING/);
+  const duplicateChecks = queries.filter(({ sql }) =>
+    sql.includes("AS has_duplicates"),
+  );
+  assert.equal(duplicateChecks.length, 2);
+  assert.match(duplicateChecks[0].sql, /record_date = DATE '2026-06-02'/);
+  assert.match(duplicateChecks[1].sql, /record_date = DATE '2026-06-03'/);
   const stage = normalizeSql(
     queries.find(({ sql }) => sql.includes("SELECT DISTINCT ON (aid)"))?.sql ??
       "",
@@ -131,7 +157,7 @@ test("video_daily initialization replaces duplicate dates with deterministic min
     .map(({ sql }) => normalizeSql(sql))
     .filter(
       (sql) =>
-        sql.startsWith("DELETE FROM video_daily") ||
+        sql.startsWith("DELETE FROM video_daily WHERE") ||
         sql.startsWith("INSERT INTO video_daily (") ||
         sql.startsWith("INSERT INTO video_daily_deduplicated"),
     );
@@ -139,14 +165,101 @@ test("video_daily initialization replaces duplicate dates with deterministic min
   for (const sql of cleanupDml) {
     assert.match(sql, /record_date = DATE '2026-06-03'/);
   }
+  assert.match(
+    queries.find(({ sql }) =>
+      sql.includes("INSERT INTO video_daily_recompression_queue"),
+    )?.sql ?? "",
+    /record_date = DATE '2026-06-03'/,
+  );
 
   const commit = queries.findIndex(({ sql }) => sql === "COMMIT");
   const recompress = queries.findIndex(
     ({ sql, values }) =>
-      sql === "SELECT recompress_chunk($1::regclass)" &&
-      values?.[0] === "_timescaledb_internal._hyper_11_213_chunk",
+      sql === "SELECT recompress_chunk(format('%I.%I', $1, $2)::regclass)" &&
+      values?.[0] === "_timescaledb_internal" &&
+      values?.[1] === "_hyper_11_213_chunk",
   );
   assert.ok(commit < recompress);
+  assert.equal(
+    queries.some(({ sql }) =>
+      /\b(?:FROM|JOIN)\s+mysql_video_daily\b/i.test(sql),
+    ),
+    false,
+  );
+});
+
+test("video_daily initialization retries queued recompression before uniqueness checks", async () => {
+  let queued = true;
+  const { pool, queries } = createPool(async (sql) => {
+    if (sql.includes("SELECT chunk_schema::text, chunk_name::text") && queued) {
+      return {
+        rows: [
+          {
+            chunk_name: "_hyper_11_213_chunk",
+            chunk_schema: "_timescaledb_internal",
+          },
+        ],
+        rowCount: 1,
+      };
+    }
+    if (sql.includes("DELETE FROM video_daily_recompression_queue")) {
+      queued = false;
+    }
+    if (sql.includes("FROM pg_index AS index_definition")) {
+      return { rows: [canonicalIndex], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 0 };
+  });
+
+  await initializeVideoDaily(pool);
+
+  const recompress = queries.findIndex(({ sql }) =>
+    sql.includes("SELECT recompress_chunk"),
+  );
+  const uniquenessLock = queries.findIndex(
+    ({ sql }) => sql === "LOCK TABLE video_daily IN SHARE ROW EXCLUSIVE MODE",
+  );
+  assert.ok(recompress < uniquenessLock);
+  assert.equal(
+    queries.some(({ sql }) =>
+      sql.includes("DELETE FROM video_daily_recompression_queue"),
+    ),
+    true,
+  );
+});
+
+test("video_daily initialization keeps failed recompression queued", async () => {
+  const compressionError = new Error("recompression failed");
+  const { pool, queries } = createPool(async (sql) => {
+    if (sql.includes("SELECT chunk_schema::text, chunk_name::text")) {
+      return {
+        rows: [
+          {
+            chunk_name: "_hyper_11_213_chunk",
+            chunk_schema: "_timescaledb_internal",
+          },
+        ],
+        rowCount: 1,
+      };
+    }
+    if (sql.includes("SELECT recompress_chunk")) throw compressionError;
+    return { rows: [], rowCount: 0 };
+  });
+
+  await assert.rejects(initializeVideoDaily(pool), (error: unknown) => {
+    assert.equal(error, compressionError);
+    return true;
+  });
+  assert.equal(
+    queries.some(({ sql }) =>
+      sql.includes("DELETE FROM video_daily_recompression_queue"),
+    ),
+    false,
+  );
+  assert.equal(
+    queries.some(({ sql }) => sql === "ROLLBACK"),
+    true,
+  );
 });
 
 test("video_daily initialization propagates non-duplicate index build errors", async () => {
@@ -163,9 +276,7 @@ test("video_daily initialization propagates non-duplicate index build errors", a
     return true;
   });
   assert.equal(
-    queries.some(({ sql }) =>
-      sql.includes("SELECT duplicate_keys.record_date::text"),
-    ),
+    queries.some(({ sql }) => sql.includes("SELECT DISTINCT ON (aid)")),
     false,
   );
   assert.equal(
