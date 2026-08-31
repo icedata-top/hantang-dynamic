@@ -118,49 +118,59 @@ export async function initCronVideoDaily(
             hashtextextended('${schema}.video_daily_mysql_sync', 0)
           );
 
-          UPDATE "${schema}".video_daily AS target
-          SET
-            coin = source.coin,
-            favorite = source.favorite,
-            danmaku = source.danmaku,
-            "view" = source."view",
-            reply = source.reply,
-            share = source.share,
-            "like" = source."like"
-          FROM pg_temp.video_daily_sync_batch AS source
-          WHERE target.aid = source.aid
-            AND target.record_date = source.record_date
-            AND ROW(
-              target.coin, target.favorite, target.danmaku, target."view",
-              target.reply, target.share, target."like"
-            ) IS DISTINCT FROM ROW(
-              source.coin, source.favorite, source.danmaku, source."view",
-              source.reply, source.share, source."like"
-            );
+          -- Plan each date separately so TimescaleDB prunes historical chunks
+          -- before applying the hypertable UPDATE.
+          EXECUTE $sync_update$
+            UPDATE "${schema}".video_daily AS target
+            SET
+              coin = source.coin,
+              favorite = source.favorite,
+              danmaku = source.danmaku,
+              "view" = source."view",
+              reply = source.reply,
+              share = source.share,
+              "like" = source."like"
+            FROM pg_temp.video_daily_sync_batch AS source
+            WHERE target.record_date = $1
+              AND source.record_date = $1
+              AND target.aid = source.aid
+              AND target.record_date = source.record_date
+              AND ROW(
+                target.coin, target.favorite, target.danmaku, target."view",
+                target.reply, target.share, target."like"
+              ) IS DISTINCT FROM ROW(
+                source.coin, source.favorite, source.danmaku, source."view",
+                source.reply, source.share, source."like"
+              )
+          $sync_update$ USING v_record_date;
 
           GET DIAGNOSTICS v_updated_rows = ROW_COUNT;
 
-          INSERT INTO "${schema}".video_daily (
-            record_date, aid, coin, favorite, danmaku, "view", reply, share, "like"
-          )
-          SELECT
-            source.record_date,
-            source.aid,
-            source.coin,
-            source.favorite,
-            source.danmaku,
-            source."view",
-            source.reply,
-            source.share,
-            source."like"
-          FROM pg_temp.video_daily_sync_batch AS source
-          WHERE NOT EXISTS (
-            SELECT 1
-            FROM "${schema}".video_daily AS target
-            WHERE target.aid = source.aid
-              AND target.record_date = source.record_date
-          )
-          ORDER BY source.aid;
+          EXECUTE $sync_insert$
+            INSERT INTO "${schema}".video_daily (
+              record_date, aid, coin, favorite, danmaku, "view", reply, share, "like"
+            )
+            SELECT
+              source.record_date,
+              source.aid,
+              source.coin,
+              source.favorite,
+              source.danmaku,
+              source."view",
+              source.reply,
+              source.share,
+              source."like"
+            FROM pg_temp.video_daily_sync_batch AS source
+            WHERE source.record_date = $1
+              AND NOT EXISTS (
+                SELECT 1
+                FROM "${schema}".video_daily AS target
+                WHERE target.record_date = $1
+                  AND target.aid = source.aid
+                  AND target.record_date = source.record_date
+              )
+            ORDER BY source.aid
+          $sync_insert$ USING v_record_date;
 
           GET DIAGNOSTICS v_inserted_rows = ROW_COUNT;
 
