@@ -1,6 +1,79 @@
 import type { Pool } from "pg";
 import type { DailyCollectionCandidate } from "../types/models/minute.js";
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+export const VIDEO_DAILY_SYNC_BATCH_SIZE = 50_000;
+
+export async function syncVideoDailyRange(
+  pool: Pool,
+  options: {
+    startDate: string;
+    endDate: string;
+    schema: string;
+    batchSize?: number;
+    onProgress?: (message: string) => void;
+  },
+): Promise<void> {
+  const { startDate, endDate, schema, batchSize, onProgress } = options;
+  if (!ISO_DATE.test(startDate) || !ISO_DATE.test(endDate)) {
+    throw new Error("Video daily sync dates must use YYYY-MM-DD");
+  }
+  if (startDate > endDate) {
+    throw new Error("Video daily sync start date must not be after end date");
+  }
+  if (
+    batchSize !== undefined &&
+    (!Number.isSafeInteger(batchSize) ||
+      batchSize < 1 ||
+      batchSize > 2_147_483_647)
+  ) {
+    throw new Error(
+      "Video daily sync batch size must be a positive PostgreSQL integer",
+    );
+  }
+
+  const client = await pool.connect();
+  const handleNotice = (notice: { message?: string }): void => {
+    if (notice.message?.startsWith("video_daily sync:")) {
+      onProgress?.(notice.message);
+    }
+  };
+  client.on("notice", handleNotice);
+  let callError: unknown;
+  let cleanupError: unknown;
+  try {
+    await client.query(
+      "CALL sync_video_daily_from_mysql($1::date, $2::date, $3::integer)",
+      [startDate, endDate, batchSize ?? null],
+    );
+  } catch (error) {
+    callError = error;
+  } finally {
+    try {
+      await client.query(
+        `
+          SELECT pg_advisory_unlock(
+            hashtextextended($1 || '.video_daily_mysql_sync', 0)
+          )
+        `,
+        [schema],
+      );
+    } catch (error) {
+      cleanupError = error;
+    } finally {
+      client.removeListener("notice", handleNotice);
+      client.release(cleanupError instanceof Error ? cleanupError : undefined);
+    }
+  }
+
+  if (callError !== undefined) {
+    throw callError;
+  }
+  if (cleanupError !== undefined) {
+    throw cleanupError;
+  }
+}
+
 function mapCandidate(row: Record<string, unknown>): DailyCollectionCandidate {
   return {
     aid: BigInt(row.aid as string | number),

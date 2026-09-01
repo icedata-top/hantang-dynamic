@@ -1,11 +1,193 @@
 import type { Pool } from "pg";
+import { config } from "../../../config/index.js";
 import { logger } from "../../../utils/logger.js";
+import { VIDEO_DAILY_SYNC_BATCH_SIZE } from "../../videoDaily.js";
 
 // every day at UTC 21:30 (Beijing 05:30)
 export async function initCronVideoDaily(
   pool: Pool,
   schema: string,
 ): Promise<void> {
+  const businessTimezone = config.minute.collectionBusinessTimezone.replace(
+    /'/g,
+    "''",
+  );
+
+  await pool.query(`
+    CREATE OR REPLACE PROCEDURE "${schema}".sync_video_daily_from_mysql(
+      p_start_date date,
+      p_end_date date,
+      p_batch_size integer DEFAULT NULL
+    )
+    LANGUAGE plpgsql
+    AS $$
+    DECLARE
+      v_record_date date;
+      v_last_aid bigint;
+      v_batch_first_aid bigint;
+      v_batch_rows integer;
+      v_staged_rows integer;
+      v_updated_rows integer;
+      v_inserted_rows integer;
+    BEGIN
+      IF p_start_date IS NULL OR p_end_date IS NULL THEN
+        RAISE EXCEPTION 'video_daily sync requires fixed start and end dates';
+      END IF;
+      IF p_start_date > p_end_date THEN
+        RAISE EXCEPTION 'video_daily sync start date must not be after end date';
+      END IF;
+      IF p_batch_size IS NOT NULL AND p_batch_size < 1 THEN
+        RAISE EXCEPTION 'video_daily sync batch size must be positive';
+      END IF;
+
+      PERFORM pg_advisory_lock(
+        hashtextextended('${schema}.video_daily_mysql_sync', 0)
+      );
+
+      CREATE TEMP TABLE IF NOT EXISTS video_daily_sync_day (
+        record_date date NOT NULL,
+        aid bigint PRIMARY KEY,
+        coin integer,
+        favorite integer,
+        danmaku integer,
+        "view" integer,
+        reply integer,
+        share integer,
+        "like" integer
+      ) ON COMMIT PRESERVE ROWS;
+
+      CREATE TEMP TABLE IF NOT EXISTS video_daily_sync_batch
+        (LIKE pg_temp.video_daily_sync_day INCLUDING ALL)
+        ON COMMIT PRESERVE ROWS;
+
+      v_record_date := p_start_date;
+      WHILE v_record_date <= p_end_date LOOP
+        TRUNCATE pg_temp.video_daily_sync_day;
+
+        INSERT INTO pg_temp.video_daily_sync_day (
+          record_date, aid, coin, favorite, danmaku, "view", reply, share, "like"
+        )
+        SELECT
+          source.record_date,
+          source.aid,
+          source.coin,
+          source.favorite,
+          source.danmaku,
+          source."view",
+          source.reply,
+          source.share,
+          source."like"
+        FROM "${schema}".mysql_video_daily AS source
+        WHERE source.record_date = v_record_date;
+
+        GET DIAGNOSTICS v_staged_rows = ROW_COUNT;
+        ANALYZE pg_temp.video_daily_sync_day;
+        RAISE NOTICE 'video_daily sync: staged date %, rows %',
+          v_record_date, v_staged_rows;
+
+        v_last_aid := NULL;
+
+        LOOP
+          TRUNCATE pg_temp.video_daily_sync_batch;
+
+          INSERT INTO pg_temp.video_daily_sync_batch (
+            record_date, aid, coin, favorite, danmaku, "view", reply, share, "like"
+          )
+          SELECT
+            source.record_date,
+            source.aid,
+            source.coin,
+            source.favorite,
+            source.danmaku,
+            source."view",
+            source.reply,
+            source.share,
+            source."like"
+          FROM pg_temp.video_daily_sync_day AS source
+          WHERE source.record_date = v_record_date
+            AND (v_last_aid IS NULL OR source.aid > v_last_aid)
+          ORDER BY source.aid
+          LIMIT p_batch_size;
+
+          GET DIAGNOSTICS v_batch_rows = ROW_COUNT;
+          EXIT WHEN v_batch_rows = 0;
+
+          SELECT min(aid), max(aid)
+          INTO v_batch_first_aid, v_last_aid
+          FROM pg_temp.video_daily_sync_batch;
+
+          -- Plan each date separately so TimescaleDB prunes historical chunks
+          -- before applying the hypertable UPDATE.
+          EXECUTE $sync_update$
+            UPDATE "${schema}".video_daily AS target
+            SET
+              coin = source.coin,
+              favorite = source.favorite,
+              danmaku = source.danmaku,
+              "view" = source."view",
+              reply = source.reply,
+              share = source.share,
+              "like" = source."like"
+            FROM pg_temp.video_daily_sync_batch AS source
+            WHERE target.record_date = $1
+              AND source.record_date = $1
+              AND target.aid = source.aid
+              AND target.record_date = source.record_date
+              AND ROW(
+                target.coin, target.favorite, target.danmaku, target."view",
+                target.reply, target.share, target."like"
+              ) IS DISTINCT FROM ROW(
+                source.coin, source.favorite, source.danmaku, source."view",
+                source.reply, source.share, source."like"
+              )
+          $sync_update$ USING v_record_date;
+
+          GET DIAGNOSTICS v_updated_rows = ROW_COUNT;
+
+          EXECUTE $sync_insert$
+            INSERT INTO "${schema}".video_daily (
+              record_date, aid, coin, favorite, danmaku, "view", reply, share, "like"
+            )
+            SELECT
+              source.record_date,
+              source.aid,
+              source.coin,
+              source.favorite,
+              source.danmaku,
+              source."view",
+              source.reply,
+              source.share,
+              source."like"
+            FROM pg_temp.video_daily_sync_batch AS source
+            WHERE source.record_date = $1
+              AND NOT EXISTS (
+                SELECT 1
+                FROM "${schema}".video_daily AS target
+                WHERE target.record_date = $1
+                  AND target.aid = source.aid
+                  AND target.record_date = source.record_date
+              )
+            ORDER BY source.aid
+          $sync_insert$ USING v_record_date;
+
+          GET DIAGNOSTICS v_inserted_rows = ROW_COUNT;
+
+          COMMIT;
+          RAISE NOTICE 'video_daily sync: completed date %, aids %..%, batch rows %, updated %, inserted %',
+            v_record_date, v_batch_first_aid, v_last_aid, v_batch_rows,
+            v_updated_rows, v_inserted_rows;
+        END LOOP;
+
+        v_record_date := v_record_date + 1;
+      END LOOP;
+
+      PERFORM pg_advisory_unlock(
+        hashtextextended('${schema}.video_daily_mysql_sync', 0)
+      );
+    END;
+    $$
+  `);
+
   try {
     await pool.query(
       `SELECT cron.unschedule(jobid) FROM cron.job WHERE jobname = $1`,
@@ -20,17 +202,11 @@ export async function initCronVideoDaily(
         'sync_video_daily_from_mysql',
         '30 21 * * *',
         $$
-        SET search_path TO "${schema}";
-        INSERT INTO "${schema}".video_daily
-          (record_date, aid, coin, favorite, danmaku, "view", reply, share, "like")
-        SELECT
-          record_date, aid, coin, favorite, danmaku, "view", reply, share, "like"
-        FROM "${schema}".mysql_video_daily m
-        WHERE m.record_date >= CURRENT_DATE - INTERVAL '2 days'
-          AND NOT EXISTS (
-            SELECT 1 FROM "${schema}".video_daily v
-            WHERE v.aid = m.aid AND v.record_date = m.record_date
-          )
+        CALL "${schema}".sync_video_daily_from_mysql(
+          (CURRENT_TIMESTAMP AT TIME ZONE '${businessTimezone}')::date - 2,
+          (CURRENT_TIMESTAMP AT TIME ZONE '${businessTimezone}')::date,
+          ${VIDEO_DAILY_SYNC_BATCH_SIZE}
+        )
         $$
       )
     `);
