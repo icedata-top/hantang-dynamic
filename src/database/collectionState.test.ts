@@ -27,6 +27,7 @@ function createSchemaInitializationPool(queries: string[]): Pool {
             is_full_table: true,
             is_unique: true,
             is_valid: true,
+            is_ready: true,
             key_columns: ["aid", "record_date"],
           },
         ],
