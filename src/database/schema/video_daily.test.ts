@@ -216,14 +216,14 @@ test("video_daily initialization repairs only queued keys in separate transactio
     ).length,
     3,
   );
-  assert.equal(queries.filter(({ sql }) => isDuplicateScan(sql)).length, 2);
-  const finalScan = queries
-    .map(({ sql }) => isDuplicateScan(sql))
-    .lastIndexOf(true);
+  assert.equal(queries.filter(({ sql }) => isDuplicateScan(sql)).length, 1);
+  const finalLock = queries
+    .map(({ sql }) => sql)
+    .lastIndexOf("LOCK TABLE video_daily IN SHARE ROW EXCLUSIVE MODE");
   const createIndex = queries.findIndex(({ sql }) =>
     sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS"),
   );
-  assert.ok(finalScan < createIndex);
+  assert.ok(finalLock < createIndex);
 
   const allSql = queries.map(({ sql }) => sql).join("\n");
   assert.doesNotMatch(allSql, /max_tuples_decompressed_per_dml_transaction/);
@@ -277,22 +277,17 @@ test("plain PostgreSQL reaches uniqueness enforcement without extension SQL", as
   );
 });
 
-test("a locked final rescan queues concurrent duplicates before index creation", async () => {
+test("a unique-index conflict rolls back without a second duplicate scan", async () => {
   const queue: Array<{ aid: string; record_date: string }> = [];
-  let scanCount = 0;
-  let indexExists = false;
-  let duplicateExists = false;
+  const uniqueViolation = Object.assign(new Error("duplicate key value"), {
+    code: "23505",
+  });
   const { pool, queries } = createPool(async (sql, values) => {
     if (sql.includes("FROM pg_index AS index_definition")) {
-      return { rows: indexExists ? [canonicalIndex] : [], rowCount: 0 };
+      return { rows: [], rowCount: 0 };
     }
-    if (sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS")) indexExists = true;
     if (isDuplicateScan(sql)) {
-      scanCount += 1;
-      if (scanCount === 2) duplicateExists = true;
-      if (duplicateExists && queue.length === 0) {
-        queue.push({ aid: "33", record_date: "2026-06-04" });
-      }
+      queue.push({ aid: "33", record_date: "2026-06-04" });
     }
     if (
       sql.includes("FROM video_daily_duplicate_queue") &&
@@ -319,28 +314,48 @@ test("a locked final rescan queues concurrent duplicates before index creation",
         rowCount: 1,
       };
     }
-    if (normalizeSql(sql).startsWith("DELETE FROM video_daily WHERE")) {
-      duplicateExists = false;
-    }
     if (
       normalizeSql(sql).startsWith("DELETE FROM video_daily_duplicate_queue")
     ) {
       queue.length = 0;
     }
+    if (sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS")) {
+      throw uniqueViolation;
+    }
     return { rows: [], rowCount: 0 };
   });
-  await initializeVideoDaily(pool);
+  await assert.rejects(initializeVideoDaily(pool), (error: unknown) => {
+    assert.equal(error, uniqueViolation);
+    return true;
+  });
 
-  assert.equal(scanCount, 3);
-  assert.equal(queries.filter(({ sql }) => sql === "BEGIN").length, 3);
-  assert.equal(queries.filter(({ sql }) => sql === "COMMIT").length, 3);
+  assert.equal(queries.filter(({ sql }) => isDuplicateScan(sql)).length, 1);
+  assert.equal(queries.filter(({ sql }) => sql === "BEGIN").length, 2);
+  assert.equal(queries.filter(({ sql }) => sql === "COMMIT").length, 1);
+  assert.equal(queries.filter(({ sql }) => sql === "ROLLBACK").length, 1);
   const createIndex = queries.findIndex(({ sql }) =>
     sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS"),
   );
+  const finalLock = queries
+    .map(({ sql }) => sql)
+    .lastIndexOf("LOCK TABLE video_daily IN SHARE ROW EXCLUSIVE MODE");
+  assert.ok(finalLock < createIndex);
+  const firstCommit = queries.findIndex(({ sql }) => sql === "COMMIT");
+  const sourceMutations = queries
+    .map(({ sql }, index) => ({ index, sql: normalizeSql(sql) }))
+    .filter(
+      ({ sql }) =>
+        sql.startsWith("DELETE FROM video_daily WHERE") ||
+        sql.startsWith("INSERT INTO video_daily ("),
+    );
+  assert.equal(sourceMutations.length, 2);
   assert.equal(
-    queries.slice(0, createIndex).filter(({ sql }) => isDuplicateScan(sql))
-      .length,
-    3,
+    sourceMutations.every(({ index }) => index < firstCommit),
+    true,
+  );
+  assert.equal(
+    sourceMutations.filter(({ index }) => index > finalLock).length,
+    0,
   );
 });
 

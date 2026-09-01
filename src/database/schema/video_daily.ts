@@ -219,35 +219,26 @@ async function enforceVideoDailyUniqueness(pool: Pool): Promise<void> {
 
     while (true) {
       const duplicateKey = await getNextDuplicateKey(client);
-      if (duplicateKey) {
-        await client.query("BEGIN");
-        transactionStarted = true;
-        await client.query(
-          "LOCK TABLE video_daily IN SHARE ROW EXCLUSIVE MODE",
-        );
-        await repairVideoDailyDuplicate(client, duplicateKey);
-        await client.query("COMMIT");
-        transactionStarted = false;
-        continue;
+      if (!duplicateKey) {
+        break;
       }
 
       await client.query("BEGIN");
       transactionStarted = true;
       await client.query("LOCK TABLE video_daily IN SHARE ROW EXCLUSIVE MODE");
-      await queueVideoDailyDuplicates(client);
-      if (await getNextDuplicateKey(client)) {
-        await client.query("COMMIT");
-        transactionStarted = false;
-        continue;
-      }
-
-      await createVideoDailyUniqueIndex(client);
-      assertCanonicalVideoDailyIndex(await getVideoDailyUniqueIndex(client));
-      await dropRedundantVideoDailyIndexes(client);
+      await repairVideoDailyDuplicate(client, duplicateKey);
       await client.query("COMMIT");
       transactionStarted = false;
-      return;
     }
+
+    await client.query("BEGIN");
+    transactionStarted = true;
+    await client.query("LOCK TABLE video_daily IN SHARE ROW EXCLUSIVE MODE");
+    await createVideoDailyUniqueIndex(client);
+    assertCanonicalVideoDailyIndex(await getVideoDailyUniqueIndex(client));
+    await dropRedundantVideoDailyIndexes(client);
+    await client.query("COMMIT");
+    transactionStarted = false;
   } catch (error) {
     if (transactionStarted) {
       await client.query("ROLLBACK");
