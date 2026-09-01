@@ -2,10 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool, PoolClient } from "pg";
 
-type RecordedQuery = {
-  sql: string;
-  values?: unknown[];
-};
+type RecordedQuery = { sql: string; values?: unknown[] };
+type QueryResult = { rows: unknown[]; rowCount: number };
 
 async function initializeVideoDaily(pool: Pool): Promise<void> {
   process.env.SESSDATA ??= "test";
@@ -24,22 +22,12 @@ const canonicalIndex = {
 };
 
 function createPool(
-  handleClientQuery: (
-    sql: string,
-    values?: unknown[],
-  ) => Promise<{ rows: unknown[]; rowCount: number }>,
-  options: { timescaleDbInstalled?: boolean } = {},
+  handleClientQuery: (sql: string, values?: unknown[]) => Promise<QueryResult>,
 ): { pool: Pool; queries: RecordedQuery[] } {
   const queries: RecordedQuery[] = [];
   const client = {
     async query(sql: string, values?: unknown[]) {
       queries.push({ sql, values });
-      if (sql.includes("FROM pg_extension")) {
-        return {
-          rows: [{ installed: options.timescaleDbInstalled ?? true }],
-          rowCount: 1,
-        };
-      }
       return handleClientQuery(sql, values);
     },
     release() {},
@@ -60,14 +48,20 @@ function normalizeSql(sql: string): string {
   return sql.replace(/\s+/g, " ").trim();
 }
 
-test("video_daily initialization skips duplicate scans when the canonical index exists", async () => {
+function isDuplicateScan(sql: string): boolean {
+  return (
+    sql.includes("INSERT INTO video_daily_duplicate_queue") &&
+    sql.includes("GROUP BY aid, record_date")
+  );
+}
+
+test("video_daily initialization uses the canonical-index fast path", async () => {
   const { pool, queries } = createPool(async (sql) => {
     if (sql.includes("FROM pg_index AS index_definition")) {
       return { rows: [canonicalIndex], rowCount: 1 };
     }
     return { rows: [], rowCount: 0 };
   });
-
   await initializeVideoDaily(pool);
 
   const validateIndex = queries.findIndex(({ sql }) =>
@@ -76,20 +70,9 @@ test("video_daily initialization skips duplicate scans when the canonical index 
   const dropLegacyIndex = queries.findIndex(({ sql }) =>
     sql.includes("DROP INDEX IF EXISTS idx_video_daily_aid_date"),
   );
-  const createHypertable = queries.findIndex(({ sql }) =>
-    sql.includes("SELECT create_hypertable"),
-  );
-
   assert.ok(validateIndex < dropLegacyIndex);
-  assert.ok(dropLegacyIndex < createHypertable);
   assert.equal(
-    queries.some(({ sql }) =>
-      sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS"),
-    ),
-    false,
-  );
-  assert.equal(
-    queries.some(({ sql }) => sql.includes("WITH date_bounds AS")),
+    queries.some(({ sql }) => sql.includes("video_daily_duplicate_queue")),
     false,
   );
   assert.equal(
@@ -100,346 +83,309 @@ test("video_daily initialization skips duplicate scans when the canonical index 
   );
 });
 
-test("video_daily initialization replaces duplicate dates with deterministic minimum-view rows", async () => {
-  let createAttempts = 0;
-  let indexChecks = 0;
-  let recompressionQueued = false;
-  const { pool, queries } = createPool(async (sql) => {
-    if (sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS")) {
-      createAttempts += 1;
-    }
-    if (sql.includes("WITH date_bounds AS")) {
+test("video_daily initialization repairs only queued keys in separate transactions", async () => {
+  const queue: Array<{ aid: string; record_date: string }> = [];
+  const duplicates = new Set(["11/2026-06-02", "22/2026-06-03"]);
+  let indexExists = false;
+  const { pool, queries } = createPool(async (sql, values) => {
+    if (sql.includes("FROM pg_index AS index_definition")) {
       return {
-        rows: [{ record_date: "2026-06-02" }, { record_date: "2026-06-03" }],
-        rowCount: 2,
+        rows: indexExists ? [canonicalIndex] : [],
+        rowCount: indexExists ? 1 : 0,
       };
     }
-    if (sql.includes("AS has_duplicates")) {
-      return {
-        rows: [{ has_duplicates: sql.includes("DATE '2026-06-03'") }],
-        rowCount: 1,
-      };
-    }
-    if (sql.includes("INSERT INTO video_daily_recompression_queue")) {
-      recompressionQueued = true;
+    if (sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS")) indexExists = true;
+    if (sql === "TRUNCATE video_daily_duplicate_queue") queue.length = 0;
+    if (isDuplicateScan(sql)) {
+      for (const duplicate of duplicates) {
+        const [aid, record_date] = duplicate.split("/");
+        if (
+          !queue.some(
+            (key) => key.aid === aid && key.record_date === record_date,
+          )
+        ) {
+          queue.push({ aid, record_date });
+        }
+      }
     }
     if (
-      sql.includes("SELECT chunk_schema::text, chunk_name::text") &&
-      recompressionQueued
+      sql.includes("FROM video_daily_duplicate_queue") &&
+      sql.includes("LIMIT 1")
     ) {
+      return { rows: queue.slice(0, 1), rowCount: Math.min(queue.length, 1) };
+    }
+    if (sql.includes("count(*) OVER () AS multiplicity")) {
       return {
         rows: [
           {
-            chunk_name: "_hyper_11_213_chunk",
-            chunk_schema: "_timescaledb_internal",
+            aid: values?.[0],
+            record_date: values?.[1],
+            coin: 2,
+            favorite: 3,
+            danmaku: 4,
+            view: 1,
+            reply: 5,
+            share: 6,
+            like: 7,
+            multiplicity: "2",
           },
         ],
         rowCount: 1,
       };
     }
-    if (sql.includes("DELETE FROM video_daily_recompression_queue")) {
-      recompressionQueued = false;
+    if (normalizeSql(sql).startsWith("DELETE FROM video_daily WHERE")) {
+      duplicates.delete(`${values?.[0]}/${values?.[1]}`);
     }
-    if (sql.includes("FROM pg_index AS index_definition")) {
-      indexChecks += 1;
-      if (indexChecks === 1) return { rows: [], rowCount: 0 };
-      return { rows: [canonicalIndex], rowCount: 1 };
-    }
-    if (sql.includes("SELECT to_regclass(format")) {
-      return {
-        rows: [
-          {
-            relation_name: "_timescaledb_internal._hyper_11_213_chunk",
-          },
-        ],
-        rowCount: 1,
-      };
+    if (
+      normalizeSql(sql).startsWith("DELETE FROM video_daily_duplicate_queue")
+    ) {
+      const index = queue.findIndex(
+        (key) => key.aid === values?.[0] && key.record_date === values?.[1],
+      );
+      if (index >= 0) queue.splice(index, 1);
     }
     return { rows: [], rowCount: 0 };
   });
 
   await initializeVideoDaily(pool);
 
-  assert.equal(createAttempts, 1);
-  const dateEnumeration = normalizeSql(
-    queries.find(({ sql }) => sql.includes("WITH date_bounds AS"))?.sql ?? "",
+  const canonicalRead = normalizeSql(
+    queries.find(({ sql }) => sql.includes("count(*) OVER () AS multiplicity"))
+      ?.sql ?? "",
   );
-  assert.doesNotMatch(dateEnumeration, /GROUP BY|HAVING/);
-  assert.match(dateEnumeration, /to_char\(.+?, 'YYYY-MM-DD'\)/);
-  const duplicateChecks = queries.filter(({ sql }) =>
-    sql.includes("AS has_duplicates"),
-  );
-  assert.equal(duplicateChecks.length, 2);
-  assert.match(duplicateChecks[0].sql, /record_date = DATE '2026-06-02'/);
-  assert.match(duplicateChecks[1].sql, /record_date = DATE '2026-06-03'/);
-  const stage = normalizeSql(
-    queries.find(({ sql }) => sql.includes("SELECT DISTINCT ON (aid)"))?.sql ??
-      "",
-  );
-  assert.match(stage, /WHERE record_date = DATE '2026-06-03'/);
   assert.match(
-    stage,
-    /ORDER BY aid, "view" ASC NULLS LAST, coin ASC NULLS LAST, favorite ASC NULLS LAST, danmaku ASC NULLS LAST, reply ASC NULLS LAST, share ASC NULLS LAST, "like" ASC NULLS LAST/,
+    canonicalRead,
+    /WHERE aid = \$1 AND record_date = \$2 ORDER BY "view" ASC NULLS LAST, coin ASC NULLS LAST, favorite ASC NULLS LAST, danmaku ASC NULLS LAST, reply ASC NULLS LAST, share ASC NULLS LAST, "like" ASC NULLS LAST LIMIT 1/,
   );
-
-  const cleanupDml = queries
-    .map(({ sql }) => normalizeSql(sql))
-    .filter(
-      (sql) =>
-        sql.startsWith("DELETE FROM video_daily WHERE") ||
-        sql.startsWith("INSERT INTO video_daily (") ||
-        sql.startsWith("INSERT INTO video_daily_deduplicated"),
-    );
-  assert.equal(cleanupDml.length, 3);
-  for (const sql of cleanupDml) {
-    assert.match(sql, /record_date = DATE '2026-06-03'/);
-  }
-  assert.match(
-    queries.find(({ sql }) =>
-      sql.includes("INSERT INTO video_daily_recompression_queue"),
-    )?.sql ?? "",
-    /record_date = DATE '2026-06-03'/,
-  );
-
-  const begin = queries.findIndex(({ sql }) => sql === "BEGIN");
-  const decompressionLimit = queries.findIndex(
-    ({ sql }) =>
-      sql ===
-      "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0",
-  );
-  const lock = queries.findIndex(
-    ({ sql }) => sql === "LOCK TABLE video_daily IN SHARE ROW EXCLUSIVE MODE",
-  );
-  const cleanupDelete = queries.findIndex(({ sql }) =>
+  const deletes = queries.filter(({ sql }) =>
     normalizeSql(sql).startsWith("DELETE FROM video_daily WHERE"),
   );
-  assert.ok(begin < decompressionLimit);
-  assert.ok(decompressionLimit < lock);
-  assert.ok(lock < cleanupDelete);
+  assert.deepEqual(
+    deletes.map(({ values }) => values),
+    [
+      ["11", "2026-06-02"],
+      ["22", "2026-06-03"],
+    ],
+  );
+  for (const { sql } of deletes) {
+    assert.match(normalizeSql(sql), /WHERE aid = \$1 AND record_date = \$2$/);
+    assert.doesNotMatch(sql, /DELETE FROM video_daily\s+WHERE record_date =/);
+  }
+  assert.equal(queries.filter(({ sql }) => sql === "BEGIN").length, 3);
+  assert.equal(queries.filter(({ sql }) => sql === "COMMIT").length, 3);
   assert.equal(
     queries.filter(
-      ({ sql }) =>
-        sql ===
-        "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0",
+      ({ sql }) => sql === "LOCK TABLE video_daily IN SHARE ROW EXCLUSIVE MODE",
     ).length,
-    1,
+    3,
   );
+  assert.equal(queries.filter(({ sql }) => isDuplicateScan(sql)).length, 2);
+  const finalScan = queries
+    .map(({ sql }) => isDuplicateScan(sql))
+    .lastIndexOf(true);
+  const createIndex = queries.findIndex(({ sql }) =>
+    sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS"),
+  );
+  assert.ok(finalScan < createIndex);
 
-  const commit = queries.findIndex(({ sql }) => sql === "COMMIT");
-  const recompress = queries.findIndex(
-    ({ sql, values }) =>
-      sql === "SELECT recompress_chunk(format('%I.%I', $1, $2)::regclass)" &&
-      values?.[0] === "_timescaledb_internal" &&
-      values?.[1] === "_hyper_11_213_chunk",
+  const allSql = queries.map(({ sql }) => sql).join("\n");
+  assert.doesNotMatch(allSql, /max_tuples_decompressed_per_dml_transaction/);
+  assert.doesNotMatch(
+    allSql,
+    /recompress_chunk|timescaledb_information\.chunks/,
   );
-  assert.ok(commit < recompress);
-  assert.equal(
-    queries.some(({ sql }) =>
-      /\b(?:FROM|JOIN)\s+mysql_video_daily\b/i.test(sql),
-    ),
-    false,
+  assert.doesNotMatch(allSql, /video_daily_recompression_queue/);
+  assert.doesNotMatch(
+    allSql,
+    /CREATE TABLE IF NOT EXISTS video_daily_duplicate_queue/,
+  );
+  assert.match(
+    allSql,
+    /CREATE TEMP TABLE IF NOT EXISTS video_daily_duplicate_queue/,
   );
 });
 
-test("plain PostgreSQL deduplicates before creating the canonical index", async () => {
-  let indexChecks = 0;
-  const { pool, queries } = createPool(
-    async (sql) => {
-      if (sql.includes("WITH date_bounds AS")) {
-        return {
-          rows: [{ record_date: "2026-06-03" }],
-          rowCount: 1,
-        };
-      }
-      if (sql.includes("AS has_duplicates")) {
-        return { rows: [{ has_duplicates: true }], rowCount: 1 };
-      }
-      if (sql.includes("FROM pg_index AS index_definition")) {
-        indexChecks += 1;
-        return indexChecks === 1
-          ? { rows: [], rowCount: 0 }
-          : { rows: [canonicalIndex], rowCount: 1 };
-      }
-      return { rows: [], rowCount: 0 };
-    },
-    { timescaleDbInstalled: false },
-  );
-
+test("plain PostgreSQL reaches uniqueness enforcement without extension SQL", async () => {
+  let indexExists = false;
+  const { pool, queries } = createPool(async (sql) => {
+    if (sql.includes("FROM pg_index AS index_definition")) {
+      return {
+        rows: indexExists ? [canonicalIndex] : [],
+        rowCount: indexExists ? 1 : 0,
+      };
+    }
+    if (sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS")) indexExists = true;
+    return { rows: [], rowCount: 0 };
+  });
   await initializeVideoDaily(pool);
 
-  assert.equal(
-    queries.some(({ sql }) => sql.includes("timescaledb_information.chunks")),
-    false,
-  );
-  assert.equal(
-    queries.some(({ sql }) => sql.includes("SELECT recompress_chunk")),
-    false,
-  );
-  assert.equal(
-    queries.some(
-      ({ sql }) =>
-        sql ===
-        "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0",
-    ),
-    false,
-  );
-  assert.equal(
-    queries.some(({ sql }) => sql.includes("SELECT DISTINCT ON (aid)")),
-    true,
-  );
   assert.equal(
     queries.some(({ sql }) =>
       sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS"),
     ),
     true,
   );
+  const uniquenessSql = queries
+    .slice(
+      queries.findIndex(({ sql }) =>
+        sql.includes("FROM pg_index AS index_definition"),
+      ),
+      queries.findIndex(({ sql }) => sql.includes("SELECT create_hypertable")),
+    )
+    .map(({ sql }) => sql)
+    .join("\n");
+  assert.doesNotMatch(
+    uniquenessSql,
+    /timescaledb|pg_extension|recompress|_timescaledb|chunks/i,
+  );
 });
 
-test("video_daily initialization retries queued recompression before uniqueness checks", async () => {
-  let queued = true;
-  const { pool, queries } = createPool(async (sql) => {
-    if (sql.includes("SELECT chunk_schema::text, chunk_name::text") && queued) {
-      return {
-        rows: [
-          {
-            chunk_name: "_hyper_11_213_chunk",
-            chunk_schema: "_timescaledb_internal",
-          },
-        ],
-        rowCount: 1,
-      };
-    }
-    if (sql.includes("DELETE FROM video_daily_recompression_queue")) {
-      queued = false;
-    }
-    if (sql.includes("SELECT to_regclass(format")) {
-      return {
-        rows: [
-          {
-            relation_name: "_timescaledb_internal._hyper_11_213_chunk",
-          },
-        ],
-        rowCount: 1,
-      };
-    }
+test("a locked final rescan queues concurrent duplicates before index creation", async () => {
+  const queue: Array<{ aid: string; record_date: string }> = [];
+  let scanCount = 0;
+  let indexExists = false;
+  let duplicateExists = false;
+  const { pool, queries } = createPool(async (sql, values) => {
     if (sql.includes("FROM pg_index AS index_definition")) {
-      return { rows: [canonicalIndex], rowCount: 1 };
+      return { rows: indexExists ? [canonicalIndex] : [], rowCount: 0 };
+    }
+    if (sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS")) indexExists = true;
+    if (isDuplicateScan(sql)) {
+      scanCount += 1;
+      if (scanCount === 2) duplicateExists = true;
+      if (duplicateExists && queue.length === 0) {
+        queue.push({ aid: "33", record_date: "2026-06-04" });
+      }
+    }
+    if (
+      sql.includes("FROM video_daily_duplicate_queue") &&
+      sql.includes("LIMIT 1")
+    ) {
+      return { rows: queue.slice(0, 1), rowCount: queue.length ? 1 : 0 };
+    }
+    if (sql.includes("count(*) OVER () AS multiplicity")) {
+      return {
+        rows: [
+          {
+            aid: values?.[0],
+            record_date: values?.[1],
+            coin: 1,
+            favorite: 1,
+            danmaku: 1,
+            view: 1,
+            reply: 1,
+            share: 1,
+            like: 1,
+            multiplicity: 2,
+          },
+        ],
+        rowCount: 1,
+      };
+    }
+    if (normalizeSql(sql).startsWith("DELETE FROM video_daily WHERE")) {
+      duplicateExists = false;
+    }
+    if (
+      normalizeSql(sql).startsWith("DELETE FROM video_daily_duplicate_queue")
+    ) {
+      queue.length = 0;
     }
     return { rows: [], rowCount: 0 };
   });
-
   await initializeVideoDaily(pool);
 
-  const recompress = queries.findIndex(({ sql }) =>
-    sql.includes("SELECT recompress_chunk"),
-  );
-  const indexValidation = queries.findIndex(({ sql }) =>
-    sql.includes("FROM pg_index AS index_definition"),
-  );
-  assert.ok(recompress < indexValidation);
-  assert.equal(
-    queries.some(
-      ({ sql }) => sql === "LOCK TABLE video_daily IN SHARE ROW EXCLUSIVE MODE",
-    ),
-    false,
+  assert.equal(scanCount, 3);
+  assert.equal(queries.filter(({ sql }) => sql === "BEGIN").length, 3);
+  assert.equal(queries.filter(({ sql }) => sql === "COMMIT").length, 3);
+  const createIndex = queries.findIndex(({ sql }) =>
+    sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS"),
   );
   assert.equal(
-    queries.some(({ sql }) => sql.includes("WITH date_bounds AS")),
-    false,
-  );
-  assert.equal(
-    queries.some(({ sql }) =>
-      sql.includes("DELETE FROM video_daily_recompression_queue"),
-    ),
-    true,
+    queries.slice(0, createIndex).filter(({ sql }) => isDuplicateScan(sql))
+      .length,
+    3,
   );
 });
 
-test("video_daily initialization removes stale queue entries for missing chunks", async () => {
-  let queued = true;
-  const { pool, queries } = createPool(async (sql) => {
-    if (sql.includes("SELECT chunk_schema::text, chunk_name::text") && queued) {
+test("a failed later key preserves prior commits and is repaired on rerun", async () => {
+  const duplicates = new Set(["11/2026-06-02", "22/2026-06-03"]);
+  const queue: Array<{ aid: string; record_date: string }> = [];
+  let failSecondKey = true;
+  let indexExists = false;
+  const { pool, queries } = createPool(async (sql, values) => {
+    if (sql.includes("FROM pg_index AS index_definition")) {
+      return { rows: indexExists ? [canonicalIndex] : [], rowCount: 0 };
+    }
+    if (sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS")) indexExists = true;
+    if (sql === "TRUNCATE video_daily_duplicate_queue") queue.length = 0;
+    if (isDuplicateScan(sql)) {
+      for (const value of duplicates) {
+        const [aid, record_date] = value.split("/");
+        if (!queue.some((key) => key.aid === aid)) {
+          queue.push({ aid, record_date });
+        }
+      }
+    }
+    if (
+      sql.includes("FROM video_daily_duplicate_queue") &&
+      sql.includes("LIMIT 1")
+    ) {
+      return { rows: queue.slice(0, 1), rowCount: queue.length ? 1 : 0 };
+    }
+    if (sql.includes("count(*) OVER () AS multiplicity")) {
+      if (values?.[0] === "22" && failSecondKey) {
+        failSecondKey = false;
+        throw new Error("key repair failed");
+      }
       return {
         rows: [
           {
-            chunk_name: "_hyper_11_999_chunk",
-            chunk_schema: "_timescaledb_internal",
+            aid: values?.[0],
+            record_date: values?.[1],
+            coin: 1,
+            favorite: 1,
+            danmaku: 1,
+            view: 1,
+            reply: 1,
+            share: 1,
+            like: 1,
+            multiplicity: 2,
           },
         ],
         rowCount: 1,
       };
     }
-    if (sql.includes("SELECT to_regclass(format")) {
-      return { rows: [{ relation_name: null }], rowCount: 1 };
+    if (normalizeSql(sql).startsWith("DELETE FROM video_daily WHERE")) {
+      duplicates.delete(`${values?.[0]}/${values?.[1]}`);
     }
-    if (sql.includes("DELETE FROM video_daily_recompression_queue")) {
-      queued = false;
-    }
-    if (sql.includes("FROM pg_index AS index_definition")) {
-      return { rows: [canonicalIndex], rowCount: 1 };
+    if (
+      normalizeSql(sql).startsWith("DELETE FROM video_daily_duplicate_queue")
+    ) {
+      queue.shift();
     }
     return { rows: [], rowCount: 0 };
   });
+
+  await assert.rejects(initializeVideoDaily(pool), /key repair failed/);
+  assert.deepEqual([...duplicates], ["22/2026-06-03"]);
+  assert.equal(queries.filter(({ sql }) => sql === "COMMIT").length, 1);
+  assert.equal(queries.filter(({ sql }) => sql === "ROLLBACK").length, 1);
 
   await initializeVideoDaily(pool);
-
-  assert.equal(
-    queries.some(({ sql }) => sql.includes("SELECT recompress_chunk")),
-    false,
+  assert.equal(duplicates.size, 0);
+  const sourceDeletes = queries.filter(({ sql }) =>
+    normalizeSql(sql).startsWith("DELETE FROM video_daily WHERE"),
   );
-  assert.equal(
-    queries.some(({ sql }) =>
-      sql.includes("DELETE FROM video_daily_recompression_queue"),
-    ),
-    true,
-  );
-});
-
-test("video_daily initialization keeps failed recompression queued", async () => {
-  const compressionError = new Error("recompression failed");
-  const { pool, queries } = createPool(async (sql) => {
-    if (sql.includes("SELECT chunk_schema::text, chunk_name::text")) {
-      return {
-        rows: [
-          {
-            chunk_name: "_hyper_11_213_chunk",
-            chunk_schema: "_timescaledb_internal",
-          },
-        ],
-        rowCount: 1,
-      };
-    }
-    if (sql.includes("SELECT to_regclass(format")) {
-      return {
-        rows: [
-          {
-            relation_name: "_timescaledb_internal._hyper_11_213_chunk",
-          },
-        ],
-        rowCount: 1,
-      };
-    }
-    if (sql.includes("SELECT recompress_chunk")) throw compressionError;
-    return { rows: [], rowCount: 0 };
-  });
-
-  await assert.rejects(initializeVideoDaily(pool), (error: unknown) => {
-    assert.equal(error, compressionError);
-    return true;
-  });
-  assert.equal(
-    queries.some(({ sql }) =>
-      sql.includes("DELETE FROM video_daily_recompression_queue"),
-    ),
-    false,
-  );
-  assert.equal(
-    queries.some(({ sql }) => sql === "ROLLBACK"),
-    true,
+  assert.deepEqual(
+    sourceDeletes.map(({ values }) => values),
+    [
+      ["11", "2026-06-02"],
+      ["22", "2026-06-03"],
+    ],
   );
 });
 
-test("video_daily initialization propagates non-duplicate index build errors", async () => {
+test("video_daily initialization propagates index build errors", async () => {
   const diskError = Object.assign(new Error("No space left on device"), {
     code: "53100",
   });
@@ -452,20 +398,7 @@ test("video_daily initialization propagates non-duplicate index build errors", a
     assert.equal(error, diskError);
     return true;
   });
-  assert.equal(
-    queries.some(({ sql }) => sql.includes("SELECT DISTINCT ON (aid)")),
-    false,
-  );
-  assert.equal(
-    queries.some(({ sql }) =>
-      sql.includes("DROP INDEX IF EXISTS idx_video_daily_aid_date"),
-    ),
-    false,
-  );
-  assert.equal(
-    queries.some(({ sql }) => sql === "ROLLBACK"),
-    true,
-  );
+  assert.equal(queries.filter(({ sql }) => sql === "ROLLBACK").length, 1);
 });
 
 test("video_daily initialization rejects a canonical index with the wrong key order", async () => {

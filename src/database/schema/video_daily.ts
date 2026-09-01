@@ -14,35 +14,21 @@ const REDUNDANT_VIDEO_DAILY_INDEXES = [
   "idx_video_daily_aid_date",
   "video_daily_new_aid_record_date_idx",
 ];
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-type DailyDate = {
+type DuplicateKey = {
+  aid: string;
   record_date: string;
 };
 
-type DuplicateCheck = {
-  has_duplicates: boolean;
+type CanonicalDailyRow = DuplicateKey & {
+  coin: number | null;
+  favorite: number | null;
+  danmaku: number | null;
+  view: number | null;
+  reply: number | null;
+  share: number | null;
+  like: number | null;
+  multiplicity: number | string;
 };
-
-type PendingChunk = {
-  chunk_schema: string;
-  chunk_name: string;
-};
-
-type ExtensionCheck = {
-  installed: boolean;
-};
-
-async function hasTimescaleDb(client: PoolClient): Promise<boolean> {
-  const result = await client.query<ExtensionCheck>(`
-    SELECT EXISTS (
-      SELECT 1
-      FROM pg_extension
-      WHERE extname = 'timescaledb'
-    ) AS installed
-  `);
-  return result.rows[0]?.installed ?? false;
-}
 
 function isCanonicalVideoDailyIndex(index: VideoDailyUniqueIndex): boolean {
   return (
@@ -54,13 +40,6 @@ function isCanonicalVideoDailyIndex(index: VideoDailyUniqueIndex): boolean {
     index.key_columns[1] === "record_date" &&
     /\bUSING btree\s*\(/i.test(index.index_definition)
   );
-}
-
-function dateLiteral(recordDate: string): string {
-  if (!ISO_DATE.test(recordDate)) {
-    throw new Error(`Invalid video_daily duplicate date: ${recordDate}`);
-  }
-  return `DATE '${recordDate}'`;
 }
 
 async function createVideoDailyUniqueIndex(client: PoolClient): Promise<void> {
@@ -117,147 +96,50 @@ async function dropRedundantVideoDailyIndexes(
   }
 }
 
-async function recompressQueuedVideoDailyChunks(
-  client: PoolClient,
-): Promise<void> {
-  const pendingChunks = await client.query<PendingChunk>(`
-    SELECT chunk_schema::text, chunk_name::text
-    FROM video_daily_recompression_queue
-    ORDER BY chunk_schema, chunk_name
+async function queueVideoDailyDuplicates(client: PoolClient): Promise<void> {
+  await client.query(`
+    INSERT INTO video_daily_duplicate_queue (aid, record_date)
+    SELECT aid, record_date
+    FROM video_daily
+    GROUP BY aid, record_date
+    HAVING count(*) > 1
+    ON CONFLICT (aid, record_date) DO NOTHING
   `);
-
-  for (const chunk of pendingChunks.rows) {
-    let transactionStarted = false;
-    try {
-      await client.query("BEGIN");
-      transactionStarted = true;
-      const relationResult = await client.query<{
-        relation_name: string | null;
-      }>("SELECT to_regclass(format('%I.%I', $1, $2))::text AS relation_name", [
-        chunk.chunk_schema,
-        chunk.chunk_name,
-      ]);
-      if (!relationResult.rows[0]?.relation_name) {
-        await client.query(
-          `
-            DELETE FROM video_daily_recompression_queue
-            WHERE chunk_schema = $1
-              AND chunk_name = $2
-          `,
-          [chunk.chunk_schema, chunk.chunk_name],
-        );
-        await client.query("COMMIT");
-        transactionStarted = false;
-        continue;
-      }
-      await client.query(
-        "SELECT recompress_chunk(format('%I.%I', $1, $2)::regclass)",
-        [chunk.chunk_schema, chunk.chunk_name],
-      );
-      await client.query(
-        `
-          DELETE FROM video_daily_recompression_queue
-          WHERE chunk_schema = $1
-            AND chunk_name = $2
-        `,
-        [chunk.chunk_schema, chunk.chunk_name],
-      );
-      await client.query("COMMIT");
-      transactionStarted = false;
-    } catch (error) {
-      if (transactionStarted) {
-        await client.query("ROLLBACK");
-      }
-      throw error;
-    }
-  }
 }
 
-async function cleanVideoDailyDuplicates(
+async function getNextDuplicateKey(
   client: PoolClient,
-  timescaleDbInstalled: boolean,
-): Promise<void> {
-  const dailyDates = await client.query<DailyDate>(`
-    WITH date_bounds AS (
-      SELECT min(record_date) AS first_date, max(record_date) AS last_date
-      FROM video_daily
-    )
-    SELECT
-      to_char(date_bounds.first_date + day_offset, 'YYYY-MM-DD') AS record_date
-    FROM date_bounds
-    CROSS JOIN LATERAL generate_series(
-      0,
-      date_bounds.last_date - date_bounds.first_date
-    ) AS day_offset
-    ORDER BY day_offset
+): Promise<DuplicateKey | undefined> {
+  const result = await client.query<DuplicateKey>(`
+    SELECT aid::text, to_char(record_date, 'YYYY-MM-DD') AS record_date
+    FROM video_daily_duplicate_queue
+    ORDER BY record_date, aid
+    LIMIT 1
   `);
-  let temporaryTableReady = false;
+  return result.rows[0];
+}
 
-  for (const row of dailyDates.rows) {
-    const recordDate = dateLiteral(row.record_date);
-    const duplicateCheck = await client.query<DuplicateCheck>(`
-      SELECT EXISTS (
-        SELECT 1
-        FROM video_daily
-        WHERE record_date = ${recordDate}
-        GROUP BY aid
-        HAVING count(*) > 1
-        LIMIT 1
-      ) AS has_duplicates
-    `);
-    if (!duplicateCheck.rows[0]?.has_duplicates) {
-      continue;
-    }
-
-    if (!temporaryTableReady) {
-      await client.query(`
-        CREATE TEMP TABLE video_daily_deduplicated (
-          record_date  date     NOT NULL,
-          aid          bigint   NOT NULL,
-          coin         integer,
-          favorite     integer,
-          danmaku      integer,
-          "view"       integer,
-          reply        integer,
-          share        integer,
-          "like"       integer
-        ) ON COMMIT DROP
-      `);
-      temporaryTableReady = true;
-    }
-
-    if (timescaleDbInstalled) {
-      await client.query(`
-        INSERT INTO video_daily_recompression_queue (chunk_schema, chunk_name)
-        SELECT DISTINCT chunk.chunk_schema, chunk.chunk_name
-        FROM video_daily AS daily
-        JOIN pg_class AS chunk_relation
-          ON chunk_relation.oid = daily.tableoid
-        JOIN pg_namespace AS chunk_namespace
-          ON chunk_namespace.oid = chunk_relation.relnamespace
-        JOIN timescaledb_information.chunks AS chunk
-          ON chunk.chunk_schema = chunk_namespace.nspname
-         AND chunk.chunk_name = chunk_relation.relname
-        WHERE daily.record_date = ${recordDate}
-          AND chunk.hypertable_schema = current_schema()
-          AND chunk.hypertable_name = 'video_daily'
-          AND chunk.is_compressed
-        ON CONFLICT (chunk_schema, chunk_name) DO NOTHING
-      `);
-    }
-    await client.query("TRUNCATE video_daily_deduplicated");
-    await client.query(`
-      INSERT INTO video_daily_deduplicated (
-        record_date, aid, coin, favorite, danmaku,
-        "view", reply, share, "like"
-      )
-      SELECT DISTINCT ON (aid)
-        record_date, aid, coin, favorite, danmaku,
-        "view", reply, share, "like"
+async function repairVideoDailyDuplicate(
+  client: PoolClient,
+  key: DuplicateKey,
+): Promise<void> {
+  const result = await client.query<CanonicalDailyRow>(
+    `
+      SELECT
+        aid::text,
+        to_char(record_date, 'YYYY-MM-DD') AS record_date,
+        coin,
+        favorite,
+        danmaku,
+        "view" AS view,
+        reply,
+        share,
+        "like" AS like,
+        count(*) OVER () AS multiplicity
       FROM video_daily
-      WHERE record_date = ${recordDate}
+      WHERE aid = $1
+        AND record_date = $2
       ORDER BY
-        aid,
         "view" ASC NULLS LAST,
         coin ASC NULLS LAST,
         favorite ASC NULLS LAST,
@@ -265,33 +147,57 @@ async function cleanVideoDailyDuplicates(
         reply ASC NULLS LAST,
         share ASC NULLS LAST,
         "like" ASC NULLS LAST
-    `);
-    await client.query(`
-      DELETE FROM video_daily
-      WHERE record_date = ${recordDate}
-    `);
-    await client.query(`
-      INSERT INTO video_daily (
-        record_date, aid, coin, favorite, danmaku,
-        "view", reply, share, "like"
-      )
-      SELECT
-        record_date, aid, coin, favorite, danmaku,
-        "view", reply, share, "like"
-      FROM video_daily_deduplicated
-      WHERE record_date = ${recordDate}
-    `);
+      LIMIT 1
+    `,
+    [key.aid, key.record_date],
+  );
+  const canonical = result.rows[0];
+
+  if (canonical && Number(canonical.multiplicity) > 1) {
+    await client.query(
+      `
+        DELETE FROM video_daily
+        WHERE aid = $1
+          AND record_date = $2
+      `,
+      [key.aid, key.record_date],
+    );
+    await client.query(
+      `
+        INSERT INTO video_daily (
+          record_date, aid, coin, favorite, danmaku,
+          "view", reply, share, "like"
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `,
+      [
+        canonical.record_date,
+        canonical.aid,
+        canonical.coin,
+        canonical.favorite,
+        canonical.danmaku,
+        canonical.view,
+        canonical.reply,
+        canonical.share,
+        canonical.like,
+      ],
+    );
   }
+
+  await client.query(
+    `
+      DELETE FROM video_daily_duplicate_queue
+      WHERE aid = $1
+        AND record_date = $2
+    `,
+    [key.aid, key.record_date],
+  );
 }
 
 async function enforceVideoDailyUniqueness(pool: Pool): Promise<void> {
   const client = await pool.connect();
   let transactionStarted = false;
   try {
-    const timescaleDbInstalled = await hasTimescaleDb(client);
-    if (timescaleDbInstalled) {
-      await recompressQueuedVideoDailyChunks(client);
-    }
     const existingIndex = await getVideoDailyUniqueIndex(client);
     if (existingIndex) {
       assertCanonicalVideoDailyIndex(existingIndex);
@@ -299,23 +205,46 @@ async function enforceVideoDailyUniqueness(pool: Pool): Promise<void> {
       return;
     }
 
-    await client.query("BEGIN");
-    transactionStarted = true;
-    if (timescaleDbInstalled) {
-      await client.query(
-        "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0",
-      );
-    }
-    await client.query("LOCK TABLE video_daily IN SHARE ROW EXCLUSIVE MODE");
-    await cleanVideoDailyDuplicates(client, timescaleDbInstalled);
-    await createVideoDailyUniqueIndex(client);
+    await client.query(`
+      CREATE TEMP TABLE IF NOT EXISTS video_daily_duplicate_queue (
+        aid         bigint NOT NULL,
+        record_date date   NOT NULL,
+        PRIMARY KEY (aid, record_date)
+      ) ON COMMIT PRESERVE ROWS
+    `);
+    await client.query("TRUNCATE video_daily_duplicate_queue");
+    await queueVideoDailyDuplicates(client);
 
-    assertCanonicalVideoDailyIndex(await getVideoDailyUniqueIndex(client));
-    await dropRedundantVideoDailyIndexes(client);
-    await client.query("COMMIT");
-    transactionStarted = false;
-    if (timescaleDbInstalled) {
-      await recompressQueuedVideoDailyChunks(client);
+    while (true) {
+      const duplicateKey = await getNextDuplicateKey(client);
+      if (duplicateKey) {
+        await client.query("BEGIN");
+        transactionStarted = true;
+        await client.query(
+          "LOCK TABLE video_daily IN SHARE ROW EXCLUSIVE MODE",
+        );
+        await repairVideoDailyDuplicate(client, duplicateKey);
+        await client.query("COMMIT");
+        transactionStarted = false;
+        continue;
+      }
+
+      await client.query("BEGIN");
+      transactionStarted = true;
+      await client.query("LOCK TABLE video_daily IN SHARE ROW EXCLUSIVE MODE");
+      await queueVideoDailyDuplicates(client);
+      if (await getNextDuplicateKey(client)) {
+        await client.query("COMMIT");
+        transactionStarted = false;
+        continue;
+      }
+
+      await createVideoDailyUniqueIndex(client);
+      assertCanonicalVideoDailyIndex(await getVideoDailyUniqueIndex(client));
+      await dropRedundantVideoDailyIndexes(client);
+      await client.query("COMMIT");
+      transactionStarted = false;
+      return;
     }
   } catch (error) {
     if (transactionStarted) {
@@ -360,13 +289,6 @@ export async function initVideoDailySchema(pool: Pool): Promise<void> {
       reply        integer,
       share        integer,
       "like"       integer
-    )
-  `);
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS video_daily_recompression_queue (
-      chunk_schema name NOT NULL,
-      chunk_name   name NOT NULL,
-      PRIMARY KEY (chunk_schema, chunk_name)
     )
   `);
   await enforceVideoDailyUniqueness(pool);
