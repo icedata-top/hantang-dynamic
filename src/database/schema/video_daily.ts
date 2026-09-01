@@ -111,9 +111,11 @@ async function getNextDuplicateKey(
   client: PoolClient,
 ): Promise<DuplicateKey | undefined> {
   const result = await client.query<DuplicateKey>(`
-    SELECT aid::text, to_char(record_date, 'YYYY-MM-DD') AS record_date
-    FROM video_daily_duplicate_queue
-    ORDER BY record_date, aid
+    SELECT
+      duplicate_queue.aid::text AS aid,
+      to_char(duplicate_queue.record_date, 'YYYY-MM-DD') AS record_date
+    FROM video_daily_duplicate_queue AS duplicate_queue
+    ORDER BY duplicate_queue.record_date, duplicate_queue.aid
     LIMIT 1
   `);
   return result.rows[0];
@@ -209,7 +211,7 @@ async function enforceVideoDailyUniqueness(pool: Pool): Promise<void> {
       CREATE TEMP TABLE IF NOT EXISTS video_daily_duplicate_queue (
         aid         bigint NOT NULL,
         record_date date   NOT NULL,
-        PRIMARY KEY (aid, record_date)
+        PRIMARY KEY (record_date, aid)
       ) ON COMMIT PRESERVE ROWS
     `);
     await client.query("TRUNCATE video_daily_duplicate_queue");

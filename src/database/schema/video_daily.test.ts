@@ -83,6 +83,43 @@ test("video_daily initialization uses the canonical-index fast path", async () =
   );
 });
 
+test("duplicate queue primary key supports the raw date-first dequeue", async () => {
+  let indexExists = false;
+  const { pool, queries } = createPool(async (sql) => {
+    if (sql.includes("FROM pg_index AS index_definition")) {
+      return {
+        rows: indexExists ? [canonicalIndex] : [],
+        rowCount: indexExists ? 1 : 0,
+      };
+    }
+    if (sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS")) indexExists = true;
+    return { rows: [], rowCount: 0 };
+  });
+
+  await initializeVideoDaily(pool);
+
+  const queueDefinition = normalizeSql(
+    queries.find(({ sql }) =>
+      sql.includes(
+        "CREATE TEMP TABLE IF NOT EXISTS video_daily_duplicate_queue",
+      ),
+    )?.sql ?? "",
+  );
+  assert.match(queueDefinition, /PRIMARY KEY \(record_date, aid\)/);
+
+  const dequeue = normalizeSql(
+    queries.find(
+      ({ sql }) =>
+        sql.includes("FROM video_daily_duplicate_queue AS duplicate_queue") &&
+        sql.includes("LIMIT 1"),
+    )?.sql ?? "",
+  );
+  assert.match(
+    dequeue,
+    /ORDER BY duplicate_queue\.record_date, duplicate_queue\.aid LIMIT 1$/,
+  );
+});
+
 test("video_daily initialization repairs only queued keys in separate transactions", async () => {
   const queue: Array<{ aid: string; record_date: string }> = [];
   const duplicates = new Set(["11/2026-06-02", "22/2026-06-03"]);
