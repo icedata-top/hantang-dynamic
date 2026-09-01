@@ -72,7 +72,7 @@ async function validateVideoDailyUniquenessIndex(pool: Pool): Promise<void> {
     const existingIndex = await getVideoDailyUniqueIndex(client);
     if (!existingIndex) {
       logger.warn(
-        `video_daily: historical uniqueness is not database-enforced; an explicit maintenance procedure must remove duplicate (aid, record_date) rows and create ${VIDEO_DAILY_UNIQUE_INDEX}`,
+        `video_daily: canonical index ${VIDEO_DAILY_UNIQUE_INDEX} is absent; automatic historical duplicate repair and index creation are skipped. An explicit maintenance procedure is required to establish the canonical index`,
       );
       return;
     }
