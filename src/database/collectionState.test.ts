@@ -12,6 +12,33 @@ import {
 } from "./schema/collection_state";
 import { initializeSchema } from "./schema/index";
 
+function createSchemaInitializationPool(queries: string[]): Pool {
+  const query = async (sql: string) => {
+    queries.push(sql);
+    if (sql.includes("FROM pg_extension")) {
+      return { rows: [{ installed: false }], rowCount: 1 };
+    }
+    if (sql.includes("FROM pg_index AS index_definition")) {
+      return {
+        rows: [
+          {
+            index_definition:
+              "CREATE UNIQUE INDEX uq_video_daily_aid_record_date ON public.video_daily USING btree (aid, record_date)",
+            is_full_table: true,
+            is_unique: true,
+            is_valid: true,
+            key_columns: ["aid", "record_date"],
+          },
+        ],
+        rowCount: 1,
+      };
+    }
+    return { rows: [], rowCount: 0 };
+  };
+  const client = { query, release() {} };
+  return { query, connect: async () => client } as unknown as Pool;
+}
+
 test("failed minute advancement carries attempt and completion times", async () => {
   let query = "";
   let values: unknown[] | undefined;
@@ -70,12 +97,7 @@ test("inactive collection-state repair terminals deleted and filtered rows", asy
 
 test("schema initialization reconciles historical inactive collection state", async () => {
   const queries: string[] = [];
-  const pool = {
-    async query(sql: string) {
-      queries.push(sql);
-      return { rows: [], rowCount: 0 };
-    },
-  } as Pool;
+  const pool = createSchemaInitializationPool(queries);
 
   await initializeSchema(pool, "public");
 
@@ -239,12 +261,7 @@ test("failed attempts only reschedule state without a newer successful observati
 
 test("collection-state schema adds Watch Later state before replacing the due-video function signature", async () => {
   const queries: string[] = [];
-  const pool = {
-    async query(sql: string) {
-      queries.push(sql);
-      return { rows: [], rowCount: 0 };
-    },
-  } as Pool;
+  const pool = createSchemaInitializationPool(queries);
 
   await initializeSchema(pool, "public");
 

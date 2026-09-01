@@ -13,7 +13,12 @@ interface QueryCall {
   values?: unknown[];
 }
 
-function createPool(options: { failCollectionStateUpdate?: boolean } = {}) {
+function createPool(
+  options: {
+    existingAidForBvid?: string;
+    failCollectionStateUpdate?: boolean;
+  } = {},
+) {
   const calls: QueryCall[] = [];
   const client = {
     async query(sql: string, values?: unknown[]) {
@@ -23,6 +28,14 @@ function createPool(options: { failCollectionStateUpdate?: boolean } = {}) {
         sql.includes("collection_state")
       ) {
         throw new Error("collection state update failed");
+      }
+      if (sql.includes("SELECT aid") && sql.includes("WHERE bvid = $1")) {
+        return {
+          rows: options.existingAidForBvid
+            ? [{ aid: options.existingAidForBvid }]
+            : [],
+          rowCount: options.existingAidForBvid ? 1 : 0,
+        };
       }
       if (sql.includes("INSERT INTO processed_videos")) {
         return { rows: [{ aid: "113646663373638" }], rowCount: 1 };
@@ -174,14 +187,32 @@ test("terminal deletion persists BVID identities and sets existing state to prio
   });
 
   assert.equal(aid, 113_646_663_373_638n);
-  assert.match(calls[1]?.sql ?? "", /VALUES \(bv2av\(\$1\), \$1/);
-  assert.deepEqual(calls[1]?.values, ["BV1J8BuYZEbk", null]);
-  assert.match(calls[2]?.sql ?? "", /SET priority = -1/);
-  assert.match(calls[2]?.sql ?? "", /next_minute_due_at = NULL/);
+  assert.match(calls[1]?.sql ?? "", /FOR UPDATE/);
+  assert.deepEqual(calls[1]?.values, ["BV1J8BuYZEbk"]);
+  assert.match(calls[2]?.sql ?? "", /VALUES \(bv2av\(\$1\), \$1/);
+  assert.deepEqual(calls[2]?.values, ["BV1J8BuYZEbk", null]);
+  assert.match(calls[3]?.sql ?? "", /SET priority = -1/);
+  assert.match(calls[3]?.sql ?? "", /next_minute_due_at = NULL/);
+  assert.deepEqual(calls[3]?.values, [["113646663373638"]]);
   assert.deepEqual(
     calls.map((call) => call.sql),
-    ["BEGIN", calls[1]?.sql ?? "", calls[2]?.sql ?? "", "COMMIT"],
+    [
+      "BEGIN",
+      calls[1]?.sql ?? "",
+      calls[2]?.sql ?? "",
+      calls[3]?.sql ?? "",
+      "COMMIT",
+    ],
   );
+});
+
+test("terminal BVID deletion disables stale and corrected AID state", async () => {
+  const { pool, calls } = createPool({ existingAidForBvid: "42" });
+
+  await markVideoDeleted(pool, { type: "bvid", bvid: "BV1J8BuYZEbk" });
+
+  assert.deepEqual(calls[3]?.values, [["42", "113646663373638"]]);
+  assert.match(calls[3]?.sql ?? "", /WHERE aid = ANY\(\$1::bigint\[\]\)/);
 });
 
 test("terminal deletion persists numeric AID identities without BVID conversion", async () => {
@@ -195,7 +226,7 @@ test("terminal deletion persists numeric AID identities without BVID conversion"
   );
   assert.doesNotMatch(calls[1]?.sql ?? "", /bv2av/);
   assert.deepEqual(calls[1]?.values, ["113646663373638", null]);
-  assert.deepEqual(calls[2]?.values, ["113646663373638"]);
+  assert.deepEqual(calls[2]?.values, [["113646663373638"]]);
 });
 
 test("terminal deletion rolls back processed deletion when collection state transition fails", async () => {

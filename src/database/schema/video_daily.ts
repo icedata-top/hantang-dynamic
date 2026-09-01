@@ -29,6 +29,21 @@ type PendingChunk = {
   chunk_name: string;
 };
 
+type ExtensionCheck = {
+  installed: boolean;
+};
+
+async function hasTimescaleDb(client: PoolClient): Promise<boolean> {
+  const result = await client.query<ExtensionCheck>(`
+    SELECT EXISTS (
+      SELECT 1
+      FROM pg_extension
+      WHERE extname = 'timescaledb'
+    ) AS installed
+  `);
+  return result.rows[0]?.installed ?? false;
+}
+
 function isCanonicalVideoDailyIndex(index: VideoDailyUniqueIndex): boolean {
   return (
     index.is_unique &&
@@ -158,7 +173,10 @@ async function recompressQueuedVideoDailyChunks(
   }
 }
 
-async function cleanVideoDailyDuplicates(client: PoolClient): Promise<void> {
+async function cleanVideoDailyDuplicates(
+  client: PoolClient,
+  timescaleDbInstalled: boolean,
+): Promise<void> {
   const dailyDates = await client.query<DailyDate>(`
     WITH date_bounds AS (
       SELECT min(record_date) AS first_date, max(record_date) AS last_date
@@ -208,23 +226,25 @@ async function cleanVideoDailyDuplicates(client: PoolClient): Promise<void> {
       temporaryTableReady = true;
     }
 
-    await client.query(`
-      INSERT INTO video_daily_recompression_queue (chunk_schema, chunk_name)
-      SELECT DISTINCT chunk.chunk_schema, chunk.chunk_name
-      FROM video_daily AS daily
-      JOIN pg_class AS chunk_relation
-        ON chunk_relation.oid = daily.tableoid
-      JOIN pg_namespace AS chunk_namespace
-        ON chunk_namespace.oid = chunk_relation.relnamespace
-      JOIN timescaledb_information.chunks AS chunk
-        ON chunk.chunk_schema = chunk_namespace.nspname
-       AND chunk.chunk_name = chunk_relation.relname
-      WHERE daily.record_date = ${recordDate}
-        AND chunk.hypertable_schema = current_schema()
-        AND chunk.hypertable_name = 'video_daily'
-        AND chunk.is_compressed
-      ON CONFLICT (chunk_schema, chunk_name) DO NOTHING
-    `);
+    if (timescaleDbInstalled) {
+      await client.query(`
+        INSERT INTO video_daily_recompression_queue (chunk_schema, chunk_name)
+        SELECT DISTINCT chunk.chunk_schema, chunk.chunk_name
+        FROM video_daily AS daily
+        JOIN pg_class AS chunk_relation
+          ON chunk_relation.oid = daily.tableoid
+        JOIN pg_namespace AS chunk_namespace
+          ON chunk_namespace.oid = chunk_relation.relnamespace
+        JOIN timescaledb_information.chunks AS chunk
+          ON chunk.chunk_schema = chunk_namespace.nspname
+         AND chunk.chunk_name = chunk_relation.relname
+        WHERE daily.record_date = ${recordDate}
+          AND chunk.hypertable_schema = current_schema()
+          AND chunk.hypertable_name = 'video_daily'
+          AND chunk.is_compressed
+        ON CONFLICT (chunk_schema, chunk_name) DO NOTHING
+      `);
+    }
     await client.query("TRUNCATE video_daily_deduplicated");
     await client.query(`
       INSERT INTO video_daily_deduplicated (
@@ -268,7 +288,10 @@ async function enforceVideoDailyUniqueness(pool: Pool): Promise<void> {
   const client = await pool.connect();
   let transactionStarted = false;
   try {
-    await recompressQueuedVideoDailyChunks(client);
+    const timescaleDbInstalled = await hasTimescaleDb(client);
+    if (timescaleDbInstalled) {
+      await recompressQueuedVideoDailyChunks(client);
+    }
     const existingIndex = await getVideoDailyUniqueIndex(client);
     if (existingIndex) {
       assertCanonicalVideoDailyIndex(existingIndex);
@@ -279,14 +302,16 @@ async function enforceVideoDailyUniqueness(pool: Pool): Promise<void> {
     await client.query("BEGIN");
     transactionStarted = true;
     await client.query("LOCK TABLE video_daily IN SHARE ROW EXCLUSIVE MODE");
-    await cleanVideoDailyDuplicates(client);
+    await cleanVideoDailyDuplicates(client, timescaleDbInstalled);
     await createVideoDailyUniqueIndex(client);
 
     assertCanonicalVideoDailyIndex(await getVideoDailyUniqueIndex(client));
     await dropRedundantVideoDailyIndexes(client);
     await client.query("COMMIT");
     transactionStarted = false;
-    await recompressQueuedVideoDailyChunks(client);
+    if (timescaleDbInstalled) {
+      await recompressQueuedVideoDailyChunks(client);
+    }
   } catch (error) {
     if (transactionStarted) {
       await client.query("ROLLBACK");

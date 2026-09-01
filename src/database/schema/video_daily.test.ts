@@ -28,11 +28,18 @@ function createPool(
     sql: string,
     values?: unknown[],
   ) => Promise<{ rows: unknown[]; rowCount: number }>,
+  options: { timescaleDbInstalled?: boolean } = {},
 ): { pool: Pool; queries: RecordedQuery[] } {
   const queries: RecordedQuery[] = [];
   const client = {
     async query(sql: string, values?: unknown[]) {
       queries.push({ sql, values });
+      if (sql.includes("FROM pg_extension")) {
+        return {
+          rows: [{ installed: options.timescaleDbInstalled ?? true }],
+          rowCount: 1,
+        };
+      }
       return handleClientQuery(sql, values);
     },
     release() {},
@@ -207,6 +214,52 @@ test("video_daily initialization replaces duplicate dates with deterministic min
       /\b(?:FROM|JOIN)\s+mysql_video_daily\b/i.test(sql),
     ),
     false,
+  );
+});
+
+test("plain PostgreSQL deduplicates before creating the canonical index", async () => {
+  let indexChecks = 0;
+  const { pool, queries } = createPool(
+    async (sql) => {
+      if (sql.includes("WITH date_bounds AS")) {
+        return {
+          rows: [{ record_date: "2026-06-03" }],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("AS has_duplicates")) {
+        return { rows: [{ has_duplicates: true }], rowCount: 1 };
+      }
+      if (sql.includes("FROM pg_index AS index_definition")) {
+        indexChecks += 1;
+        return indexChecks === 1
+          ? { rows: [], rowCount: 0 }
+          : { rows: [canonicalIndex], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    { timescaleDbInstalled: false },
+  );
+
+  await initializeVideoDaily(pool);
+
+  assert.equal(
+    queries.some(({ sql }) => sql.includes("timescaledb_information.chunks")),
+    false,
+  );
+  assert.equal(
+    queries.some(({ sql }) => sql.includes("SELECT recompress_chunk")),
+    false,
+  );
+  assert.equal(
+    queries.some(({ sql }) => sql.includes("SELECT DISTINCT ON (aid)")),
+    true,
+  );
+  assert.equal(
+    queries.some(({ sql }) =>
+      sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS"),
+    ),
+    true,
   );
 });
 

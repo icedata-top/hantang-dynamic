@@ -67,7 +67,7 @@ export async function initCronVideoDaily(
         INSERT INTO pg_temp.video_daily_sync_day (
           record_date, aid, coin, favorite, danmaku, "view", reply, share, "like"
         )
-        SELECT
+        SELECT DISTINCT ON (source.aid)
           source.record_date,
           source.aid,
           source.coin,
@@ -78,7 +78,16 @@ export async function initCronVideoDaily(
           source.share,
           source."like"
         FROM "${schema}".mysql_video_daily AS source
-        WHERE source.record_date = v_record_date;
+        WHERE source.record_date = v_record_date
+        ORDER BY
+          source.aid,
+          source."view" ASC NULLS LAST,
+          source.coin ASC NULLS LAST,
+          source.favorite ASC NULLS LAST,
+          source.danmaku ASC NULLS LAST,
+          source.reply ASC NULLS LAST,
+          source.share ASC NULLS LAST,
+          source."like" ASC NULLS LAST;
 
         GET DIAGNOSTICS v_staged_rows = ROW_COUNT;
         ANALYZE pg_temp.video_daily_sync_day;

@@ -25,6 +25,10 @@ test("daily sync targets one fixed-date TimescaleDB chunk", async () => {
   assert.doesNotMatch(procedureSql, /p_batch_size > 50000/);
   assert.match(procedureSql, /p_batch_size integer DEFAULT NULL/);
   assert.match(procedureSql, /LIMIT p_batch_size/);
+  assert.match(
+    procedureSql.replace(/\s+/g, " "),
+    /SELECT DISTINCT ON \(source\.aid\) source\.record_date, source\.aid, source\.coin, source\.favorite, source\.danmaku, source\."view", source\.reply, source\.share, source\."like" FROM "hantang_dynamic"\.mysql_video_daily AS source WHERE source\.record_date = v_record_date ORDER BY source\.aid, source\."view" ASC NULLS LAST, source\.coin ASC NULLS LAST, source\.favorite ASC NULLS LAST, source\.danmaku ASC NULLS LAST, source\.reply ASC NULLS LAST, source\.share ASC NULLS LAST, source\."like" ASC NULLS LAST/,
+  );
   assert.match(queries[2] ?? "", /sync_video_daily_from_mysql\([\s\S]*?50000/);
   const updateSql = procedureSql.match(
     /EXECUTE \$sync_update\$([\s\S]*?)\$sync_update\$ USING v_record_date;/,

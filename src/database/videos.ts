@@ -327,15 +327,31 @@ export async function markVideoDeleted(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const existingAid =
+      identity.type === "bvid"
+        ? await client.query<{ aid: string }>(
+            `SELECT aid
+             FROM processed_videos
+             WHERE bvid = $1
+             FOR UPDATE`,
+            [identity.bvid],
+          )
+        : undefined;
     const result = await deletedVideoInsert(client, identity, notesJson);
     const aid = BigInt(result.rows[0].aid);
+    const terminalAids = [
+      ...new Set([
+        ...(existingAid?.rows.map((row) => row.aid) ?? []),
+        aid.toString(),
+      ]),
+    ];
     await client.query(
       `UPDATE video_collection_state
        SET priority = -1,
            next_minute_due_at = NULL,
            updated_at = NOW()
-       WHERE aid = $1::bigint`,
-      [aid.toString()],
+       WHERE aid = ANY($1::bigint[])`,
+      [terminalAids],
     );
     await client.query("COMMIT");
     return aid;
