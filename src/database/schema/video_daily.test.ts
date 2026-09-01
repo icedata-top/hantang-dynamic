@@ -201,6 +201,30 @@ test("video_daily initialization replaces duplicate dates with deterministic min
     /record_date = DATE '2026-06-03'/,
   );
 
+  const begin = queries.findIndex(({ sql }) => sql === "BEGIN");
+  const decompressionLimit = queries.findIndex(
+    ({ sql }) =>
+      sql ===
+      "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0",
+  );
+  const lock = queries.findIndex(
+    ({ sql }) => sql === "LOCK TABLE video_daily IN SHARE ROW EXCLUSIVE MODE",
+  );
+  const cleanupDelete = queries.findIndex(({ sql }) =>
+    normalizeSql(sql).startsWith("DELETE FROM video_daily WHERE"),
+  );
+  assert.ok(begin < decompressionLimit);
+  assert.ok(decompressionLimit < lock);
+  assert.ok(lock < cleanupDelete);
+  assert.equal(
+    queries.filter(
+      ({ sql }) =>
+        sql ===
+        "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0",
+    ).length,
+    1,
+  );
+
   const commit = queries.findIndex(({ sql }) => sql === "COMMIT");
   const recompress = queries.findIndex(
     ({ sql, values }) =>
@@ -249,6 +273,14 @@ test("plain PostgreSQL deduplicates before creating the canonical index", async 
   );
   assert.equal(
     queries.some(({ sql }) => sql.includes("SELECT recompress_chunk")),
+    false,
+  );
+  assert.equal(
+    queries.some(
+      ({ sql }) =>
+        sql ===
+        "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0",
+    ),
     false,
   );
   assert.equal(

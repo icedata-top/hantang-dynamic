@@ -301,6 +301,11 @@ async function enforceVideoDailyUniqueness(pool: Pool): Promise<void> {
 
     await client.query("BEGIN");
     transactionStarted = true;
+    if (timescaleDbInstalled) {
+      await client.query(
+        "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0",
+      );
+    }
     await client.query("LOCK TABLE video_daily IN SHARE ROW EXCLUSIVE MODE");
     await cleanVideoDailyDuplicates(client, timescaleDbInstalled);
     await createVideoDailyUniqueIndex(client);
