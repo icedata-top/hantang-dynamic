@@ -83,7 +83,7 @@ export function selectWatchLaterToViewAccounts<T extends ToViewAccountIdentity>(
 
 export async function fetchCompleteToViewSnapshot(
   client: ToViewClient,
-  sampledAt: Date,
+  now: () => Date = () => new Date(),
 ): Promise<ToViewValidationResult | null> {
   const release = await sharedApiRateLimiter.acquire();
   try {
@@ -101,7 +101,7 @@ export async function fetchCompleteToViewSnapshot(
       },
     });
     if (response.data.code === -702) throw new ToViewRateLimitError();
-    const result = validateToViewResponse(response.data, sampledAt);
+    const result = validateToViewResponse(response.data, now());
     if (!result.complete) {
       logger.warn("To View API response was incomplete or invalid");
       return null;
@@ -130,7 +130,7 @@ export async function fetchCompleteToViewSnapshot(
 export async function sampleWatchLaterToViewAccountsWithStatus(
   accounts: ToViewRequestAccount[],
   selectedWatchLaterAccounts: WatchLaterToViewAccount[],
-  sampledAt: Date,
+  now: () => Date = () => new Date(),
   onRateLimitedAccount?: (accountId: bigint) => void,
 ): Promise<ToViewSamplesResult> {
   const selectedAccounts = selectWatchLaterToViewAccounts(
@@ -143,10 +143,7 @@ export async function sampleWatchLaterToViewAccountsWithStatus(
   for (const account of selectedAccounts) {
     let snapshot: ToViewValidationResult | null = null;
     try {
-      snapshot = await fetchCompleteToViewSnapshot(
-        account.toViewClient,
-        sampledAt,
-      );
+      snapshot = await fetchCompleteToViewSnapshot(account.toViewClient, now);
     } catch (error) {
       if (!(error instanceof ToViewRateLimitError)) throw error;
       const id = accountId(account);

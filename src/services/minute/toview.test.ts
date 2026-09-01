@@ -41,7 +41,7 @@ test("To View fetches once per account with one bounded attempt", async () => {
   const result = await sampleWatchLaterToViewAccountsWithStatus(
     accounts,
     [{ accountId: 100n }, { accountId: 200n }],
-    new Date(),
+    () => new Date(),
   );
 
   assert.deepEqual(result, {
@@ -70,7 +70,7 @@ test("To View de-duplicates configured account IDs within a pass", async () => {
   await sampleWatchLaterToViewAccountsWithStatus(
     [{ uid: "100", toViewClient: client }],
     [{ accountId: 100n }, { accountId: 100n }],
-    new Date(),
+    () => new Date(),
   );
 
   assert.equal(requestCount, 1);
@@ -86,7 +86,7 @@ test("To View rejects an incomplete response before sampling", async () => {
   const result = await sampleWatchLaterToViewAccountsWithStatus(
     [{ uid: "100", toViewClient: client }],
     [{ accountId: 100n }],
-    new Date(),
+    () => new Date(),
   );
 
   assert.deepEqual(result, {
@@ -105,7 +105,7 @@ test("To View rejects a success response without snapshot data", async () => {
   const result = await sampleWatchLaterToViewAccountsWithStatus(
     [{ uid: "100", toViewClient: client }],
     [{ accountId: 100n }],
-    new Date(),
+    () => new Date(),
   );
 
   assert.deepEqual(result.failedAccountIds, [100n]);

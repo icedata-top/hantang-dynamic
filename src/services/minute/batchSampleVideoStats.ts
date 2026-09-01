@@ -203,7 +203,7 @@ export async function batchSampleVideoStats(
   aids: bigint[],
   options?: {
     batchSize?: number;
-    sampledAt?: Date;
+    now?: () => Date;
     toViewAccounts?: ToViewRequestAccount[];
     observedWatchLaterAccountIdsByAid?: ReadonlyMap<string, readonly bigint[]>;
     healthyWatchLaterAccountIds?: ReadonlySet<bigint>;
@@ -212,7 +212,7 @@ export async function batchSampleVideoStats(
     dependencies?: Partial<BatchSampleDependencies>;
   },
 ): Promise<VideoMinuteSample[]> {
-  const sampledAt = options?.sampledAt ?? new Date();
+  const now = options?.now ?? (() => new Date());
   const batchSize = options?.batchSize ?? config.minute.batchSize;
   const requestedAids = new Set(aids.map((aid) => aid.toString()));
   const samplesByAid = new Map<string, VideoMinuteSample>();
@@ -227,7 +227,7 @@ export async function batchSampleVideoStats(
     const toViewResult = await sampleWatchLaterToViewAccountsWithStatus(
       options.toViewAccounts,
       [...routing.keys()].map((accountId) => ({ accountId })),
-      sampledAt,
+      now,
       options.onWatchLaterToViewAccountRateLimit,
     );
     for (const accountId of toViewResult.failedAccountIds) {
@@ -277,6 +277,7 @@ export async function batchSampleVideoStats(
         recordFallbackResponseMiss("api_failure", aidBatch.length);
         throw error;
       }
+      const sampledAt = now();
 
       if (data.code !== 0) {
         logger.warn(`Minute stats API failed with code ${data.code}`);
@@ -290,34 +291,36 @@ export async function batchSampleVideoStats(
         continue;
       }
 
-      const validAids = new Set<string>();
+      const samplesFromResponse = new Map<string, VideoMinuteSample>();
+      const seenAids = new Set<string>();
       const invalidAids = new Set<string>();
       const requestedBatchAids = new Set(aidBatch.map((aid) => aid.toString()));
       for (const item of data.data) {
         const itemAidKey = requestedAidKey(item);
+        if (!itemAidKey || !requestedBatchAids.has(itemAidKey)) continue;
+        if (seenAids.has(itemAidKey)) {
+          samplesFromResponse.delete(itemAidKey);
+          invalidAids.add(itemAidKey);
+          continue;
+        }
+        seenAids.add(itemAidKey);
+
         const sample = toMinuteSample(item, sampledAt);
-        const key = sample?.aid.toString();
-        if (
-          sample &&
-          key &&
-          requestedAids.has(key) &&
-          requestedBatchAids.has(key)
-        ) {
-          samplesByAid.set(key, sample);
-          validAids.add(key);
-        } else if (
-          itemAidKey &&
-          requestedBatchAids.has(itemAidKey) &&
-          !validAids.has(itemAidKey)
-        ) {
+        if (sample && requestedAids.has(itemAidKey)) {
+          samplesFromResponse.set(itemAidKey, sample);
+        } else {
           invalidAids.add(itemAidKey);
         }
       }
 
-      for (const aidKey of validAids) {
-        invalidAids.delete(aidKey);
+      for (const aidKey of invalidAids) {
+        samplesFromResponse.delete(aidKey);
       }
-      const missingCount = aidBatch.length - validAids.size - invalidAids.size;
+      for (const [aidKey, sample] of samplesFromResponse) {
+        samplesByAid.set(aidKey, sample);
+      }
+      const missingCount =
+        aidBatch.length - samplesFromResponse.size - invalidAids.size;
       if (missingCount > 0) {
         logger.warn(
           `Minute stats favorite fallback missed ${missingCount} requested aid(s)`,

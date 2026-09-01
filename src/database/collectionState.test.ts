@@ -171,6 +171,31 @@ test("suppressed and persisted samples preserve view-change semantics", async ()
   );
 });
 
+test("normal suppressed samples use the grid-aligned next due time", async () => {
+  const queries: string[] = [];
+  const pool = {
+    async query(sql: string) {
+      queries.push(sql);
+      return { rows: [], rowCount: 0 };
+    },
+  } as Pool;
+
+  await initCollectionStateSchema(pool);
+
+  const suppressedSql = queries.find((sql) =>
+    sql.includes(
+      "CREATE OR REPLACE FUNCTION fn_advance_suppressed_minute_samples",
+    ),
+  );
+  assert.ok(suppressedSql);
+  assert.match(
+    suppressedSql,
+    /fn_video_collection_next_due_at\(\s*s\.aid,\s*s\.priority,\s*o\.observed_at \+ interval '1 second'\s*\) AS normal_due_at/,
+  );
+  assert.match(suppressedSql, /d\.burst_start < d\.normal_due_at/);
+  assert.match(suppressedSql, /ELSE d\.normal_due_at/);
+});
+
 test("late and equal observations cannot replace newer collection state", async () => {
   const queries: string[] = [];
   const pool = {

@@ -99,7 +99,7 @@ export async function fetchWatchLaterSnapshot(
   client: ToViewClient,
   now = new Date(),
 ): Promise<WatchLaterSnapshot | null> {
-  const snapshot = await fetchCompleteToViewSnapshot(client, now);
+  const snapshot = await fetchCompleteToViewSnapshot(client, () => now);
   if (!snapshot || snapshot.samples.length > WATCH_LATER_MEMBERSHIP_CAPACITY) {
     return null;
   }

@@ -292,6 +292,71 @@ test("favorite fallback accepts a full live-shape batch with partial counters", 
   assert.deepEqual((await minuteFallbackResponseMissesTotal.get()).values, []);
 });
 
+test("timestamps To View and favorite samples when each response completes", async () => {
+  const completionTimes = [
+    new Date("2026-09-01T00:00:01.000Z"),
+    new Date("2026-09-01T00:00:02.000Z"),
+    new Date("2026-09-01T00:00:03.000Z"),
+  ];
+  let completionIndex = 0;
+
+  const samples = await batchSampleVideoStats([1n, 2n, 3n], {
+    batchSize: 1,
+    now: () => completionTimes[completionIndex++] ?? new Date(0),
+    toViewAccounts: [
+      {
+        uid: "7",
+        toViewClient: {
+          async get() {
+            return { data: toViewResponse(1) };
+          },
+        },
+      },
+    ],
+    observedWatchLaterAccountIdsByAid: new Map([["1", [7n]]]),
+    healthyWatchLaterAccountIds: new Set([7n]),
+    dependencies: {
+      async fetchStatsBatch(aids) {
+        return favoriteResponse(aids);
+      },
+    },
+  });
+
+  assert.deepEqual(
+    samples.map(({ aid, time }) => ({ aid, time })),
+    [
+      { aid: 1n, time: completionTimes[0] },
+      { aid: 2n, time: completionTimes[1] },
+      { aid: 3n, time: completionTimes[2] },
+    ],
+  );
+});
+
+test("favorite fallback rejects duplicate requested AIDs without discarding unique tuples", async () => {
+  minuteFallbackResponseMissesTotal.reset();
+  const samples = await batchSampleVideoStats([1n, 2n], {
+    dependencies: {
+      async fetchStatsBatch() {
+        return {
+          code: 0,
+          data: [
+            ...favoriteResponse([1n, 2n]).data,
+            { id: 1, cnt_info: { play: "malformed" } },
+          ],
+        };
+      },
+    },
+  });
+
+  assert.deepEqual(
+    samples.map((sample) => sample.aid),
+    [2n],
+  );
+  assert.deepEqual((await minuteFallbackResponseMissesTotal.get()).values, [
+    { labels: { reason: "invalid_response_item" }, value: 1 },
+  ]);
+});
+
 test("favorite fallback normalizes string tuples and rejects malformed present counters", async () => {
   const requestedAids = [
     9_007_199_254_740_993n,

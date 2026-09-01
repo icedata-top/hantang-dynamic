@@ -755,11 +755,11 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           o.observed_view IS DISTINCT FROM s.last_view AS view_changed,
           COALESCE(extract(epoch from o.observed_at - s.last_view_change_at), 9999)::numeric
             AS secs_since_change,
-          greatest(
-            COALESCE(extract(epoch from o.observed_at - s.last_minute_success_at), fn_video_collection_interval_secs(s.priority)),
-            5
-          )::numeric
-            AS maintain_secs,
+          fn_video_collection_next_due_at(
+            s.aid,
+            s.priority,
+            o.observed_at + interval '1 second'
+          ) AS normal_due_at,
           s.last_view_change_at + interval '55 seconds'
             AS burst_start,
           -- A video is "near gate" only when the next gate is reachable
@@ -797,11 +797,11 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
             WHEN NOT d.view_changed
              AND d.near_gate
              AND d.burst_start > d.observed_at
-             AND d.burst_start < d.observed_at + d.maintain_secs * interval '1 second'
+             AND d.burst_start < d.normal_due_at
             THEN d.burst_start
 
-            -- Phase 1: Normal — maintain current interval.
-            ELSE d.observed_at + d.maintain_secs * interval '1 second'
+            -- Phase 1: Normal grid-aligned schedule.
+            ELSE d.normal_due_at
           END,
           last_minute_success_at = d.observed_at,
           last_view = d.observed_view,
