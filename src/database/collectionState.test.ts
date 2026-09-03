@@ -18,22 +18,6 @@ function createSchemaInitializationPool(queries: string[]): Pool {
     if (sql.includes("FROM pg_extension")) {
       return { rows: [{ installed: false }], rowCount: 1 };
     }
-    if (sql.includes("FROM pg_index AS index_definition")) {
-      return {
-        rows: [
-          {
-            index_definition:
-              "CREATE UNIQUE INDEX uq_video_daily_aid_record_date ON public.video_daily USING btree (aid, record_date)",
-            is_full_table: true,
-            is_unique: true,
-            is_valid: true,
-            is_ready: true,
-            key_columns: ["aid", "record_date"],
-          },
-        ],
-        rowCount: 1,
-      };
-    }
     return { rows: [], rowCount: 0 };
   };
   const client = { query, release() {} };
