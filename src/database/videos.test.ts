@@ -5,6 +5,7 @@ import { upgradeVideoHistoryTagIdentitySchema } from "./schema/video_history";
 import { backfillMissionIds } from "./schema/videos";
 import {
   getProcessedVideoAids,
+  getProcessedVideoAidsMissingPidV2,
   markVideoDeleted,
   markVideoProcessedWithCollectionState,
   markVideosProcessedWithCollectionState,
@@ -198,6 +199,23 @@ test("processed AID lookup uses one bounded set query", async () => {
   assert.equal(calls.length, 1);
   assert.match(calls[0]?.sql ?? "", /WHERE aid = ANY\(\$1::bigint\[\]\)/);
   assert.deepEqual(calls[0]?.values, [["1", "2", "3"]]);
+});
+
+test("missing pid lookup queries only a bounded AID set", async () => {
+  const calls: QueryCall[] = [];
+  const pool = {
+    async query(sql: string, values?: unknown[]) {
+      calls.push({ sql, values });
+      return { rows: [{ aid: "2" }], rowCount: 1 };
+    },
+  } as unknown as Pool;
+
+  const missing = await getProcessedVideoAidsMissingPidV2(pool, [1n, 2n]);
+
+  assert.deepEqual(missing, new Set([2n]));
+  assert.match(calls[0]?.sql ?? "", /aid = ANY\(\$1::bigint\[\]\)/);
+  assert.match(calls[0]?.sql ?? "", /pid_v2 IS NULL/);
+  assert.deepEqual(calls[0]?.values, [["1", "2"]]);
 });
 
 test("recommendation refresh deduplicates inputs and preserves absent card fields", async () => {

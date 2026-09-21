@@ -105,6 +105,9 @@ class FakeDatabase {
     this.calls.membership++;
     return new Set(aids.filter((aid) => this.existing.has(Number(aid))));
   }
+  async getProcessedVideoAidsMissingPidV2(aids: readonly bigint[]) {
+    return new Set(aids.filter((aid) => !this.pidV2ByAid.has(Number(aid))));
+  }
   async refreshProcessedVideosFromRecommendations(
     items: readonly ProcessedVideoRecommendationRefresh[],
   ) {
@@ -222,6 +225,27 @@ test("manual reverse fill stops after one bridge layer", async () => {
   assert.equal(result.imported, 1);
   assert.equal(fetched.includes(4), false);
   assert.equal(database.pidV2ByAid.get(1), 7);
+  assert.equal(result.unresolved, 0);
+});
+
+test("manual updater counts high-view sources that remain without pid_v2", async () => {
+  const database = new FakeDatabase([1, 9]);
+  const result = await runUpdateInfo({
+    database,
+    detailsService: parser,
+    pidV2Whitelist: new Set(),
+    onProgress: () => {},
+    fetchDetail: async (id) => {
+      const aid = Number(String(id).replace("BV", ""));
+      if (aid === 1) return detail(1, 100, [related(2, 99)]);
+      if (aid === 2) return detail(2, 100, [related(1, 7)]);
+      if (aid === 9) return detail(9, 100, [related(10, 99)]);
+      if (aid === 10) return detail(10, 100);
+      throw new Error(`unexpected fetch ${aid}`);
+    },
+  });
+  assert.equal(database.pidV2ByAid.get(1), 7);
+  assert.equal(result.unresolved, 1);
 });
 
 test("partial related cards refresh only their supplied existing fields", async () => {

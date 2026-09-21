@@ -121,6 +121,7 @@ import {
   getAllProcessedIds,
   getBvidList,
   getProcessedVideoAids,
+  getProcessedVideoAidsMissingPidV2,
   getProcessedVideoMetadataCandidates,
   getProcessedVideoMetadataUpperAid,
   getProcessedVideos,
@@ -301,6 +302,12 @@ export class Database {
     aids: ReadonlyArray<bigint>,
   ): Promise<Set<bigint>> {
     return getProcessedVideoAids(this.ensurePool(), aids);
+  }
+
+  public async getProcessedVideoAidsMissingPidV2(
+    aids: ReadonlyArray<bigint>,
+  ): Promise<Set<bigint>> {
+    return getProcessedVideoAidsMissingPidV2(this.ensurePool(), aids);
   }
 
   /** Apply the standalone TAG identity and cover43 history upgrade. */

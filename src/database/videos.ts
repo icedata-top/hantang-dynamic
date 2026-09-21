@@ -126,6 +126,24 @@ export async function getProcessedVideoAids(
   return new Set(result.rows.map((row) => BigInt(row.aid as string)));
 }
 
+/** Return the missing-pid subset of a bounded processed-video AID batch. */
+export async function getProcessedVideoAidsMissingPidV2(
+  pool: Pool,
+  aids: ReadonlyArray<bigint>,
+): Promise<Set<bigint>> {
+  const uniqueAids = [...new Set(aids.map((aid) => aid.toString()))];
+  if (uniqueAids.length === 0) return new Set();
+
+  const result = await pool.query(
+    `SELECT aid
+     FROM processed_videos
+     WHERE aid = ANY($1::bigint[])
+       AND pid_v2 IS NULL`,
+    [uniqueAids],
+  );
+  return new Set(result.rows.map((row) => BigInt(row.aid as string)));
+}
+
 /**
  * Refresh fields supplied by recommendation cards without changing review
  * state, detail-only fields, or authoritative TAG relations.

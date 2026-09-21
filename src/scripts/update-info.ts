@@ -21,6 +21,9 @@ interface UpdateInfoDatabase extends RecommendationRefreshDatabase {
     options: ProcessedVideoMetadataSweep,
   ): Promise<Array<{ aid: bigint; bvid: string; pidV2?: number }>>;
   getProcessedVideoMetadataUpperAid(): Promise<bigint | null>;
+  getProcessedVideoAidsMissingPidV2(
+    aids: ReadonlyArray<bigint>,
+  ): Promise<Set<bigint>>;
   init(): Promise<void>;
 }
 
@@ -98,6 +101,22 @@ async function visitCandidates(
   }
 }
 
+async function countMissingPidV2(
+  database: UpdateInfoDatabase,
+  aids: ReadonlySet<bigint>,
+): Promise<number> {
+  let missing = 0;
+  const values = [...aids];
+  for (let index = 0; index < values.length; index += BATCH_SIZE) {
+    missing += (
+      await database.getProcessedVideoAidsMissingPidV2(
+        values.slice(index, index + BATCH_SIZE),
+      )
+    ).size;
+  }
+  return missing;
+}
+
 /**
  * Enrich only the AIDs present when this run begins. Missing pid_v2 sources
  * receive one reverse recommendation pass; imports never recurse.
@@ -143,6 +162,7 @@ export async function runUpdateInfo(
       pidV2Whitelist: options.pidV2Whitelist,
     });
 
+    const highViewMissingPidAids = new Set<bigint>();
     await visitCandidates(
       database,
       { ...sweep, onlyMissingPidV2: false },
@@ -155,6 +175,9 @@ export async function runUpdateInfo(
         result.errors += collected.errors;
         result.imported += collected.imported;
         result.metadataUpdated += collected.metadataUpdated;
+        for (const [aid, source] of collected.snapshots) {
+          if ((source.viewCount ?? 0) > 10) highViewMissingPidAids.add(aid);
+        }
       },
     );
 
@@ -190,11 +213,11 @@ export async function runUpdateInfo(
         result.errors += bridgeCollected.errors;
         result.imported += bridgeCollected.imported;
         result.metadataUpdated += bridgeCollected.metadataUpdated;
-        for (const source of collected.snapshots.values()) {
-          if ((source.viewCount ?? 0) > 10 && source.related.length > 0)
-            result.unresolved++;
-        }
       },
+    );
+    result.unresolved = await countMissingPidV2(
+      database,
+      highViewMissingPidAids,
     );
     progress(
       `Update-info complete: scanned=${result.scanned}, metadata-updated=${result.metadataUpdated}, imported=${result.imported}, unresolved=${result.unresolved}, unavailable=${result.errors}`,
