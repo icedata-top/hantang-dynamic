@@ -19,6 +19,7 @@ import type { RateLimiter } from "../utils/rateLimiter";
 interface VideoProcessingOptions {
   pidV2?: number;
   cover43?: string;
+  enrichRelatedMetadata?: boolean;
   processRecommendations?: boolean;
   processRelated?: boolean;
   skipCacheCheck?: boolean;
@@ -170,6 +171,7 @@ export class DetailsService {
       skipCacheCheck?: boolean;
       pidV2?: number;
       cover43?: string;
+      enrichRelatedMetadata?: boolean;
     } = {},
   ): Promise<{
     video: VideoData | null;
@@ -179,9 +181,10 @@ export class DetailsService {
       processRecommendations = true,
       processRelated = true,
       storeOwner = true,
-      skipCacheCheck = false,
+      enrichRelatedMetadata = true,
       pidV2,
       cover43,
+      skipCacheCheck = false,
     } = options;
 
     const identity = this.toVideoIdentity(id);
@@ -243,6 +246,7 @@ export class DetailsService {
       }
 
       return await this.processResolvedVideoData(videoData, relatedVideos, {
+        enrichRelatedMetadata,
         processRecommendations,
         processRelated,
       });
@@ -390,6 +394,9 @@ export class DetailsService {
     id: string | number,
     detailData: BiliVideoDetailDataForProcessing,
     options: {
+      cover43?: string;
+      enrichRelatedMetadata?: boolean;
+      pidV2?: number;
       processRecommendations?: boolean;
       processRelated?: boolean;
       storeOwner?: boolean;
@@ -402,13 +409,24 @@ export class DetailsService {
       processRecommendations = true,
       processRelated = true,
       storeOwner = true,
+      enrichRelatedMetadata = true,
+      pidV2,
+      cover43,
     } = options;
 
     try {
       const { videoData, relatedVideos } =
         await this.processVideoDetailResponse(detailData, { storeOwner });
 
+      if (validPidV2(pidV2)) {
+        videoData.pid_v2 = pidV2;
+      }
+      if (typeof cover43 === "string" && cover43.length > 0) {
+        videoData.cover43 = cover43;
+      }
+
       return await this.processResolvedVideoData(videoData, relatedVideos, {
+        enrichRelatedMetadata,
         processRecommendations,
         processRelated,
       });
@@ -447,6 +465,7 @@ export class DetailsService {
     videoData: VideoData,
     relatedVideos: RecommendedVideo[],
     options: {
+      enrichRelatedMetadata?: boolean;
       processRecommendations: boolean;
       processRelated: boolean;
     },
@@ -456,7 +475,9 @@ export class DetailsService {
   }> {
     const filtered = await filterVideo(videoData);
 
-    await this.enrichRelatedVideoMetadata(relatedVideos);
+    if (options.enrichRelatedMetadata !== false) {
+      await this.enrichRelatedVideoMetadata(relatedVideos);
+    }
 
     if (options.processRecommendations && relatedVideos.length > 0) {
       const recommendations = this.buildRecommendationInputs(

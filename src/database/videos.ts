@@ -183,6 +183,64 @@ export interface ProcessedVideoMetadata {
   cover43?: string;
 }
 
+export interface ProcessedVideoMetadataCandidate {
+  aid: bigint;
+  bvid: string;
+  pidV2?: number;
+}
+
+export interface ProcessedVideoMetadataSweep {
+  afterAid: bigint;
+  createdBefore: Date;
+  onlyMissingPidV2?: boolean;
+  throughAid: bigint;
+  limit: number;
+}
+
+/** Return the upper AID boundary for one manually started metadata sweep. */
+export async function getProcessedVideoMetadataUpperAid(
+  pool: Pool,
+): Promise<bigint | null> {
+  const result = await pool.query(
+    "SELECT MAX(aid) AS aid FROM processed_videos",
+  );
+  const aid = result.rows[0]?.aid;
+  return aid === null || aid === undefined ? null : BigInt(aid);
+}
+
+/**
+ * Read one immutable-at-start page of processed videos in AID order.  The
+ * creation cutoff prevents videos imported by the updater from becoming part
+ * of its own source sweep.
+ */
+export async function getProcessedVideoMetadataCandidates(
+  pool: Pool,
+  options: ProcessedVideoMetadataSweep,
+): Promise<ProcessedVideoMetadataCandidate[]> {
+  const result = await pool.query(
+    `SELECT aid, bvid, pid_v2
+     FROM processed_videos
+     WHERE aid > $1::bigint
+       AND aid <= $2::bigint
+       AND created_at <= $3::timestamptz
+       AND ($4::boolean = false OR pid_v2 IS NULL)
+     ORDER BY aid ASC
+     LIMIT $5`,
+    [
+      options.afterAid.toString(),
+      options.throughAid.toString(),
+      options.createdBefore,
+      options.onlyMissingPidV2 ?? false,
+      options.limit,
+    ],
+  );
+  return result.rows.map((row) => ({
+    aid: BigInt(row.aid),
+    bvid: row.bvid as string,
+    ...(typeof row.pid_v2 === "number" ? { pidV2: row.pid_v2 } : {}),
+  }));
+}
+
 /**
  * Update supplemental metadata for existing processed videos in one set-based query.
  */

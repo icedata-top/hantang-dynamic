@@ -14,6 +14,21 @@ function argumentValue(args: string[], name: string): string | undefined {
   return index < 0 ? undefined : args[index + 1];
 }
 
+function updateInfoWhitelistArgument(args: string[]): string | undefined {
+  const positions = args
+    .map((argument, index) => (argument === "--pid-v2-whitelist" ? index : -1))
+    .filter((index) => index >= 0);
+  if (positions.length > 1) {
+    throw new Error("--pid-v2-whitelist may only be provided once");
+  }
+  if (positions.length === 0) return undefined;
+  const value = args[positions[0] + 1];
+  if (value === undefined || value.startsWith("--")) {
+    throw new Error("--pid-v2-whitelist requires a comma-separated value");
+  }
+  return value;
+}
+
 function waitForShutdownSignal(): Promise<void> {
   return new Promise(() => {
     // Process lifetime is controlled by SIGINT/SIGTERM handlers.
@@ -80,6 +95,23 @@ async function runTracker() {
 
 async function main() {
   const args = process.argv.slice(2);
+
+  if (args.includes("--update-info")) {
+    const { parsePidV2Whitelist, runUpdateInfo } = await import(
+      "./scripts/update-info"
+    );
+    const whitelistValue =
+      updateInfoWhitelistArgument(args) ??
+      process.env.UPDATE_INFO_PID_V2_WHITELIST;
+    await runUpdateInfo({
+      pidV2Whitelist: parsePidV2Whitelist(whitelistValue),
+    });
+    return;
+  }
+
+  if (args.includes("--pid-v2-whitelist")) {
+    throw new Error("--pid-v2-whitelist requires --update-info");
+  }
 
   if (args.includes("--init-schema")) {
     logger.info("Initializing database schema");

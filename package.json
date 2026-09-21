@@ -17,7 +17,8 @@
     "backfill-video-daily": "tsx src/index.ts --backfill-video-daily",
     "init-schema": "tsx src/index.ts --init-schema",
     "relation": "tsx src/index.ts --relation",
-    "repair": "tsx src/index.ts --repair"
+    "repair": "tsx src/index.ts --repair",
+    "update-info": "tsx src/index.ts --update-info"
   },
   "dependencies": {
     "@ahmedrangel/rand-user-agent": "^2.0.23",
