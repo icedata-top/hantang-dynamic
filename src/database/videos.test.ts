@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
+import { upgradeVideoHistoryTagIdentitySchema } from "./schema/video_history";
 import { backfillMissionIds } from "./schema/videos";
 import {
+  getProcessedVideoAids,
   markVideoDeleted,
   markVideoProcessedWithCollectionState,
+  markVideosProcessedWithCollectionState,
+  refreshProcessedVideosFromRecommendations,
   updateProcessedVideoMetadata,
 } from "./videos";
 
@@ -148,13 +152,13 @@ test("missing TAG snapshots preserve stored names and normalized relations", asy
 
   assert.match(
     calls[1]?.sql ?? "",
-    /WHEN \$24::boolean THEN EXCLUDED\.tag\s+ELSE processed_videos\.tag/,
+    /WHEN \$25::boolean THEN EXCLUDED\.tag\s+ELSE processed_videos\.tag/,
   );
   assert.match(
     calls[1]?.sql ?? "",
-    /WHEN \$24::boolean THEN EXCLUDED\.tag_new\s+ELSE processed_videos\.tag_new/,
+    /WHEN \$25::boolean THEN EXCLUDED\.tag_new\s+ELSE processed_videos\.tag_new/,
   );
-  assert.equal(calls[1]?.values?.[23], false);
+  assert.equal(calls[1]?.values?.[24], false);
   assert.equal(
     calls.some((call) => call.sql.includes("DELETE FROM video_tags")),
     false,
@@ -172,10 +176,77 @@ test("authoritative empty TAG snapshots clear names and normalized relations", a
 
   assert.equal(calls[1]?.values?.[5], "");
   assert.deepEqual(calls[1]?.values?.[13], []);
-  assert.equal(calls[1]?.values?.[23], true);
+  assert.equal(calls[1]?.values?.[24], true);
+  assert.deepEqual(calls[1]?.values?.[23], []);
   assert.deepEqual(calls[2]?.values, [[], []]);
   assert.match(calls[3]?.sql ?? "", /DELETE FROM video_tags/);
   assert.deepEqual(calls[4]?.values, ["42", []]);
+});
+
+test("processed AID lookup uses one bounded set query", async () => {
+  const calls: QueryCall[] = [];
+  const pool = {
+    async query(sql: string, values?: unknown[]) {
+      calls.push({ sql, values });
+      return { rows: [{ aid: "2" }, { aid: "3" }], rowCount: 2 };
+    },
+  } as unknown as Pool;
+
+  const existing = await getProcessedVideoAids(pool, [1n, 2n, 2n, 3n]);
+
+  assert.deepEqual(existing, new Set([2n, 3n]));
+  assert.equal(calls.length, 1);
+  assert.match(calls[0]?.sql ?? "", /WHERE aid = ANY\(\$1::bigint\[\]\)/);
+  assert.deepEqual(calls[0]?.values, [["1", "2", "3"]]);
+});
+
+test("recommendation refresh deduplicates inputs and preserves manual-state columns", async () => {
+  const calls: QueryCall[] = [];
+  const query = {
+    async query(sql: string, values?: unknown[]) {
+      calls.push({ sql, values });
+      return { rows: [], rowCount: 1 };
+    },
+  };
+
+  const updated = await refreshProcessedVideosFromRecommendations(
+    query as unknown as Pool,
+    [
+      {
+        aid: 7n,
+        bvid: "BVold",
+        title: "old title",
+        description: "old description",
+        pic: "old pic",
+        typeId: 1,
+        userId: 2n,
+        pubdate: 3,
+      },
+      {
+        aid: 7n,
+        bvid: "BVnew",
+        title: "new title",
+        description: "new description",
+        pic: "new pic",
+        cover43: "new cover",
+        typeId: 4,
+        userId: 5n,
+        pubdate: 6,
+      },
+    ],
+  );
+
+  assert.equal(updated, 1);
+  const payload = JSON.parse(calls[0]?.values?.[0] as string) as Array<{
+    bvid: string;
+  }>;
+  assert.equal(payload.length, 1);
+  assert.equal(payload[0]?.bvid, "BVnew");
+  assert.match(
+    calls[0]?.sql ?? "",
+    /video\.title IS DISTINCT FROM incoming\.title/,
+  );
+  assert.doesNotMatch(calls[0]?.sql ?? "", /is_filtered|notes|tag_ids/);
 });
 
 test("terminal deletion persists BVID identities and sets existing state to priority -1", async () => {
@@ -292,6 +363,67 @@ test("ordinary detail writes preserve an existing cover43 when it is omitted", a
     calls[1]?.sql ?? "",
     /cover43 = COALESCE\(EXCLUDED\.cover43, processed_videos\.cover43\)/,
   );
+});
+
+test("full-detail batch writes once per database phase and keeps the final duplicate", async () => {
+  const { pool, calls } = createPool();
+
+  const written = await markVideosProcessedWithCollectionState(pool, [
+    { video: { ...video, title: "first" }, filtered: true },
+    {
+      video: {
+        ...video,
+        title: "final",
+        tagSnapshot: [
+          { tagId: 20n, tagName: "second" },
+          { tagId: 10n, tagName: "first" },
+        ],
+      },
+      filtered: true,
+    },
+  ]);
+
+  assert.equal(written, 1);
+  assert.equal(calls[0]?.sql, "BEGIN");
+  assert.match(calls[1]?.sql ?? "", /jsonb_to_recordset/);
+  assert.match(
+    calls[1]?.sql ?? "",
+    /notes = COALESCE\(EXCLUDED\.notes, video\.notes\)/,
+  );
+  const payload = JSON.parse(calls[1]?.values?.[0] as string) as Array<{
+    title: string;
+    tag_ids: string[];
+  }>;
+  assert.equal(payload.length, 1);
+  assert.equal(payload[0]?.title, "final");
+  assert.deepEqual(payload[0]?.tag_ids, ["10", "20"]);
+  assert.match(calls[2]?.sql ?? "", /INSERT INTO tags/);
+  assert.match(calls[3]?.sql ?? "", /DELETE FROM video_tags/);
+  assert.match(calls[4]?.sql ?? "", /INSERT INTO video_tags/);
+  assert.match(
+    calls[5]?.sql ?? "",
+    /fn_upsert_collection_state_from_processed_video/,
+  );
+  assert.equal(calls[6]?.sql, "COMMIT");
+});
+
+test("history upgrade records cover and compares canonical TAG IDs", async () => {
+  const queries: string[] = [];
+  const pool = {
+    async query(sql: string) {
+      queries.push(sql);
+      return { rows: [], rowCount: 0 };
+    },
+  } as unknown as Pool;
+
+  await upgradeVideoHistoryTagIdentitySchema(pool);
+
+  const schemaSql = queries.join("\n");
+  assert.match(schemaSql, /ADD COLUMN IF NOT EXISTS tag_ids BIGINT\[\]/);
+  assert.match(schemaSql, /ADD COLUMN IF NOT EXISTS cover43 VARCHAR/);
+  assert.match(schemaSql, /OLD\.tag_ids\s+IS DISTINCT FROM NEW\.tag_ids/);
+  assert.doesNotMatch(schemaSql, /OLD\.tag_new/);
+  assert.match(schemaSql, /NEW\.cover43/);
 });
 
 test("mission backfill advances through eligible AIDs in bounded batches", async () => {

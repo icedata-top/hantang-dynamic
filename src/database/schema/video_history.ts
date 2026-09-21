@@ -11,13 +11,17 @@ export async function initVideoHistorySchema(pool: Pool): Promise<void> {
       description TEXT,
       tag         TEXT,
       tag_new     VARCHAR[],
+      tag_ids     BIGINT[],
       pic         VARCHAR,
+      cover43     VARCHAR,
       is_deleted  BOOLEAN,
       is_filtered BOOLEAN,
       extras      JSONB,
       notes       JSONB
     )
   `);
+
+  await upgradeVideoHistoryTagIdentitySchema(pool);
 
   // 迁移：移除旧的自增 id（阻碍 hypertable PK 约束的根源）
   await pool.query(`
@@ -27,44 +31,6 @@ export async function initVideoHistorySchema(pool: Pool): Promise<void> {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_vh_bvid_time
     ON video_history(bvid, recorded_at DESC)
-  `);
-
-  await pool.query(`
-    CREATE OR REPLACE FUNCTION fn_video_history()
-    RETURNS TRIGGER AS $$
-    BEGIN
-      IF TG_OP = 'INSERT'
-         OR OLD.title       IS DISTINCT FROM NEW.title
-         OR OLD.description IS DISTINCT FROM NEW.description
-         OR NOT (
-              COALESCE(OLD.tag_new, '{}') @> COALESCE(NEW.tag_new, '{}')
-              AND COALESCE(OLD.tag_new, '{}') <@ COALESCE(NEW.tag_new, '{}')
-            )
-         OR OLD.pic         IS DISTINCT FROM NEW.pic
-         OR OLD.is_deleted  IS DISTINCT FROM NEW.is_deleted
-         OR OLD.is_filtered IS DISTINCT FROM NEW.is_filtered
-         OR OLD.extras      IS DISTINCT FROM NEW.extras
-         OR OLD.notes       IS DISTINCT FROM NEW.notes
-      THEN
-        INSERT INTO video_history
-          (aid, bvid, recorded_at, title, description, tag, tag_new, pic,
-           is_deleted, is_filtered, extras, notes)
-        VALUES
-          (NEW.aid, NEW.bvid, NOW(), NEW.title, NEW.description, NEW.tag, NEW.tag_new, NEW.pic,
-           NEW.is_deleted, NEW.is_filtered, NEW.extras, NEW.notes);
-      END IF;
-      RETURN NEW;
-    END;
-    $$ LANGUAGE plpgsql
-  `);
-
-  await pool.query(`
-    DROP TRIGGER IF EXISTS trg_video_history ON processed_videos
-  `);
-  await pool.query(`
-    CREATE TRIGGER trg_video_history
-    AFTER INSERT OR UPDATE ON processed_videos
-    FOR EACH ROW EXECUTE FUNCTION fn_video_history()
   `);
 
   try {
@@ -94,4 +60,57 @@ export async function initVideoHistorySchema(pool: Pool): Promise<void> {
   } catch {
     logger.debug("video_history: TimescaleDB not available, using plain table");
   }
+}
+
+/**
+ * Upgrade existing video and history rows to retain canonical TAG identities.
+ * This can be run independently of full schema initialization.
+ */
+export async function upgradeVideoHistoryTagIdentitySchema(
+  pool: Pool,
+): Promise<void> {
+  await pool.query(`
+    ALTER TABLE processed_videos
+      ADD COLUMN IF NOT EXISTS tag_ids BIGINT[]
+  `);
+  await pool.query(`
+    ALTER TABLE video_history
+      ADD COLUMN IF NOT EXISTS tag_ids BIGINT[],
+      ADD COLUMN IF NOT EXISTS cover43 VARCHAR
+  `);
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_video_history()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      IF TG_OP = 'INSERT'
+         OR OLD.title       IS DISTINCT FROM NEW.title
+         OR OLD.description IS DISTINCT FROM NEW.description
+         OR OLD.tag_ids     IS DISTINCT FROM NEW.tag_ids
+         OR OLD.pic         IS DISTINCT FROM NEW.pic
+         OR OLD.cover43     IS DISTINCT FROM NEW.cover43
+         OR OLD.is_deleted  IS DISTINCT FROM NEW.is_deleted
+         OR OLD.is_filtered IS DISTINCT FROM NEW.is_filtered
+         OR OLD.extras      IS DISTINCT FROM NEW.extras
+         OR OLD.notes       IS DISTINCT FROM NEW.notes
+      THEN
+        INSERT INTO video_history
+          (aid, bvid, recorded_at, title, description, tag, tag_new, tag_ids,
+           pic, cover43, is_deleted, is_filtered, extras, notes)
+        VALUES
+          (NEW.aid, NEW.bvid, NOW(), NEW.title, NEW.description, NEW.tag, NEW.tag_new,
+           NEW.tag_ids, NEW.pic, NEW.cover43, NEW.is_deleted, NEW.is_filtered,
+           NEW.extras, NEW.notes);
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+  await pool.query(`
+    DROP TRIGGER IF EXISTS trg_video_history ON processed_videos
+  `);
+  await pool.query(`
+    CREATE TRIGGER trg_video_history
+    AFTER INSERT OR UPDATE ON processed_videos
+    FOR EACH ROW EXECUTE FUNCTION fn_video_history()
+  `);
 }

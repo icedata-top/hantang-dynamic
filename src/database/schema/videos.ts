@@ -73,6 +73,7 @@ export async function initVideosSchema(pool: Pool): Promise<void> {
       tid_v2 INTEGER,
       dynamic TEXT,
       tag_new VARCHAR[],
+      tag_ids BIGINT[],
       participle VARCHAR[],
       ctime BIGINT,
       is_deleted BOOLEAN DEFAULT FALSE,
@@ -88,7 +89,8 @@ export async function initVideosSchema(pool: Pool): Promise<void> {
     ALTER TABLE processed_videos
       ADD COLUMN IF NOT EXISTS cover43 VARCHAR,
       ADD COLUMN IF NOT EXISTS pid_v2 INTEGER,
-      ADD COLUMN IF NOT EXISTS mission_id BIGINT
+      ADD COLUMN IF NOT EXISTS mission_id BIGINT,
+      ADD COLUMN IF NOT EXISTS tag_ids BIGINT[]
   `);
 
   await pool.query(`

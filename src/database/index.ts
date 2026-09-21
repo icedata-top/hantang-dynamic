@@ -29,9 +29,11 @@ import { logger } from "../utils/logger.js";
 
 export type {
   BvidListQuery,
+  ProcessedVideoBatchItem,
   ProcessedVideoMetadata,
   ProcessedVideoMetadataCandidate,
   ProcessedVideoMetadataSweep,
+  ProcessedVideoRecommendationRefresh,
   VideoDeletionNotes,
   VideoIdentity,
 } from "./videos.js";
@@ -115,6 +117,7 @@ import {
   type BvidListQuery,
   getAllProcessedIds,
   getBvidList,
+  getProcessedVideoAids,
   getProcessedVideoMetadataCandidates,
   getProcessedVideoMetadataUpperAid,
   getProcessedVideos,
@@ -123,9 +126,13 @@ import {
   hasProcessedVideoById,
   markVideoDeleted,
   markVideoProcessedWithCollectionState,
+  markVideosProcessedWithCollectionState,
+  type ProcessedVideoBatchItem,
   type ProcessedVideoMetadata,
   type ProcessedVideoMetadataCandidate,
   type ProcessedVideoMetadataSweep,
+  type ProcessedVideoRecommendationRefresh,
+  refreshProcessedVideosFromRecommendations,
   updateProcessedVideoMetadata,
   type VideoDeletionNotes,
   type VideoIdentity,
@@ -287,6 +294,18 @@ export class Database {
     return getAllProcessedIds(this.ensurePool(), type);
   }
 
+  public async getProcessedVideoAids(
+    aids: ReadonlyArray<bigint>,
+  ): Promise<Set<bigint>> {
+    return getProcessedVideoAids(this.ensurePool(), aids);
+  }
+
+  public async refreshProcessedVideosFromRecommendations(
+    videos: ReadonlyArray<ProcessedVideoRecommendationRefresh>,
+  ): Promise<number> {
+    return refreshProcessedVideosFromRecommendations(this.ensurePool(), videos);
+  }
+
   /**
    * Mark a video as deleted, preserving existing fields.
    * Optionally records the API error code and message in notes.
@@ -310,6 +329,27 @@ export class Database {
       this.ensurePool(),
       video,
       filtered,
+      now,
+      {
+        bootstrapPriority: config.minute.bootstrapPriority,
+        bootstrapTtlHours: config.minute.bootstrapTtlHours,
+        bootstrapLabelContentTypes: config.minute.bootstrapLabelContentTypes,
+        bootstrapLabelOrigin: config.minute.bootstrapLabelOrigin,
+        bootstrapLabelWriters: config.minute.bootstrapLabelWriters,
+        bootstrapTidV2Allowlist: config.minute.bootstrapTidV2Allowlist,
+        processedBackfillNewVideoAgeDays:
+          config.minute.processedBackfillNewVideoAgeDays,
+      },
+    );
+  }
+
+  public async markVideosProcessedWithCollectionState(
+    items: ReadonlyArray<ProcessedVideoBatchItem>,
+    now?: Date,
+  ): Promise<number> {
+    return markVideosProcessedWithCollectionState(
+      this.ensurePool(),
+      items,
       now,
       {
         bootstrapPriority: config.minute.bootstrapPriority,

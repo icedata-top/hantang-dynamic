@@ -41,9 +41,10 @@ export async function initializeSchema(
     initVideoStaticSchema(pool),
   ]);
 
+  await initVideoHistorySchema(pool);
+
   await Promise.all([
     initRecommendationsSchema(pool),
-    initVideoHistorySchema(pool),
     initUserHistorySchema(pool),
     initCollectionStateSchema(pool),
   ]);

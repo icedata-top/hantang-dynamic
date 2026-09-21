@@ -67,7 +67,9 @@ export interface VideoSnapshot {
   description: string | null;
   tag: string | null;
   tagNew: string[] | null;
+  tagIds: bigint[] | null;
   pic: string | null;
+  cover43: string | null;
   isDeleted: boolean | null;
   isFiltered: boolean | null;
   extras: Record<string, unknown> | null;
