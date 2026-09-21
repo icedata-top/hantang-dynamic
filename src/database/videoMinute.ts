@@ -1,4 +1,4 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type {
   PersistableVideoMinuteSample,
   VideoMinuteSample,
@@ -72,10 +72,11 @@ export interface VideoMinuteGateCrossing {
 export interface VideoMinuteInsertResult {
   inserted: number;
   gateCrossings: VideoMinuteGateCrossing[];
+  gateCrossingsError?: unknown;
 }
 
 async function getGateCrossingsForSamples(
-  pool: Pool,
+  pool: Pick<PoolClient, "query">,
   samples: VideoMinuteSample[],
 ): Promise<VideoMinuteGateCrossing[]> {
   const result = await pool.query<{ aid: string; gate_value: string }>(
@@ -101,21 +102,52 @@ export async function insertVideoMinuteSamplesWithGateCrossings(
 ): Promise<VideoMinuteInsertResult> {
   if (samples.length === 0) return { inserted: 0, gateCrossings: [] };
 
-  const before = await getGateCrossingsForSamples(pool, samples);
-  const result = await pool.query(
-    INSERT_VIDEO_MINUTE_SQL,
-    sampleParams(samples),
-  );
-  const previous = new Set(
-    before.map((crossing) => `${crossing.aid}:${crossing.gateValue}`),
-  );
-  const gateCrossings = (
-    await getGateCrossingsForSamples(pool, samples)
-  ).filter(
-    (crossing) => !previous.has(`${crossing.aid}:${crossing.gateValue}`),
-  );
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `SELECT aid
+       FROM video_collection_state
+       WHERE aid = ANY($1::bigint[])
+       ORDER BY aid
+       FOR UPDATE`,
+      [samples.map((sample) => sample.aid.toString())],
+    );
+    const before = await getGateCrossingsForSamples(client, samples);
+    const written = await client.query(
+      INSERT_VIDEO_MINUTE_SQL,
+      sampleParams(samples),
+    );
+    const previous = new Set(
+      before.map((crossing) => `${crossing.aid}:${crossing.gateValue}`),
+    );
 
-  return { inserted: result.rowCount ?? 0, gateCrossings };
+    let gateCrossings: VideoMinuteGateCrossing[] = [];
+    let gateCrossingsError: unknown;
+    await client.query("SAVEPOINT minute_gate_crossings");
+    try {
+      gateCrossings = (
+        await getGateCrossingsForSamples(client, samples)
+      ).filter(
+        (crossing) => !previous.has(`${crossing.aid}:${crossing.gateValue}`),
+      );
+      await client.query("RELEASE SAVEPOINT minute_gate_crossings");
+    } catch (error) {
+      gateCrossingsError = error;
+      await client.query("ROLLBACK TO SAVEPOINT minute_gate_crossings");
+    }
+    await client.query("COMMIT");
+    return {
+      inserted: written.rowCount ?? 0,
+      gateCrossings,
+      ...(gateCrossingsError === undefined ? {} : { gateCrossingsError }),
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function insertVideoMinuteSamples(

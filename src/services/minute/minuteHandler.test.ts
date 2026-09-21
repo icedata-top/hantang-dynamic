@@ -465,6 +465,100 @@ test("minute handler stop waits for queued recommendation refresh", async () => 
   assert.equal(stopped, true);
 });
 
+test("unavailable gate lookup leaves a persisted minute sample successful", async () => {
+  let collected = 0;
+  const handler = new MinuteHandler({
+    database: {
+      ...database(() => {}),
+      async insertVideoMinuteSamplesWithGateCrossings(samples) {
+        return {
+          inserted: samples.length,
+          gateCrossings: [],
+          gateCrossingsError: new Error("gate lookup failed"),
+        };
+      },
+    },
+    loadAccounts: () => [],
+    recommendationRefreshService: {
+      async collectForAids() {
+        collected += 1;
+        return {
+          errors: 0,
+          imported: 0,
+          metadataUpdated: 0,
+          snapshots: new Map(),
+        };
+      },
+    },
+    async sampleVideoStats() {
+      return [{ aid: 1n, time: new Date(), view: 1_001 }];
+    },
+  });
+
+  minuteSamplesTotal.reset();
+  await handler.processBatch([
+    { aid: 1n, lastView: null, watchLaterManagedAccountIds: [] },
+  ]);
+
+  assert.equal(collected, 0);
+  assert.deepEqual(
+    (await minuteSamplesTotal.get()).values.map(({ labels, value }) => ({
+      labels,
+      value,
+    })),
+    [{ labels: { outcome: "persisted" }, value: 1 }],
+  );
+  minuteSamplesTotal.reset();
+});
+
+test("recommendation backlog applies bounded producer backpressure and drains", async () => {
+  const first = deferred();
+  const batches: bigint[][] = [];
+  let calls = 0;
+  const handler = new MinuteHandler({
+    database: database(() => {}),
+    loadAccounts: () => [],
+    recommendationRefreshService: {
+      async collectForAids(sources) {
+        calls += 1;
+        batches.push(sources.map((source) => source.aid));
+        if (calls === 1) await first.promise;
+        return {
+          errors: 0,
+          imported: 0,
+          metadataUpdated: 0,
+          snapshots: new Map(),
+        };
+      },
+    },
+  });
+  Reflect.set(handler, "isRunning", true);
+  const enqueue = Reflect.get(handler, "enqueueRecommendationRefresh") as (
+    sources: Array<{ aid: bigint }>,
+  ) => Promise<void>;
+  let queued = false;
+  const pending = enqueue
+    .call(
+      handler,
+      Array.from({ length: 301 }, (_, index) => ({ aid: BigInt(index + 1) })),
+    )
+    .then(() => {
+      queued = true;
+    });
+
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(queued, false);
+  first.resolve();
+  await pending;
+  await handler.stop();
+
+  assert.ok(batches.every((batch) => batch.length <= 100));
+  assert.deepEqual(
+    batches.flat(),
+    Array.from({ length: 301 }, (_, index) => BigInt(index + 1)),
+  );
+});
+
 test("counts persisted samples before a later suppressed-state write fails", async () => {
   const sampledAt = new Date("2026-08-18T00:01:00.000Z");
   const db: MinuteDatabase = {

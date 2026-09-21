@@ -27,6 +27,8 @@ const MIN_SLEEP_MS = 100;
 /** Non-gate videos wait at most this long before being flushed. */
 const BATCH_TIMEOUT_MS = 30_000;
 export const WATCH_LATER_RATE_LIMIT_COOLDOWN_MS = 30 * 60_000;
+const RECOMMENDATION_REFRESH_BATCH_SIZE = 100;
+const MAX_PENDING_RECOMMENDATION_SOURCES = 200;
 
 export type MinuteDatabase = Pick<
   Database,
@@ -79,6 +81,7 @@ export class MinuteHandler {
     "collectForAids"
   >;
   private recommendationSources: RecommendationSource[] = [];
+  private readonly recommendationSpaceWaiters = new Set<() => void>();
   private recommendationRefreshPromise: Promise<void> | null = null;
   private isRunning = false;
   private loopPromise: Promise<void> | null = null;
@@ -126,6 +129,7 @@ export class MinuteHandler {
   async stop(): Promise<void> {
     this.isRunning = false;
     this.abortController?.abort();
+    this.releaseRecommendationSpaceWaiters();
     logger.info("Adaptive minute handler stopping");
     if (this.loopPromise) {
       await this.loopPromise;
@@ -140,16 +144,41 @@ export class MinuteHandler {
     logger.info("Adaptive minute handler stopped");
   }
 
-  private enqueueRecommendationRefresh(sources: RecommendationSource[]): void {
-    this.recommendationSources.push(...sources);
-    if (this.recommendationRefreshPromise) return;
-    this.recommendationRefreshPromise = this.runRecommendationRefreshes();
+  private releaseRecommendationSpaceWaiters(): void {
+    for (const resolve of this.recommendationSpaceWaiters) resolve();
+    this.recommendationSpaceWaiters.clear();
+  }
+
+  private async enqueueRecommendationRefresh(
+    sources: RecommendationSource[],
+  ): Promise<void> {
+    for (const source of sources) {
+      while (
+        this.recommendationSources.length >=
+          MAX_PENDING_RECOMMENDATION_SOURCES &&
+        this.isRunning
+      ) {
+        await new Promise<void>((resolve) =>
+          this.recommendationSpaceWaiters.add(resolve),
+        );
+      }
+      this.recommendationSources.push(source);
+      if (!this.recommendationRefreshPromise) {
+        this.recommendationRefreshPromise = Promise.resolve().then(() =>
+          this.runRecommendationRefreshes(),
+        );
+      }
+    }
   }
 
   private async runRecommendationRefreshes(): Promise<void> {
     try {
       while (this.recommendationSources.length > 0) {
-        const sources = this.recommendationSources.splice(0);
+        const sources = this.recommendationSources.splice(
+          0,
+          RECOMMENDATION_REFRESH_BATCH_SIZE,
+        );
+        this.releaseRecommendationSpaceWaiters();
         try {
           const result =
             await this.recommendationRefreshService.collectForAids(sources);
@@ -164,6 +193,7 @@ export class MinuteHandler {
       }
     } finally {
       this.recommendationRefreshPromise = null;
+      this.releaseRecommendationSpaceWaiters();
     }
   }
 
@@ -407,8 +437,14 @@ export class MinuteHandler {
           const persisted =
             await this.db.insertVideoMinuteSamplesWithGateCrossings(changed);
           minuteSamplesTotal.inc({ outcome: "persisted" }, changed.length);
+          if (persisted.gateCrossingsError !== undefined) {
+            logger.error(
+              "Minute gate crossing lookup failed:",
+              persisted.gateCrossingsError,
+            );
+          }
           if (persisted.gateCrossings.length > 0) {
-            this.enqueueRecommendationRefresh([
+            await this.enqueueRecommendationRefresh([
               ...new Map(
                 persisted.gateCrossings.map((crossing) => [
                   crossing.aid,

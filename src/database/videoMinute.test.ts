@@ -73,18 +73,30 @@ test("latest minute batch lookup returns partial rows with nullable counters", a
   assert.deepEqual(values, [["9007199254740993", "42"]]);
 });
 
-test("minute persistence returns only gate crossings created by its write", async () => {
+test("minute persistence locks affected state before attributing a new crossing", async () => {
   const queries: string[] = [];
-  let calls = 0;
-  const pool = {
+  const client = {
     async query(sql: string) {
       queries.push(sql);
-      calls += 1;
-      if (calls === 1) return { rows: [] };
-      if (calls === 2) return { rows: [], rowCount: 1 };
-      return { rows: [{ aid: "1", gate_value: "1000" }] };
+      if (sql.includes("video_collection_gate_crossings")) {
+        const reads = queries.filter((query) =>
+          query.includes("video_collection_gate_crossings"),
+        ).length;
+        return reads === 1
+          ? { rows: [] }
+          : { rows: [{ aid: "1", gate_value: "1000" }] };
+      }
+      if (sql.includes("INSERT INTO video_minute"))
+        return { rows: [], rowCount: 1 };
+      return { rows: [] };
     },
-  } as Pool;
+    release() {},
+  };
+  const pool = {
+    async connect() {
+      return client;
+    },
+  } as unknown as Pool;
 
   const result = await insertVideoMinuteSamplesWithGateCrossings(pool, [
     { aid: 1n, time: new Date("2026-08-18T00:01:00.000Z"), view: 1_001 },
@@ -94,7 +106,41 @@ test("minute persistence returns only gate crossings created by its write", asyn
     inserted: 1,
     gateCrossings: [{ aid: 1n, gateValue: 1_000n }],
   });
-  assert.match(queries[0] ?? "", /video_collection_gate_crossings/);
-  assert.match(queries[1] ?? "", /INSERT INTO video_minute/);
-  assert.match(queries[2] ?? "", /crossed_at = ANY/);
+  const lock = queries.findIndex((query) => query.includes("FOR UPDATE"));
+  const insert = queries.findIndex((query) =>
+    query.includes("INSERT INTO video_minute"),
+  );
+  assert.ok(lock >= 0 && lock < insert);
+  assert.match(queries[lock] ?? "", /ORDER BY aid/);
+  assert.ok(queries.includes("COMMIT"));
+});
+
+test("gate lookup failure commits the minute sample without a crossing callback", async () => {
+  let calls = 0;
+  const client = {
+    async query(sql: string) {
+      if (sql.includes("INSERT INTO video_minute"))
+        return { rows: [], rowCount: 1 };
+      if (sql.includes("video_collection_gate_crossings")) {
+        const reads = calls++;
+        if (reads === 1) throw new Error("gate lookup failed");
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const pool = {
+    async connect() {
+      return client;
+    },
+  } as unknown as Pool;
+
+  const result = await insertVideoMinuteSamplesWithGateCrossings(pool, [
+    { aid: 1n, time: new Date("2026-08-18T00:01:00.000Z"), view: 1_001 },
+  ]);
+
+  assert.equal(result.inserted, 1);
+  assert.deepEqual(result.gateCrossings, []);
+  assert.equal(result.gateCrossingsError instanceof Error, true);
 });
