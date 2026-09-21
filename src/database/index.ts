@@ -86,6 +86,7 @@ import {
   trackRecommendationsBatch,
 } from "./recommendations.js";
 import { initializeSchema } from "./schema/index.js";
+import { upgradeVideoHistoryTagIdentitySchema } from "./schema/video_history.js";
 import { getStats } from "./stats.js";
 import {
   cidHasAiSubtitle,
@@ -298,6 +299,11 @@ export class Database {
     aids: ReadonlyArray<bigint>,
   ): Promise<Set<bigint>> {
     return getProcessedVideoAids(this.ensurePool(), aids);
+  }
+
+  /** Apply the standalone TAG identity and cover43 history upgrade. */
+  public async upgradeVideoHistory(): Promise<void> {
+    await upgradeVideoHistoryTagIdentitySchema(this.ensurePool());
   }
 
   public async refreshProcessedVideosFromRecommendations(

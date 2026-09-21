@@ -4,50 +4,30 @@ import {
   type ProcessedVideoMetadataSweep,
 } from "../database/index.js";
 import { DetailsService } from "../services/details.service.js";
-import type {
-  BiliVideoDetailDataForProcessing,
-  BiliVideoFullDetailResponse,
-  RecommendedVideo,
-} from "../types/index.js";
+import {
+  type RecommendationDetailParser,
+  type RecommendationRefreshDatabase,
+  RecommendationRefreshService,
+} from "../services/recommendation-refresh.service.js";
+import type { BiliVideoFullDetailResponse } from "../types/index.js";
 import { logger } from "../utils/logger.js";
 
 const BATCH_SIZE = 100;
 const MAX_POSTGRES_INTEGER = 2_147_483_647;
 
-interface SourceSnapshot {
-  related: RecommendedVideo[];
-  viewCount: number | undefined;
-}
-
-interface UpdateInfoDatabase {
+interface UpdateInfoDatabase extends RecommendationRefreshDatabase {
   close(): Promise<void>;
   getProcessedVideoMetadataCandidates(
     options: ProcessedVideoMetadataSweep,
   ): Promise<Array<{ aid: bigint; bvid: string; pidV2?: number }>>;
   getProcessedVideoMetadataUpperAid(): Promise<bigint | null>;
-  hasProcessedVideoById(id: number): Promise<boolean>;
   init(): Promise<void>;
-}
-
-interface UpdateInfoDetailsService {
-  enrichRelatedVideoMetadata(related: RecommendedVideo[]): Promise<number>;
-  processFetchedVideoDetail(
-    id: number,
-    detail: BiliVideoDetailDataForProcessing,
-    options: {
-      cover43?: string;
-      enrichRelatedMetadata: boolean;
-      pidV2?: number;
-      processRecommendations: boolean;
-      processRelated: boolean;
-    },
-  ): Promise<{ video: unknown | null }>;
 }
 
 export interface UpdateInfoOptions {
   afterAid?: bigint;
   database?: UpdateInfoDatabase;
-  detailsService?: UpdateInfoDetailsService;
+  detailsService?: RecommendationDetailParser;
   fetchDetail?: (
     id: string | number,
   ) => Promise<BiliVideoFullDetailResponse | null>;
@@ -72,35 +52,9 @@ function validPidV2(value: unknown): value is number {
   );
 }
 
-function viewCount(detail: BiliVideoFullDetailResponse): number | undefined {
-  const view = detail.data.View.stat?.view;
-  return typeof view === "number" && Number.isFinite(view) ? view : undefined;
-}
-
-function isAboveViewThreshold(value: number | undefined): boolean {
-  return value !== undefined && value > 10;
-}
-
-function relatedFrom(detail: BiliVideoFullDetailResponse): RecommendedVideo[] {
-  return detail.data.Related ?? [];
-}
-
-function sourceSnapshot(detail: BiliVideoFullDetailResponse): SourceSnapshot {
-  return { related: relatedFrom(detail), viewCount: viewCount(detail) };
-}
-
-function unavailableError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    (error.message.startsWith("VIDEO_UNAVAILABLE:") ||
-      error.message.startsWith("VIDEO_DELETED:"))
-  );
-}
-
 /** Parse a comma-separated list of explicit pid_v2 values. */
 export function parsePidV2Whitelist(value: string | undefined): Set<number> {
   if (value === undefined || value.trim() === "") return new Set();
-
   const result = new Set<number>();
   for (const part of value.split(",")) {
     const trimmed = part.trim();
@@ -120,81 +74,14 @@ export function parsePidV2Whitelist(value: string | undefined): Set<number> {
   return result;
 }
 
-async function fetchOrCountUnavailable(
-  id: string | number,
-  fetchDetail: NonNullable<UpdateInfoOptions["fetchDetail"]>,
-  result: UpdateInfoResult,
-): Promise<BiliVideoFullDetailResponse | null> {
-  try {
-    const detail = await fetchDetail(id);
-    if (!detail) result.errors++;
-    return detail;
-  } catch (error) {
-    if (unavailableError(error)) {
-      result.errors++;
-      return null;
-    }
-    throw error;
-  }
-}
-
-async function admitRelatedVideos(
-  related: RecommendedVideo[],
-  context: {
-    detailsService: UpdateInfoDetailsService;
-    fetchDetail: NonNullable<UpdateInfoOptions["fetchDetail"]>;
-    importedAids: Set<number>;
-    onImportedSnapshot: (aid: number, snapshot: SourceSnapshot) => void;
-    result: UpdateInfoResult;
-    whitelist: ReadonlySet<number>;
-    database: UpdateInfoDatabase;
-  },
-): Promise<void> {
-  for (const item of related) {
-    if (!Number.isSafeInteger(item.aid) || item.aid <= 0) continue;
-    if (!validPidV2(item.pid_v2) || !context.whitelist.has(item.pid_v2)) {
-      continue;
-    }
-    if (context.importedAids.has(item.aid)) continue;
-    context.importedAids.add(item.aid);
-    if (await context.database.hasProcessedVideoById(item.aid)) continue;
-
-    const detail = await fetchOrCountUnavailable(
-      item.aid,
-      context.fetchDetail,
-      context.result,
-    );
-    if (!detail) continue;
-
-    await context.detailsService.processFetchedVideoDetail(
-      item.aid,
-      detail.data,
-      {
-        cover43:
-          typeof item.cover43 === "string" && item.cover43.length > 0
-            ? item.cover43
-            : undefined,
-        pidV2: item.pid_v2,
-        enrichRelatedMetadata: false,
-        processRecommendations: false,
-        processRelated: false,
-      },
-    );
-    context.onImportedSnapshot(item.aid, sourceSnapshot(detail));
-    context.result.imported++;
-  }
-}
-
 async function visitCandidates(
   database: UpdateInfoDatabase,
   options: Omit<ProcessedVideoMetadataSweep, "afterAid" | "limit"> & {
     afterAid?: bigint;
   },
-  visit: (candidate: {
-    aid: bigint;
-    bvid: string;
-    pidV2?: number;
-  }) => Promise<void>,
+  visit: (
+    candidates: Array<{ aid: bigint; bvid: string; pidV2?: number }>,
+  ) => Promise<void>,
 ): Promise<void> {
   let afterAid = options.afterAid ?? 0n;
   while (true) {
@@ -205,17 +92,15 @@ async function visitCandidates(
     });
     const last = page[page.length - 1];
     if (!last) return;
-    for (const candidate of page) {
-      await visit(candidate);
-    }
+    await visit(page);
     if (page.length < BATCH_SIZE) return;
     afterAid = last.aid;
   }
 }
 
 /**
- * Manually enrich metadata for the AIDs that existed when this run began.
- * The second pass follows only one A→B recommendation layer for reverse fill.
+ * Enrich only the AIDs present when this run begins. Missing pid_v2 sources
+ * receive one reverse recommendation pass; imports never recurse.
  */
 export async function runUpdateInfo(
   options: UpdateInfoOptions,
@@ -224,11 +109,12 @@ export async function runUpdateInfo(
   const detailsService = options.detailsService ?? new DetailsService();
   const fetchDetail =
     options.fetchDetail ??
-    ((id) =>
+    ((id: string | number) =>
       typeof id === "number"
         ? fetchVideoFullDetail({ aid: id })
         : fetchVideoFullDetail({ bvid: id }));
-  const progress = options.onProgress ?? ((message) => logger.info(message));
+  const progress =
+    options.onProgress ?? ((message: string) => logger.info(message));
   const result: UpdateInfoResult = {
     errors: 0,
     imported: 0,
@@ -236,8 +122,6 @@ export async function runUpdateInfo(
     scanned: 0,
     unresolved: 0,
   };
-  const importedAids = new Set<number>();
-  const snapshots = new Map<bigint, SourceSnapshot>();
 
   await database.init();
   try {
@@ -247,92 +131,69 @@ export async function runUpdateInfo(
       progress("Update-info complete: no processed videos.");
       return result;
     }
-    const originalSweep = {
+    const sweep = {
       createdBefore,
       throughAid,
-      ...(options.afterAid !== undefined ? { afterAid: options.afterAid } : {}),
+      ...(options.afterAid === undefined ? {} : { afterAid: options.afterAid }),
     };
-    const seenBridges = new Set<bigint>();
-    const highViewSources = new Set<bigint>();
+    const collector = new RecommendationRefreshService({
+      database,
+      detailsService,
+      fetchDetail,
+      pidV2Whitelist: options.pidV2Whitelist,
+    });
+
     await visitCandidates(
       database,
-      { ...originalSweep, onlyMissingPidV2: false },
-      async (source) => {
-        result.scanned++;
+      { ...sweep, onlyMissingPidV2: false },
+      async (sources) => {
+        result.scanned += sources.length;
         progress(
-          `Update-info source aid=${source.aid}, scanned=${result.scanned}`,
+          `Update-info source aid=${sources[0]?.aid}, scanned=${result.scanned}`,
         );
-        const detail = await fetchOrCountUnavailable(
-          source.bvid || Number(source.aid),
-          fetchDetail,
-          result,
-        );
-        if (!detail) return;
-        const snapshot = sourceSnapshot(detail);
-        snapshots.set(source.aid, snapshot);
-        if (!isAboveViewThreshold(snapshot.viewCount)) return;
-        result.metadataUpdated +=
-          await detailsService.enrichRelatedVideoMetadata(snapshot.related);
-        await admitRelatedVideos(snapshot.related, {
-          database,
-          detailsService,
-          fetchDetail,
-          importedAids,
-          onImportedSnapshot: (aid, imported) =>
-            snapshots.set(BigInt(aid), imported),
-          result,
-          whitelist: options.pidV2Whitelist,
-        });
+        const collected = await collector.collectForAids(sources);
+        result.errors += collected.errors;
+        result.imported += collected.imported;
+        result.metadataUpdated += collected.metadataUpdated;
       },
     );
 
     await visitCandidates(
       database,
-      { ...originalSweep, onlyMissingPidV2: true },
-      async (source) => {
-        const snapshot = snapshots.get(source.aid);
-        if (!snapshot || !isAboveViewThreshold(snapshot.viewCount)) return;
-        highViewSources.add(source.aid);
-        for (const bridge of snapshot.related) {
-          if (!Number.isSafeInteger(bridge.aid) || bridge.aid <= 0) continue;
-          const bridgeAid = BigInt(bridge.aid);
-          if (seenBridges.has(bridgeAid)) continue;
-          seenBridges.add(bridgeAid);
-          let bridgeSnapshot = snapshots.get(bridgeAid);
-          if (!bridgeSnapshot) {
-            const detail = await fetchOrCountUnavailable(
-              bridge.aid,
-              fetchDetail,
-              result,
-            );
-            if (!detail) continue;
-            bridgeSnapshot = sourceSnapshot(detail);
-            snapshots.set(bridgeAid, bridgeSnapshot);
-          }
-          if (!isAboveViewThreshold(bridgeSnapshot.viewCount)) continue;
-          result.metadataUpdated +=
-            await detailsService.enrichRelatedVideoMetadata(
-              bridgeSnapshot.related,
-            );
-          await admitRelatedVideos(bridgeSnapshot.related, {
-            database,
-            detailsService,
-            fetchDetail,
-            importedAids,
-            onImportedSnapshot: (aid, imported) =>
-              snapshots.set(BigInt(aid), imported),
-            result,
-            whitelist: options.pidV2Whitelist,
-          });
+      { ...sweep, onlyMissingPidV2: true },
+      async (sources) => {
+        const collected = await collector.collectForAids(sources);
+        result.errors += collected.errors;
+        result.imported += collected.imported;
+        result.metadataUpdated += collected.metadataUpdated;
+        const bridges = [
+          ...new Map(
+            [...collected.snapshots.values()].flatMap((source) =>
+              (source.viewCount ?? 0) > 10
+                ? source.related
+                    .filter(
+                      (item) => Number.isSafeInteger(item.aid) && item.aid > 0,
+                    )
+                    .map(
+                      (item) =>
+                        [
+                          BigInt(item.aid),
+                          { aid: BigInt(item.aid), bvid: item.bvid },
+                        ] as const,
+                    )
+                : [],
+            ),
+          ).values(),
+        ];
+        if (bridges.length === 0) return;
+        const bridgeCollected = await collector.collectForAids(bridges);
+        result.errors += bridgeCollected.errors;
+        result.imported += bridgeCollected.imported;
+        result.metadataUpdated += bridgeCollected.metadataUpdated;
+        for (const source of collected.snapshots.values()) {
+          if ((source.viewCount ?? 0) > 10 && source.related.length > 0)
+            result.unresolved++;
         }
-      },
-    );
-
-    await visitCandidates(
-      database,
-      { ...originalSweep, onlyMissingPidV2: true },
-      async (source) => {
-        if (highViewSources.has(source.aid)) result.unresolved++;
       },
     );
     progress(

@@ -102,7 +102,7 @@ async function main() {
     );
     const whitelistValue =
       updateInfoWhitelistArgument(args) ??
-      process.env.UPDATE_INFO_PID_V2_WHITELIST;
+      config.processing.filtering.pidV2Whitelist.join(",");
     await runUpdateInfo({
       pidV2Whitelist: parsePidV2Whitelist(whitelistValue),
     });
@@ -119,6 +119,16 @@ async function main() {
     await db.init(config.database.url, { initializeSchema: true });
     await db.close();
     logger.info("Database schema initialization complete");
+    return;
+  }
+
+  if (args.includes("--upgrade-video-history")) {
+    logger.info("Upgrading video history TAG identity schema");
+    const db = Database.getInstance();
+    await db.init();
+    await db.upgradeVideoHistory();
+    await db.close();
+    logger.info("Video history schema upgrade complete");
     return;
   }
 
