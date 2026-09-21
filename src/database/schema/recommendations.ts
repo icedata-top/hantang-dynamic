@@ -47,8 +47,6 @@ export async function initRecommendationsSchema(pool: Pool): Promise<void> {
     END $$
   `);
 
-  await pool.query(`DROP INDEX IF EXISTS idx_rec_video`);
-
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_rec_count
     ON recommendations(recommend_count DESC)

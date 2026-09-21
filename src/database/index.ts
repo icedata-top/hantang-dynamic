@@ -29,6 +29,7 @@ import { logger } from "../utils/logger.js";
 
 export type {
   BvidListQuery,
+  ProcessedVideoMetadata,
   VideoDeletionNotes,
   VideoIdentity,
 } from "./videos.js";
@@ -118,7 +119,8 @@ import {
   hasProcessedVideoById,
   markVideoDeleted,
   markVideoProcessedWithCollectionState,
-  updateProcessedVideoPidV2,
+  type ProcessedVideoMetadata,
+  updateProcessedVideoMetadata,
   type VideoDeletionNotes,
   type VideoIdentity,
 } from "./videos.js";
@@ -316,10 +318,10 @@ export class Database {
     );
   }
 
-  public async updateProcessedVideoPidV2(
-    metadata: ReadonlyArray<{ aid: bigint; pidV2: number }>,
+  public async updateProcessedVideoMetadata(
+    metadata: ReadonlyArray<ProcessedVideoMetadata>,
   ): Promise<number> {
-    return updateProcessedVideoPidV2(this.ensurePool(), metadata);
+    return updateProcessedVideoMetadata(this.ensurePool(), metadata);
   }
 
   /**

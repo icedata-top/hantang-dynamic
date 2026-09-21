@@ -246,6 +246,7 @@ async function processRelatedQueue(
         item.dynamic,
         {
           pidV2: item.pidV2,
+          cover43: item.cover43,
           processRecommendations,
           processRelated: depth < maxDepth,
           skipCacheCheck: true,

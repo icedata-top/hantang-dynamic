@@ -232,6 +232,7 @@ export class DynamicTracker {
           const { video, relatedVideos } =
             await this.detailsService.processVideo(workItem.dynamic, {
               pidV2: workItem.pidV2,
+              cover43: workItem.cover43,
               processRecommendations: recordRelatedEdges,
               processRelated: expandRelated,
             });

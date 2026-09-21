@@ -18,6 +18,7 @@ import type { RateLimiter } from "../utils/rateLimiter";
 
 interface VideoProcessingOptions {
   pidV2?: number;
+  cover43?: string;
   processRecommendations?: boolean;
   processRelated?: boolean;
   skipCacheCheck?: boolean;
@@ -26,6 +27,7 @@ interface VideoProcessingOptions {
 export interface RelatedVideoWorkItem {
   dynamic: BiliDynamicCard;
   pidV2?: number;
+  cover43?: string;
 }
 
 const MAX_POSTGRES_INTEGER = 2_147_483_647;
@@ -167,6 +169,7 @@ export class DetailsService {
       storeOwner?: boolean;
       skipCacheCheck?: boolean;
       pidV2?: number;
+      cover43?: string;
     } = {},
   ): Promise<{
     video: VideoData | null;
@@ -178,6 +181,7 @@ export class DetailsService {
       storeOwner = true,
       skipCacheCheck = false,
       pidV2,
+      cover43,
     } = options;
 
     const identity = this.toVideoIdentity(id);
@@ -222,6 +226,9 @@ export class DetailsService {
 
       if (validPidV2(pidV2)) {
         videoData.pid_v2 = pidV2;
+      }
+      if (typeof cover43 === "string" && cover43.length > 0) {
+        videoData.cover43 = cover43;
       }
 
       // Re-check cache using the true BVID from response (useful if we started with AID)
@@ -449,14 +456,7 @@ export class DetailsService {
   }> {
     const filtered = await filterVideo(videoData);
 
-    const relatedPidV2 = relatedVideos.flatMap((video) =>
-      validPidV2(video.pid_v2)
-        ? [{ aid: BigInt(video.aid), pidV2: video.pid_v2 }]
-        : [],
-    );
-    if (relatedPidV2.length > 0) {
-      await this.db.updateProcessedVideoPidV2(relatedPidV2);
-    }
+    await this.enrichRelatedVideoMetadata(relatedVideos);
 
     if (options.processRecommendations && relatedVideos.length > 0) {
       const recommendations = this.buildRecommendationInputs(
@@ -480,6 +480,22 @@ export class DetailsService {
       : [];
 
     return { video: filtered, relatedVideos: relatedDynamics };
+  }
+
+  async enrichRelatedVideoMetadata(
+    relatedVideos: RecommendedVideo[],
+  ): Promise<number> {
+    const metadata = relatedVideos.flatMap((video) => {
+      const pidV2 = validPidV2(video.pid_v2) ? video.pid_v2 : undefined;
+      const cover43 =
+        typeof video.cover43 === "string" && video.cover43.length > 0
+          ? video.cover43
+          : undefined;
+      return pidV2 !== undefined || cover43 !== undefined
+        ? [{ aid: BigInt(video.aid), pidV2, cover43 }]
+        : [];
+    });
+    return this.db.updateProcessedVideoMetadata(metadata);
   }
 
   private async handleVideoProcessingError(
@@ -713,6 +729,9 @@ export class DetailsService {
         }),
       } as unknown as BiliDynamicCard,
       ...(validPidV2(video.pid_v2) ? { pidV2: video.pid_v2 } : {}),
+      ...(typeof video.cover43 === "string" && video.cover43.length > 0
+        ? { cover43: video.cover43 }
+        : {}),
     }));
   }
 

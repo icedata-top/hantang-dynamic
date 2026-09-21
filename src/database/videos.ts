@@ -88,19 +88,20 @@ export async function markVideoProcessed(
     INSERT INTO processed_videos 
       (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id, is_filtered, 
        staff, tid_v2, dynamic, tag_new, participle, ctime, is_deleted, copyright,
-       pid_v2, mission_id, extras, notes, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 
-            $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, NOW())
+       pid_v2, mission_id, extras, notes, cover43, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+            $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, NOW())
     ON CONFLICT (bvid) DO UPDATE SET
       aid = EXCLUDED.aid,
       pubdate = EXCLUDED.pubdate,
       title = EXCLUDED.title,
       description = EXCLUDED.description,
       tag = CASE
-        WHEN $23::boolean THEN EXCLUDED.tag
+        WHEN $24::boolean THEN EXCLUDED.tag
         ELSE processed_videos.tag
       END,
       pic = EXCLUDED.pic,
+      cover43 = COALESCE(EXCLUDED.cover43, processed_videos.cover43),
       type_id = EXCLUDED.type_id,
       user_id = EXCLUDED.user_id,
       is_filtered = EXCLUDED.is_filtered,
@@ -108,7 +109,7 @@ export async function markVideoProcessed(
       tid_v2 = EXCLUDED.tid_v2,
       dynamic = EXCLUDED.dynamic,
       tag_new = CASE
-        WHEN $23::boolean THEN EXCLUDED.tag_new
+        WHEN $24::boolean THEN EXCLUDED.tag_new
         ELSE processed_videos.tag_new
       END,
       participle = EXCLUDED.participle,
@@ -144,6 +145,7 @@ export async function markVideoProcessed(
       video.mission_id?.toString() ?? null,
       video.extras ? JSON.stringify(video.extras) : null,
       video.notes ? JSON.stringify(video.notes) : null,
+      video.cover43 && video.cover43.length > 0 ? video.cover43 : null,
       video.tagSnapshot !== undefined,
     ],
   );
@@ -175,26 +177,60 @@ export async function markVideoProcessed(
   }
 }
 
-export async function updateProcessedVideoPidV2(
+export interface ProcessedVideoMetadata {
+  aid: bigint;
+  pidV2?: number;
+  cover43?: string;
+}
+
+/**
+ * Update supplemental metadata for existing processed videos in one set-based query.
+ */
+export async function updateProcessedVideoMetadata(
   pool: DatabaseQuery,
-  metadata: ReadonlyArray<{ aid: bigint; pidV2: number }>,
+  metadata: ReadonlyArray<ProcessedVideoMetadata>,
 ): Promise<number> {
-  if (metadata.length === 0) return 0;
+  const byAid = new Map<bigint, ProcessedVideoMetadata>();
+  for (const item of metadata) {
+    const existing = byAid.get(item.aid);
+    byAid.set(item.aid, {
+      aid: item.aid,
+      ...(existing?.pidV2 !== undefined ? { pidV2: existing.pidV2 } : {}),
+      ...(existing?.cover43 !== undefined ? { cover43: existing.cover43 } : {}),
+      ...(item.pidV2 !== undefined ? { pidV2: item.pidV2 } : {}),
+      ...(item.cover43 !== undefined && item.cover43.length > 0
+        ? { cover43: item.cover43 }
+        : {}),
+    });
+  }
+
+  const entries = [...byAid.values()].filter(
+    (item) => item.pidV2 !== undefined || item.cover43 !== undefined,
+  );
+  if (entries.length === 0) return 0;
+
   const result = await pool.query(
-    `WITH metadata(aid, pid_v2) AS (
+    `WITH metadata(aid, pid_v2, cover43) AS (
        SELECT *
-       FROM unnest($1::bigint[], $2::integer[])
+       FROM unnest($1::bigint[], $2::integer[], $3::varchar[])
      )
      UPDATE processed_videos AS video
-     SET pid_v2 = metadata.pid_v2,
+     SET pid_v2 = COALESCE(metadata.pid_v2, video.pid_v2),
+         cover43 = COALESCE(metadata.cover43, video.cover43),
          updated_at = NOW()
      FROM metadata
      WHERE video.aid = metadata.aid
        AND video.aid = ANY($1::bigint[])
-       AND video.pid_v2 IS DISTINCT FROM metadata.pid_v2`,
+       AND (
+         metadata.pid_v2 IS NOT NULL
+         AND video.pid_v2 IS DISTINCT FROM metadata.pid_v2
+         OR metadata.cover43 IS NOT NULL
+         AND video.cover43 IS DISTINCT FROM metadata.cover43
+       )`,
     [
-      metadata.map((item) => item.aid.toString()),
-      metadata.map((item) => item.pidV2),
+      entries.map((item) => item.aid.toString()),
+      entries.map((item) => item.pidV2 ?? null),
+      entries.map((item) => item.cover43 ?? null),
     ],
   );
   return result.rowCount ?? 0;
@@ -266,6 +302,7 @@ export async function getProcessedVideos(
     description: row.description as string,
     tag: row.tag as string,
     pic: row.pic as string,
+    cover43: row.cover43 as string | undefined,
     type_id: row.type_id as number,
     user_id: BigInt(row.user_id),
     staff: row.staff ? row.staff.map((s: string) => BigInt(s)) : undefined,
