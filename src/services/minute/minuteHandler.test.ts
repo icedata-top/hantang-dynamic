@@ -43,6 +43,18 @@ function database(onSelect: () => void): MinuteDatabase {
     async insertVideoMinuteSamples() {
       return 0;
     },
+    async insertVideoMinuteSamplesWithGateCrossings() {
+      return { inserted: 0, gateCrossings: [] };
+    },
+    async getProcessedVideoAids() {
+      return new Set();
+    },
+    async markVideosProcessedWithCollectionState() {
+      return 0;
+    },
+    async refreshProcessedVideosFromRecommendations() {
+      return 0;
+    },
     async selectDueMinuteVideos() {
       onSelect();
       return [];
@@ -285,9 +297,9 @@ test("partial favorite samples persist initially and advance suppressed observat
         ],
       ]);
     },
-    async insertVideoMinuteSamples(samples) {
+    async insertVideoMinuteSamplesWithGateCrossings(samples) {
       insertedAids.push(...samples.map((sample) => sample.aid));
-      return samples.length;
+      return { inserted: samples.length, gateCrossings: [] };
     },
     async advanceSuppressedMinuteSamples(samples) {
       suppressedSamples.push(...samples);
@@ -336,6 +348,123 @@ test("partial favorite samples persist initially and advance suppressed observat
   minuteSamplesTotal.reset();
 });
 
+test("new persisted gate crossings queue one recommendation source per video", async () => {
+  const collected: bigint[][] = [];
+  const handler = new MinuteHandler({
+    database: {
+      ...database(() => {}),
+      async insertVideoMinuteSamplesWithGateCrossings(samples) {
+        return {
+          inserted: samples.length,
+          gateCrossings: [
+            { aid: 1n, gateValue: 1_000n },
+            { aid: 1n, gateValue: 2_000n },
+            { aid: 2n, gateValue: 10_000n },
+          ],
+        };
+      },
+    },
+    loadAccounts: () => [],
+    recommendationRefreshService: {
+      async collectForAids(sources) {
+        collected.push(sources.map((source) => source.aid));
+        return {
+          errors: 0,
+          imported: 0,
+          metadataUpdated: 0,
+          snapshots: new Map(),
+        };
+      },
+    },
+    async sampleVideoStats() {
+      return [
+        { aid: 1n, time: new Date("2026-08-18T00:01:00.000Z"), view: 1_100 },
+        { aid: 2n, time: new Date("2026-08-18T00:01:00.000Z"), view: 10_100 },
+      ];
+    },
+  });
+
+  await handler.processBatch([
+    { aid: 1n, lastView: null, watchLaterManagedAccountIds: [] },
+    { aid: 2n, lastView: null, watchLaterManagedAccountIds: [] },
+  ]);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(collected, [[1n, 2n]]);
+});
+
+test("recommendation refresh failure does not fail a persisted minute sample", async () => {
+  const handler = new MinuteHandler({
+    database: {
+      ...database(() => {}),
+      async insertVideoMinuteSamplesWithGateCrossings(samples) {
+        return {
+          inserted: samples.length,
+          gateCrossings: [{ aid: 1n, gateValue: 1_000n }],
+        };
+      },
+    },
+    loadAccounts: () => [],
+    recommendationRefreshService: {
+      async collectForAids() {
+        throw new Error("recommendation request failed");
+      },
+    },
+    async sampleVideoStats() {
+      return [{ aid: 1n, time: new Date(), view: 1_001 }];
+    },
+  });
+
+  minuteSamplesTotal.reset();
+  await handler.processBatch([
+    { aid: 1n, lastView: null, watchLaterManagedAccountIds: [] },
+  ]);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(
+    (await minuteSamplesTotal.get()).values.map(({ labels, value }) => ({
+      labels,
+      value,
+    })),
+    [{ labels: { outcome: "persisted" }, value: 1 }],
+  );
+  minuteSamplesTotal.reset();
+});
+
+test("minute handler stop waits for queued recommendation refresh", async () => {
+  const refresh = deferred();
+  const handler = new MinuteHandler({
+    database: database(() => {}),
+    loadAccounts: () => [],
+    recommendationRefreshService: {
+      async collectForAids() {
+        await refresh.promise;
+        return {
+          errors: 0,
+          imported: 0,
+          metadataUpdated: 0,
+          snapshots: new Map(),
+        };
+      },
+    },
+  });
+  const enqueue = Reflect.get(handler, "enqueueRecommendationRefresh") as (
+    sources: Array<{ aid: bigint }>,
+  ) => void;
+  enqueue.call(handler, [{ aid: 1n }]);
+  handler.start();
+
+  let stopped = false;
+  const stopping = handler.stop().then(() => {
+    stopped = true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(stopped, false);
+  refresh.resolve();
+  await stopping;
+  assert.equal(stopped, true);
+});
+
 test("counts persisted samples before a later suppressed-state write fails", async () => {
   const sampledAt = new Date("2026-08-18T00:01:00.000Z");
   const db: MinuteDatabase = {
@@ -353,12 +482,12 @@ test("counts persisted samples before a later suppressed-state write fails", asy
         ],
       ]);
     },
-    async insertVideoMinuteSamples(samples) {
+    async insertVideoMinuteSamplesWithGateCrossings(samples) {
       assert.deepEqual(
         samples.map((sample) => sample.aid),
         [1n],
       );
-      return samples.length;
+      return { inserted: samples.length, gateCrossings: [] };
     },
     async advanceSuppressedMinuteSamples() {
       throw new Error("suppressed state write failed");

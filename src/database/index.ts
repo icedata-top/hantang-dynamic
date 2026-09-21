@@ -113,6 +113,8 @@ import { getDailyCollectionCandidates } from "./videoDaily.js";
 import {
   getLatestVideoMinuteSamples,
   insertVideoMinuteSamples,
+  insertVideoMinuteSamplesWithGateCrossings,
+  type VideoMinuteInsertResult,
 } from "./videoMinute.js";
 import {
   type BvidListQuery,
@@ -639,6 +641,15 @@ export class Database {
     samples: VideoMinuteSample[],
   ): Promise<number> {
     return insertVideoMinuteSamples(this.ensurePool(), samples);
+  }
+
+  public async insertVideoMinuteSamplesWithGateCrossings(
+    samples: VideoMinuteSample[],
+  ): Promise<VideoMinuteInsertResult> {
+    return insertVideoMinuteSamplesWithGateCrossings(
+      this.ensurePool(),
+      samples,
+    );
   }
 
   public async getLatestVideoMinuteSamples(

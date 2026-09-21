@@ -4,6 +4,7 @@ import type { Pool } from "pg";
 import {
   getLatestVideoMinuteSamples,
   insertVideoMinuteSamples,
+  insertVideoMinuteSamplesWithGateCrossings,
 } from "./videoMinute";
 
 test("late minute observations remain insertable as history", async () => {
@@ -70,4 +71,30 @@ test("latest minute batch lookup returns partial rows with nullable counters", a
   assert.match(query, /WHERE aid = ANY\(\$1::bigint\[\]\)/);
   assert.doesNotMatch(query, /favorite IS NOT NULL/);
   assert.deepEqual(values, [["9007199254740993", "42"]]);
+});
+
+test("minute persistence returns only gate crossings created by its write", async () => {
+  const queries: string[] = [];
+  let calls = 0;
+  const pool = {
+    async query(sql: string) {
+      queries.push(sql);
+      calls += 1;
+      if (calls === 1) return { rows: [] };
+      if (calls === 2) return { rows: [], rowCount: 1 };
+      return { rows: [{ aid: "1", gate_value: "1000" }] };
+    },
+  } as Pool;
+
+  const result = await insertVideoMinuteSamplesWithGateCrossings(pool, [
+    { aid: 1n, time: new Date("2026-08-18T00:01:00.000Z"), view: 1_001 },
+  ]);
+
+  assert.deepEqual(result, {
+    inserted: 1,
+    gateCrossings: [{ aid: 1n, gateValue: 1_000n }],
+  });
+  assert.match(queries[0] ?? "", /video_collection_gate_crossings/);
+  assert.match(queries[1] ?? "", /INSERT INTO video_minute/);
+  assert.match(queries[2] ?? "", /crossed_at = ANY/);
 });

@@ -64,17 +64,69 @@ function sampleParams(samples: VideoMinuteSample[]): unknown[] {
   ];
 }
 
+export interface VideoMinuteGateCrossing {
+  aid: bigint;
+  gateValue: bigint;
+}
+
+export interface VideoMinuteInsertResult {
+  inserted: number;
+  gateCrossings: VideoMinuteGateCrossing[];
+}
+
+async function getGateCrossingsForSamples(
+  pool: Pool,
+  samples: VideoMinuteSample[],
+): Promise<VideoMinuteGateCrossing[]> {
+  const result = await pool.query<{ aid: string; gate_value: string }>(
+    `SELECT aid, gate_value
+     FROM video_collection_gate_crossings
+     WHERE aid = ANY($1::bigint[])
+       AND crossed_at = ANY($2::timestamptz[])`,
+    [
+      samples.map((sample) => sample.aid.toString()),
+      samples.map((sample) => sample.time),
+    ],
+  );
+  return result.rows.map((row) => ({
+    aid: BigInt(row.aid),
+    gateValue: BigInt(row.gate_value),
+  }));
+}
+
+/** Persist samples and return gate crossings created by this write. */
+export async function insertVideoMinuteSamplesWithGateCrossings(
+  pool: Pool,
+  samples: VideoMinuteSample[],
+): Promise<VideoMinuteInsertResult> {
+  if (samples.length === 0) return { inserted: 0, gateCrossings: [] };
+
+  const before = await getGateCrossingsForSamples(pool, samples);
+  const result = await pool.query(
+    INSERT_VIDEO_MINUTE_SQL,
+    sampleParams(samples),
+  );
+  const previous = new Set(
+    before.map((crossing) => `${crossing.aid}:${crossing.gateValue}`),
+  );
+  const gateCrossings = (
+    await getGateCrossingsForSamples(pool, samples)
+  ).filter(
+    (crossing) => !previous.has(`${crossing.aid}:${crossing.gateValue}`),
+  );
+
+  return { inserted: result.rowCount ?? 0, gateCrossings };
+}
+
 export async function insertVideoMinuteSamples(
   pool: Pool,
   samples: VideoMinuteSample[],
 ): Promise<number> {
   if (samples.length === 0) return 0;
-
   const result = await pool.query(
     INSERT_VIDEO_MINUTE_SQL,
     sampleParams(samples),
   );
-
   return result.rowCount ?? 0;
 }
 

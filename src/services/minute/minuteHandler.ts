@@ -1,3 +1,4 @@
+import { fetchVideoFullDetail } from "../../api/video";
 import { config } from "../../config";
 import { loadAccounts } from "../../core/account";
 import { Database } from "../../database";
@@ -11,6 +12,11 @@ import type {
   VideoMinuteSample,
 } from "../../types/models/minute";
 import { logger } from "../../utils/logger";
+import { DetailsService } from "../details.service";
+import {
+  RecommendationRefreshService,
+  type RecommendationSource,
+} from "../recommendation-refresh.service";
 import { batchSampleVideoStats } from "./batchSampleVideoStats";
 import { isPersistableVideoMinuteSample } from "./completeSample";
 import { shouldPersistMinuteSample } from "./persistencePolicy";
@@ -31,6 +37,10 @@ export type MinuteDatabase = Pick<
   | "getLatestVideoMinuteSamples"
   | "getNextMinuteDueAt"
   | "insertVideoMinuteSamples"
+  | "insertVideoMinuteSamplesWithGateCrossings"
+  | "getProcessedVideoAids"
+  | "markVideosProcessedWithCollectionState"
+  | "refreshProcessedVideosFromRecommendations"
   | "selectDueMinuteVideos"
 >;
 
@@ -39,6 +49,10 @@ export interface MinuteHandlerDependencies {
   loadAccounts?: typeof loadAccounts;
   sampleVideoStats?: typeof batchSampleVideoStats;
   runWatchLaterManagement?: typeof runAutomaticWatchLaterManagement;
+  recommendationRefreshService?: Pick<
+    RecommendationRefreshService,
+    "collectForAids"
+  >;
 }
 
 function cancellableSleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -60,6 +74,12 @@ export class MinuteHandler {
   private readonly accounts: typeof loadAccounts;
   private readonly sampleVideoStats: typeof batchSampleVideoStats;
   private readonly runWatchLaterManagement: typeof runAutomaticWatchLaterManagement;
+  private readonly recommendationRefreshService: Pick<
+    RecommendationRefreshService,
+    "collectForAids"
+  >;
+  private recommendationSources: RecommendationSource[] = [];
+  private recommendationRefreshPromise: Promise<void> | null = null;
   private isRunning = false;
   private loopPromise: Promise<void> | null = null;
   private abortController: AbortController | null = null;
@@ -78,6 +98,17 @@ export class MinuteHandler {
       dependencies.sampleVideoStats ?? batchSampleVideoStats;
     this.runWatchLaterManagement =
       dependencies.runWatchLaterManagement ?? runAutomaticWatchLaterManagement;
+    this.recommendationRefreshService =
+      dependencies.recommendationRefreshService ??
+      new RecommendationRefreshService({
+        database: this.db,
+        detailsService: new DetailsService(),
+        fetchDetail: (id) =>
+          typeof id === "number"
+            ? fetchVideoFullDetail({ aid: id })
+            : fetchVideoFullDetail({ bvid: id }),
+        pidV2Whitelist: new Set(config.processing.filtering.pidV2Whitelist),
+      });
   }
 
   start(): void {
@@ -102,8 +133,38 @@ export class MinuteHandler {
     if (this.watchLaterManagementPromise) {
       await this.watchLaterManagementPromise;
     }
+    if (this.recommendationRefreshPromise) {
+      await this.recommendationRefreshPromise;
+    }
     this.abortController = null;
     logger.info("Adaptive minute handler stopped");
+  }
+
+  private enqueueRecommendationRefresh(sources: RecommendationSource[]): void {
+    this.recommendationSources.push(...sources);
+    if (this.recommendationRefreshPromise) return;
+    this.recommendationRefreshPromise = this.runRecommendationRefreshes();
+  }
+
+  private async runRecommendationRefreshes(): Promise<void> {
+    try {
+      while (this.recommendationSources.length > 0) {
+        const sources = this.recommendationSources.splice(0);
+        try {
+          const result =
+            await this.recommendationRefreshService.collectForAids(sources);
+          if (result.errors > 0) {
+            logger.warn(
+              `Recommendation refresh had ${result.errors} unavailable source(s)`,
+            );
+          }
+        } catch (error) {
+          logger.error("Recommendation refresh failed:", error);
+        }
+      }
+    } finally {
+      this.recommendationRefreshPromise = null;
+    }
   }
 
   /**
@@ -343,8 +404,19 @@ export class MinuteHandler {
 
       if (changed.length > 0) {
         try {
-          await this.db.insertVideoMinuteSamples(changed);
+          const persisted =
+            await this.db.insertVideoMinuteSamplesWithGateCrossings(changed);
           minuteSamplesTotal.inc({ outcome: "persisted" }, changed.length);
+          if (persisted.gateCrossings.length > 0) {
+            this.enqueueRecommendationRefresh([
+              ...new Map(
+                persisted.gateCrossings.map((crossing) => [
+                  crossing.aid,
+                  { aid: crossing.aid },
+                ]),
+              ).values(),
+            ]);
+          }
         } catch (error) {
           logger.error("Minute sample write failed:", error);
           minuteSamplesTotal.inc({ outcome: "failed" }, aids.length);
