@@ -24,14 +24,15 @@ export interface VideoDeletionNotes {
 
 export interface ProcessedVideoRecommendationRefresh {
   aid: bigint;
-  bvid: string;
-  title: string;
-  description: string;
-  pic: string;
+  bvid?: string;
+  title?: string;
+  description?: string;
+  pic?: string;
   cover43?: string;
-  typeId: number;
-  userId: bigint;
-  pubdate: number;
+  typeId?: number;
+  userId?: bigint;
+  pubdate?: number;
+  pidV2?: number;
 }
 
 export interface ProcessedVideoBatchItem {
@@ -143,45 +144,54 @@ export async function refreshProcessedVideosFromRecommendations(
        SELECT *
        FROM jsonb_to_recordset($1::jsonb) AS input(
          aid bigint, bvid varchar, title varchar, description text, pic varchar,
-         cover43 varchar, type_id integer, user_id bigint, pubdate bigint
+         cover43 varchar, type_id integer, user_id bigint, pubdate bigint,
+         pid_v2 integer
        )
      )
      UPDATE processed_videos AS video
-     SET bvid = incoming.bvid,
-         title = incoming.title,
-         description = incoming.description,
-         pic = incoming.pic,
+     SET bvid = COALESCE(incoming.bvid, video.bvid),
+         title = COALESCE(incoming.title, video.title),
+         description = COALESCE(incoming.description, video.description),
+         pic = COALESCE(incoming.pic, video.pic),
          cover43 = COALESCE(incoming.cover43, video.cover43),
-         type_id = incoming.type_id,
-         user_id = incoming.user_id,
-         pubdate = incoming.pubdate,
+         type_id = COALESCE(incoming.type_id, video.type_id),
+         user_id = COALESCE(incoming.user_id, video.user_id),
+         pubdate = COALESCE(incoming.pubdate, video.pubdate),
+         pid_v2 = COALESCE(incoming.pid_v2, video.pid_v2),
          updated_at = NOW()
      FROM incoming
      WHERE video.aid = incoming.aid
        AND (
-         video.bvid IS DISTINCT FROM incoming.bvid
-         OR video.title IS DISTINCT FROM incoming.title
-         OR video.description IS DISTINCT FROM incoming.description
-         OR video.pic IS DISTINCT FROM incoming.pic
+         video.bvid IS DISTINCT FROM COALESCE(incoming.bvid, video.bvid)
+         OR video.title IS DISTINCT FROM COALESCE(incoming.title, video.title)
+         OR video.description IS DISTINCT FROM COALESCE(incoming.description, video.description)
+         OR video.pic IS DISTINCT FROM COALESCE(incoming.pic, video.pic)
          OR (incoming.cover43 IS NOT NULL
              AND video.cover43 IS DISTINCT FROM incoming.cover43)
-         OR video.type_id IS DISTINCT FROM incoming.type_id
-         OR video.user_id IS DISTINCT FROM incoming.user_id
-         OR video.pubdate IS DISTINCT FROM incoming.pubdate
+         OR video.type_id IS DISTINCT FROM COALESCE(incoming.type_id, video.type_id)
+         OR video.user_id IS DISTINCT FROM COALESCE(incoming.user_id, video.user_id)
+         OR video.pubdate IS DISTINCT FROM COALESCE(incoming.pubdate, video.pubdate)
+         OR (incoming.pid_v2 IS NOT NULL
+             AND video.pid_v2 IS DISTINCT FROM incoming.pid_v2)
        )`,
     [
       JSON.stringify(
         entries.map((video) => ({
           aid: video.aid.toString(),
-          bvid: video.bvid,
-          title: video.title,
-          description: video.description,
-          pic: video.pic,
+          ...(video.bvid === undefined ? {} : { bvid: video.bvid }),
+          ...(video.title === undefined ? {} : { title: video.title }),
+          ...(video.description === undefined
+            ? {}
+            : { description: video.description }),
+          ...(video.pic === undefined ? {} : { pic: video.pic }),
           cover43:
             video.cover43 && video.cover43.length > 0 ? video.cover43 : null,
-          type_id: video.typeId,
-          user_id: video.userId.toString(),
-          pubdate: video.pubdate,
+          ...(video.typeId === undefined ? {} : { type_id: video.typeId }),
+          ...(video.userId === undefined
+            ? {}
+            : { user_id: video.userId.toString() }),
+          ...(video.pubdate === undefined ? {} : { pubdate: video.pubdate }),
+          ...(video.pidV2 === undefined ? {} : { pid_v2: video.pidV2 }),
         })),
       ),
     ],

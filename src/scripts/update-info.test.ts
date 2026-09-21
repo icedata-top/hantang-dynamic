@@ -80,6 +80,7 @@ function video(aid: number): VideoData {
 class FakeDatabase {
   closed = false;
   calls = { membership: 0, refresh: 0, persist: 0 };
+  readonly pidV2ByAid = new Map<number, number>();
   constructor(
     readonly sources: number[],
     readonly existing = new Set(sources),
@@ -97,6 +98,7 @@ class FakeDatabase {
   }) {
     return this.sources
       .filter((aid) => BigInt(aid) > options.afterAid)
+      .filter((aid) => !options.onlyMissingPidV2 || !this.pidV2ByAid.has(aid))
       .map((aid) => ({ aid: BigInt(aid), bvid: `BV${aid}` }));
   }
   async getProcessedVideoAids(aids: readonly bigint[]) {
@@ -107,6 +109,11 @@ class FakeDatabase {
     items: readonly ProcessedVideoRecommendationRefresh[],
   ) {
     this.calls.refresh++;
+    for (const item of items) {
+      if (item.pidV2 !== undefined) {
+        this.pidV2ByAid.set(Number(item.aid), item.pidV2);
+      }
+    }
     return items.length;
   }
   async markVideosProcessedWithCollectionState(
@@ -148,27 +155,38 @@ test("collector uses one bounded membership and refresh path while admitting onl
   assert.deepEqual(database.calls, { membership: 1, refresh: 1, persist: 1 });
 });
 
-test("collector caps more than twenty source requests at twenty", async () => {
+test("concurrent collectors share twenty slots for source and admission requests", async () => {
   const database = new FakeDatabase([]);
   let active = 0;
   let maximum = 0;
-  const service = new RecommendationRefreshService({
-    database,
-    detailsService: parser,
-    pidV2Whitelist: new Set(),
-    fetchDetail: async (id) => {
-      active++;
-      maximum = Math.max(maximum, active);
-      await new Promise((resolve) => setTimeout(resolve, 2));
-      active--;
-      return detail(Number(id), 0);
-    },
-  });
-  await service.collectForAids(
-    Array.from({ length: 25 }, (_, index) => ({ aid: BigInt(index + 1) })),
+  let admissionRequests = 0;
+  const fetchDetail = async (id: string | number) => {
+    const aid = Number(id);
+    active++;
+    maximum = Math.max(maximum, active);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    active--;
+    if (aid >= 1_000) admissionRequests++;
+    return detail(aid, 100, aid < 1_000 ? [related(aid + 1_000, 7)] : []);
+  };
+  const service = () =>
+    new RecommendationRefreshService({
+      database,
+      detailsService: parser,
+      pidV2Whitelist: new Set([7]),
+      fetchDetail,
+    });
+  await Promise.all(
+    [service(), service()].map((collector, offset) =>
+      collector.collectForAids(
+        Array.from({ length: 25 }, (_, index) => ({
+          aid: BigInt(offset * 100 + index + 1),
+        })),
+      ),
+    ),
   );
   assert.equal(maximum, 20);
-  assert.equal(database.calls.membership, 1);
+  assert.equal(admissionRequests, 50);
 });
 
 test("manual updater preserves the original AID cutoff and closes the database", async () => {
@@ -196,13 +214,37 @@ test("manual reverse fill stops after one bridge layer", async () => {
       const aid = Number(String(id).replace("BV", ""));
       fetched.push(aid);
       if (aid === 1) return detail(1, 100, [related(2, 99)]);
-      if (aid === 2) return detail(2, 100, [related(3, 7)]);
+      if (aid === 2) return detail(2, 100, [related(1, 7), related(3, 7)]);
       if (aid === 3) return detail(3, 100, [related(4, 7)]);
       throw new Error(`unexpected recursive fetch ${aid}`);
     },
   });
   assert.equal(result.imported, 1);
   assert.equal(fetched.includes(4), false);
+  assert.equal(database.pidV2ByAid.get(1), 7);
+});
+
+test("partial related cards refresh only their supplied existing fields", async () => {
+  const database = new FakeDatabase([1, 2], new Set([1, 2]));
+  let refreshed: ProcessedVideoRecommendationRefresh | undefined;
+  database.refreshProcessedVideosFromRecommendations = async (items) => {
+    refreshed = items[0];
+    return items.length;
+  };
+  const partial = { aid: 2, desc: "", pid_v2: 7 } as RecommendedVideo;
+  const service = new RecommendationRefreshService({
+    database,
+    detailsService: parser,
+    pidV2Whitelist: new Set(),
+    rateLimiter: {
+      async acquire() {
+        return () => {};
+      },
+    },
+    fetchDetail: async () => detail(1, 100, [partial]),
+  });
+  await service.collectForAids([{ aid: 1n }]);
+  assert.deepEqual(refreshed, { aid: 2n, description: "", pidV2: 7 });
 });
 
 test("whitelist parser rejects malformed explicit values", () => {

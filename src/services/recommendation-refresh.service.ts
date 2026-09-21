@@ -60,19 +60,29 @@ function validAid(value: unknown): value is number {
 function recommendationRefresh(
   video: RecommendedVideo,
 ): ProcessedVideoRecommendationRefresh | null {
-  if (!validAid(video.aid) || !validAid(video.owner?.mid)) return null;
+  if (!video || typeof video !== "object" || !validAid(video.aid)) {
+    return null;
+  }
+  const ownerMid = video.owner?.mid;
   return {
     aid: BigInt(video.aid),
-    bvid: video.bvid,
-    title: video.title,
-    description: video.desc,
-    pic: video.pic,
+    ...(typeof video.bvid === "string" && video.bvid.length > 0
+      ? { bvid: video.bvid }
+      : {}),
+    ...(typeof video.title === "string" ? { title: video.title } : {}),
+    ...(typeof video.desc === "string" ? { description: video.desc } : {}),
+    ...(typeof video.pic === "string" ? { pic: video.pic } : {}),
     ...(typeof video.cover43 === "string" && video.cover43.length > 0
       ? { cover43: video.cover43 }
       : {}),
-    typeId: video.tid,
-    userId: BigInt(video.owner.mid),
-    pubdate: video.pubdate,
+    ...(Number.isSafeInteger(video.tid) && video.tid > 0
+      ? { typeId: video.tid }
+      : {}),
+    ...(validAid(ownerMid) ? { userId: BigInt(ownerMid) } : {}),
+    ...(Number.isSafeInteger(video.pubdate) && video.pubdate >= 0
+      ? { pubdate: video.pubdate }
+      : {}),
+    ...(validPidV2(video.pid_v2) ? { pidV2: video.pid_v2 } : {}),
   };
 }
 

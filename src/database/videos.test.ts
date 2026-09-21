@@ -200,7 +200,7 @@ test("processed AID lookup uses one bounded set query", async () => {
   assert.deepEqual(calls[0]?.values, [["1", "2", "3"]]);
 });
 
-test("recommendation refresh deduplicates inputs and preserves manual-state columns", async () => {
+test("recommendation refresh deduplicates inputs and preserves absent card fields", async () => {
   const calls: QueryCall[] = [];
   const query = {
     async query(sql: string, values?: unknown[]) {
@@ -238,15 +238,47 @@ test("recommendation refresh deduplicates inputs and preserves manual-state colu
 
   assert.equal(updated, 1);
   const payload = JSON.parse(calls[0]?.values?.[0] as string) as Array<{
-    bvid: string;
+    bvid?: string;
+    pid_v2?: number;
   }>;
   assert.equal(payload.length, 1);
   assert.equal(payload[0]?.bvid, "BVnew");
+  assert.equal(payload[0]?.pid_v2, undefined);
   assert.match(
     calls[0]?.sql ?? "",
-    /video\.title IS DISTINCT FROM incoming\.title/,
+    /video\.title IS DISTINCT FROM COALESCE\(incoming\.title, video\.title\)/,
   );
+  assert.match(calls[0]?.sql ?? "", /pid_v2 = COALESCE\(incoming\.pid_v2/);
   assert.doesNotMatch(calls[0]?.sql ?? "", /is_filtered|notes|tag_ids/);
+});
+
+test("recommendation refresh accepts sparse cards without nulling stored basics", async () => {
+  const calls: QueryCall[] = [];
+  const query = {
+    async query(sql: string, values?: unknown[]) {
+      calls.push({ sql, values });
+      return { rows: [], rowCount: 1 };
+    },
+  };
+
+  await refreshProcessedVideosFromRecommendations(query as unknown as Pool, [
+    { aid: 7n, description: "", pidV2: 9 },
+  ]);
+
+  const payload = JSON.parse(calls[0]?.values?.[0] as string) as Array<
+    Record<string, unknown>
+  >;
+  assert.deepEqual(payload, [
+    { aid: "7", description: "", cover43: null, pid_v2: 9 },
+  ]);
+  assert.match(
+    calls[0]?.sql ?? "",
+    /bvid = COALESCE\(incoming\.bvid, video\.bvid\)/,
+  );
+  assert.match(
+    calls[0]?.sql ?? "",
+    /description = COALESCE\(incoming\.description, video\.description\)/,
+  );
 });
 
 test("terminal deletion persists BVID identities and sets existing state to priority -1", async () => {
