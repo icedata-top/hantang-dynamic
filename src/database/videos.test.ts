@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
+import type { VideoData } from "../types/models/video.js";
 import { upgradeVideoHistoryTagIdentitySchema } from "./schema/video_history";
 import { backfillMissionIds } from "./schema/videos";
 import {
@@ -291,6 +292,66 @@ test("recommendation refresh accepts sparse cards without nulling stored basics"
   );
 });
 
+test("recommendation refresh serializes PostgreSQL-safe Unicode", async () => {
+  const calls: QueryCall[] = [];
+  const query = {
+    async query(sql: string, values?: unknown[]) {
+      calls.push({ sql, values });
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  const title = "推荐\u0000\uD800😀";
+  const originalPayload = JSON.stringify([{ aid: "7", title }]);
+
+  await refreshProcessedVideosFromRecommendations(query as unknown as Pool, [
+    { aid: 7n, title },
+  ]);
+
+  assert.match(originalPayload, /\\u0000/);
+  assert.match(originalPayload, /\\ud800/);
+  const payload = JSON.parse(calls[0]?.values?.[0] as string) as Array<{
+    title: string;
+  }>;
+  assert.equal(payload[0]?.title, "推荐��😀");
+});
+
+test("single-detail writes sanitize text, arrays, and JSON metadata", async () => {
+  const { pool, calls } = createPool();
+  const unicodeVideo: VideoData = {
+    ...video,
+    title: "标题\u0000\uD800😀",
+    dynamic: "动态\uDC00",
+    tag_new: ["标签\uD800"],
+    participle: ["词\uDC00"],
+    extras: {
+      argue_info: {
+        argue_msg: "消息\u0000\uD800",
+        argue_type: 1,
+        argue_link: "https://example.test/😀",
+      },
+    },
+    notes: { api_message: "备注\uDC00" },
+  };
+
+  await markVideoProcessedWithCollectionState(pool, unicodeVideo, true);
+
+  const values = calls[1]?.values;
+  assert.equal(values?.[3], "标题��😀");
+  assert.equal(values?.[12], "动态�");
+  assert.deepEqual(values?.[13], ["标签�"]);
+  assert.deepEqual(values?.[14], ["词�"]);
+  assert.deepEqual(JSON.parse(values?.[20] as string), {
+    argue_info: {
+      argue_msg: "消息��",
+      argue_type: 1,
+      argue_link: "https://example.test/😀",
+    },
+  });
+  assert.deepEqual(JSON.parse(values?.[21] as string), {
+    api_message: "备注�",
+  });
+});
+
 test("terminal deletion persists BVID identities and sets existing state to priority -1", async () => {
   const { pool, calls } = createPool();
 
@@ -445,6 +506,58 @@ test("full-detail batch writes once per database phase and keeps the final dupli
     /fn_upsert_collection_state_from_processed_video/,
   );
   assert.equal(calls[4]?.sql, "COMMIT");
+});
+
+test("full-detail batch preserves valid Unicode and sanitizes nested JSON values and keys", async () => {
+  const { pool, calls } = createPool();
+  const unicodeVideo: VideoData = {
+    ...video,
+    title: "中文\n😀\u0000\uD800",
+    description: "literal \\u0000",
+    tagSnapshot: [{ tagId: 10n, tagName: "标签\u0000\uD800" }],
+    extras: {
+      "nested\u0000key": {
+        message: "metadata\uD800",
+        literal: "\\u0000",
+        enabled: true,
+        count: 3,
+      },
+    } as unknown as VideoData["extras"],
+    notes: { api_message: "notes\uDC00" },
+  };
+  const originalPayload = JSON.stringify([
+    {
+      title: unicodeVideo.title,
+      extras: unicodeVideo.extras,
+      notes: unicodeVideo.notes,
+    },
+  ]);
+
+  await markVideosProcessedWithCollectionState(pool, [
+    { video: unicodeVideo, filtered: true },
+  ]);
+
+  assert.match(originalPayload, /\\u0000/);
+  assert.match(originalPayload, /\\ud800/);
+  const payload = JSON.parse(calls[1]?.values?.[0] as string) as Array<{
+    title: string;
+    description: string;
+    tag_snapshot: Array<{ tagName: string }>;
+    extras: Record<string, unknown>;
+    notes: Record<string, unknown>;
+  }>;
+  assert.equal(payload[0]?.title, "中文\n😀��");
+  assert.equal(payload[0]?.description, "literal \\u0000");
+  assert.equal(payload[0]?.tag_snapshot[0]?.tagName, "标签��");
+  assert.deepEqual(payload[0]?.extras, {
+    "nested�key": {
+      message: "metadata�",
+      literal: "\\u0000",
+      enabled: true,
+      count: 3,
+    },
+  });
+  assert.deepEqual(payload[0]?.notes, { api_message: "notes�" });
 });
 
 test("history upgrade records cover and compares canonical TAG IDs", async () => {

@@ -40,6 +40,38 @@ export interface ProcessedVideoBatchItem {
   filtered: boolean;
 }
 
+const unsupportedPostgresUnicode =
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+function sanitizeDatabaseString(value: string): string {
+  return value
+    .split("\u0000")
+    .join("\uFFFD")
+    .replace(unsupportedPostgresUnicode, "\uFFFD");
+}
+
+function sanitizeJsonValue(value: unknown): unknown {
+  if (typeof value === "string") return sanitizeDatabaseString(value);
+  if (Array.isArray(value)) return value.map(sanitizeJsonValue);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        sanitizeDatabaseString(key),
+        sanitizeJsonValue(entry),
+      ]),
+    );
+  }
+  return value;
+}
+
+/** Serialize JSON values after replacing code units PostgreSQL cannot store. */
+function stringifyDatabaseJson(value: unknown): string {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) return "null";
+
+  return JSON.stringify(sanitizeJsonValue(JSON.parse(serialized)));
+}
+
 function canonicalTagSnapshot(
   tagSnapshot: VideoData["tagSnapshot"],
 ): Array<{ tagId: bigint; tagName: string }> | undefined {
@@ -193,7 +225,7 @@ export async function refreshProcessedVideosFromRecommendations(
              AND video.pid_v2 IS DISTINCT FROM incoming.pid_v2)
        )`,
     [
-      JSON.stringify(
+      stringifyDatabaseJson(
         entries.map((video) => ({
           aid: video.aid.toString(),
           ...(video.bvid === undefined ? {} : { bvid: video.bvid }),
@@ -271,28 +303,32 @@ export async function markVideoProcessed(
   `,
     [
       BigInt(video.aid).toString(),
-      video.bvid,
+      sanitizeDatabaseString(video.bvid),
       video.pubdate,
-      video.title,
-      video.description,
-      video.tag,
-      video.pic,
+      sanitizeDatabaseString(video.title),
+      sanitizeDatabaseString(video.description),
+      sanitizeDatabaseString(video.tag),
+      sanitizeDatabaseString(video.pic),
       video.type_id,
       BigInt(video.user_id).toString(),
       filtered,
       video.staff ? video.staff.map((s) => s.toString()) : null,
       video.tid_v2 ?? null,
-      video.dynamic ?? null,
-      video.tag_new ?? null,
-      video.participle ?? null,
+      video.dynamic === undefined
+        ? null
+        : sanitizeDatabaseString(video.dynamic),
+      video.tag_new?.map(sanitizeDatabaseString) ?? null,
+      video.participle?.map(sanitizeDatabaseString) ?? null,
       video.ctime ?? null,
       video.is_deleted ?? false,
       video.copyright ?? null,
       video.pid_v2 ?? null,
       video.mission_id?.toString() ?? null,
-      video.extras ? JSON.stringify(video.extras) : null,
-      video.notes ? JSON.stringify(video.notes) : null,
-      video.cover43 && video.cover43.length > 0 ? video.cover43 : null,
+      video.extras ? stringifyDatabaseJson(video.extras) : null,
+      video.notes ? stringifyDatabaseJson(video.notes) : null,
+      video.cover43 && video.cover43.length > 0
+        ? sanitizeDatabaseString(video.cover43)
+        : null,
       tagSnapshot?.map((tag) => tag.tagId.toString()) ?? null,
       tagSnapshot !== undefined,
     ],
@@ -308,7 +344,7 @@ export async function markVideoProcessed(
        ON CONFLICT (tag_id) DO UPDATE SET
          tag_name = EXCLUDED.tag_name,
          updated_at = EXCLUDED.updated_at`,
-      [tagIds, tagNames],
+      [tagIds, tagNames.map(sanitizeDatabaseString)],
     );
   }
 }
@@ -366,7 +402,7 @@ export async function markVideosProcessedWithCollectionState(
   const rows = [...byAid.values()].map(batchVideoRow);
   if (rows.length === 0) return 0;
 
-  const payload = JSON.stringify(rows);
+  const payload = stringifyDatabaseJson(rows);
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -741,7 +777,7 @@ export async function markVideoDeleted(
   identity: VideoIdentity,
   notes?: VideoDeletionNotes,
 ): Promise<bigint> {
-  const notesJson = notes ? JSON.stringify(notes) : null;
+  const notesJson = notes ? stringifyDatabaseJson(notes) : null;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
