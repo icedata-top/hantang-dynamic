@@ -556,6 +556,7 @@ export interface ProcessedVideoMetadataSweep {
   createdBefore: Date;
   onlyMissingPidV2?: boolean;
   throughAid: bigint;
+  where?: string;
   limit: number;
 }
 
@@ -579,13 +580,14 @@ export async function getProcessedVideoMetadataCandidates(
   pool: Pool,
   options: ProcessedVideoMetadataSweep,
 ): Promise<ProcessedVideoMetadataCandidate[]> {
+  const whereClause = options.where ? `\n       AND (${options.where})` : "";
   const result = await pool.query(
     `SELECT aid, bvid, pid_v2
      FROM processed_videos
      WHERE aid > $1::bigint
        AND aid <= $2::bigint
        AND created_at <= $3::timestamptz
-       AND ($4::boolean = false OR pid_v2 IS NULL)
+       AND ($4::boolean = false OR pid_v2 IS NULL)${whereClause}
      ORDER BY aid ASC
      LIMIT $5`,
     [

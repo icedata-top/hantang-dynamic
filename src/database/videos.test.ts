@@ -7,6 +7,7 @@ import { backfillMissionIds } from "./schema/videos";
 import {
   getProcessedVideoAids,
   getProcessedVideoAidsMissingPidV2,
+  getProcessedVideoMetadataCandidates,
   markVideoDeleted,
   markVideoProcessedWithCollectionState,
   markVideosProcessedWithCollectionState,
@@ -209,6 +210,40 @@ test("missing pid lookup queries only a bounded AID set", async () => {
   assert.match(calls[0]?.sql ?? "", /aid = ANY\(\$1::bigint\[\]\)/);
   assert.match(calls[0]?.sql ?? "", /pid_v2 IS NULL/);
   assert.deepEqual(calls[0]?.values, [["1", "2"]]);
+});
+
+test("metadata candidates combine a raw predicate with existing bounds", async () => {
+  const calls: QueryCall[] = [];
+  const pool = {
+    async query(sql: string, values?: unknown[]) {
+      calls.push({ sql, values });
+      return { rows: [], rowCount: 0 };
+    },
+  } as unknown as Pool;
+  const createdBefore = new Date("2026-09-22T00:00:00Z");
+
+  await getProcessedVideoMetadataCandidates(pool, {
+    afterAid: 2_746_490n,
+    throughAid: 9_999_999n,
+    createdBefore,
+    onlyMissingPidV2: false,
+    where: "aid >= 2746491 OR pid_v2 IS NULL",
+    limit: 100,
+  });
+
+  assert.match(calls[0]?.sql ?? "", /AND \(aid >= 2746491 OR pid_v2 IS NULL\)/);
+  assert.match(calls[0]?.sql ?? "", /aid > \$1::bigint/);
+  assert.match(
+    calls[0]?.sql ?? "",
+    /\(\$4::boolean = false OR pid_v2 IS NULL\)/,
+  );
+  assert.deepEqual(calls[0]?.values, [
+    "2746490",
+    "9999999",
+    createdBefore,
+    false,
+    100,
+  ]);
 });
 
 test("recommendation refresh deduplicates inputs and preserves absent card fields", async () => {

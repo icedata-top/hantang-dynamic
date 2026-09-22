@@ -29,6 +29,7 @@ interface UpdateInfoDatabase extends RecommendationRefreshDatabase {
 
 export interface UpdateInfoOptions {
   afterAid?: bigint;
+  where?: string;
   database?: UpdateInfoDatabase;
   detailsService?: RecommendationDetailParser;
   fetchDetail?: (
@@ -154,6 +155,7 @@ export async function runUpdateInfo(
       createdBefore,
       throughAid,
       ...(options.afterAid === undefined ? {} : { afterAid: options.afterAid }),
+      ...(options.where === undefined ? {} : { where: options.where }),
     };
     const collector = new RecommendationRefreshService({
       database,

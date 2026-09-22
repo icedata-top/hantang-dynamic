@@ -14,6 +14,12 @@ function argumentValue(args: string[], name: string): string | undefined {
   return index < 0 ? undefined : args[index + 1];
 }
 
+function updateInfoPredicateArgument(args: string[]): string | undefined {
+  const updateInfoIndex = args.indexOf("--update-info");
+  const candidate = args[updateInfoIndex + 1];
+  return candidate && !candidate.startsWith("--") ? candidate : undefined;
+}
+
 function updateInfoWhitelistArgument(args: string[]): string | undefined {
   const positions = args
     .map((argument, index) => (argument === "--pid-v2-whitelist" ? index : -1))
@@ -103,8 +109,10 @@ async function main() {
     const whitelistValue =
       updateInfoWhitelistArgument(args) ??
       config.processing.filtering.pidV2Whitelist.join(",");
+    const where = updateInfoPredicateArgument(args);
     await runUpdateInfo({
       pidV2Whitelist: parsePidV2Whitelist(whitelistValue),
+      ...(where === undefined ? {} : { where }),
     });
     return;
   }
