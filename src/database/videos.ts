@@ -310,18 +310,6 @@ export async function markVideoProcessed(
          updated_at = EXCLUDED.updated_at`,
       [tagIds, tagNames],
     );
-    await pool.query(
-      `DELETE FROM video_tags
-       WHERE video_aid = $1::bigint`,
-      [video.aid.toString()],
-    );
-    await pool.query(
-      `INSERT INTO video_tags (video_aid, tag_id)
-       SELECT $1::bigint, tag_id
-       FROM unnest($2::bigint[]) AS snapshot(tag_id)
-       ON CONFLICT (video_aid, tag_id) DO NOTHING`,
-      [video.aid.toString(), tagIds],
-    );
   }
 }
 
@@ -474,29 +462,6 @@ export async function markVideosProcessedWithCollectionState(
        ON CONFLICT (tag_id) DO UPDATE SET
          tag_name = EXCLUDED.tag_name,
          updated_at = EXCLUDED.updated_at`,
-      [payload],
-    );
-    await client.query(
-      `WITH incoming AS (
-         SELECT *
-         FROM jsonb_to_recordset($1::jsonb) AS input(aid bigint, tag_ids bigint[])
-       )
-       DELETE FROM video_tags AS video_tag
-       USING incoming
-       WHERE video_tag.video_aid = incoming.aid
-         AND incoming.tag_ids IS NOT NULL`,
-      [payload],
-    );
-    await client.query(
-      `WITH incoming AS (
-         SELECT *
-         FROM jsonb_to_recordset($1::jsonb) AS input(aid bigint, tag_ids bigint[])
-       )
-       INSERT INTO video_tags (video_aid, tag_id)
-       SELECT incoming.aid, tag_id
-       FROM incoming
-       CROSS JOIN LATERAL unnest(COALESCE(incoming.tag_ids, '{}'::bigint[])) AS tag_id
-       ON CONFLICT (video_aid, tag_id) DO NOTHING`,
       [payload],
     );
     await client.query(

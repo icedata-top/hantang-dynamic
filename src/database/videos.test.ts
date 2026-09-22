@@ -111,7 +111,7 @@ test("processed video insert rolls back when collection state upsert fails", asy
   assert.equal(calls[calls.length - 1]?.sql, "ROLLBACK");
 });
 
-test("authoritative TAG relations are replaced in the processed-video transaction", async () => {
+test("authoritative TAG snapshots update the processed video and dictionary transaction", async () => {
   const { pool, calls } = createPool();
 
   await markVideoProcessedWithCollectionState(
@@ -137,16 +137,14 @@ test("authoritative TAG relations are replaced in the processed-video transactio
     ["10", "20"],
     ["vocaloid", "topic"],
   ]);
-  assert.match(calls[3]?.sql ?? "", /DELETE FROM video_tags/);
-  assert.match(calls[4]?.sql ?? "", /INSERT INTO video_tags/);
   assert.match(
-    calls[5]?.sql ?? "",
+    calls[3]?.sql ?? "",
     /fn_upsert_collection_state_from_processed_video/,
   );
-  assert.equal(calls[6]?.sql, "COMMIT");
+  assert.equal(calls[4]?.sql, "COMMIT");
 });
 
-test("missing TAG snapshots preserve stored names and normalized relations", async () => {
+test("missing TAG snapshots preserve stored names and TAG IDs", async () => {
   const { pool, calls } = createPool();
 
   await markVideoProcessedWithCollectionState(pool, video, true);
@@ -160,13 +158,9 @@ test("missing TAG snapshots preserve stored names and normalized relations", asy
     /WHEN \$25::boolean THEN EXCLUDED\.tag_new\s+ELSE processed_videos\.tag_new/,
   );
   assert.equal(calls[1]?.values?.[24], false);
-  assert.equal(
-    calls.some((call) => call.sql.includes("DELETE FROM video_tags")),
-    false,
-  );
 });
 
-test("authoritative empty TAG snapshots clear names and normalized relations", async () => {
+test("authoritative empty TAG snapshots clear names and TAG IDs", async () => {
   const { pool, calls } = createPool();
 
   await markVideoProcessedWithCollectionState(
@@ -180,8 +174,6 @@ test("authoritative empty TAG snapshots clear names and normalized relations", a
   assert.equal(calls[1]?.values?.[24], true);
   assert.deepEqual(calls[1]?.values?.[23], []);
   assert.deepEqual(calls[2]?.values, [[], []]);
-  assert.match(calls[3]?.sql ?? "", /DELETE FROM video_tags/);
-  assert.deepEqual(calls[4]?.values, ["42", []]);
 });
 
 test("processed AID lookup uses one bounded set query", async () => {
@@ -448,13 +440,11 @@ test("full-detail batch writes once per database phase and keeps the final dupli
   assert.equal(payload[0]?.title, "final");
   assert.deepEqual(payload[0]?.tag_ids, ["10", "20"]);
   assert.match(calls[2]?.sql ?? "", /INSERT INTO tags/);
-  assert.match(calls[3]?.sql ?? "", /DELETE FROM video_tags/);
-  assert.match(calls[4]?.sql ?? "", /INSERT INTO video_tags/);
   assert.match(
-    calls[5]?.sql ?? "",
+    calls[3]?.sql ?? "",
     /fn_upsert_collection_state_from_processed_video/,
   );
-  assert.equal(calls[6]?.sql, "COMMIT");
+  assert.equal(calls[4]?.sql, "COMMIT");
 });
 
 test("history upgrade records cover and compares canonical TAG IDs", async () => {

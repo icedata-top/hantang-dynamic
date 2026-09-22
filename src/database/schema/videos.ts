@@ -101,14 +101,6 @@ export async function initVideosSchema(pool: Pool): Promise<void> {
     )
   `);
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS video_tags (
-      video_aid BIGINT NOT NULL,
-      tag_id BIGINT NOT NULL,
-      PRIMARY KEY (video_aid, tag_id)
-    )
-  `);
-
-  await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_processed_filtered
     ON processed_videos(is_filtered)
   `);
@@ -126,9 +118,5 @@ export async function initVideosSchema(pool: Pool): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_processed_mission_id
     ON processed_videos(mission_id)
     WHERE mission_id IS NOT NULL
-  `);
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_video_tags_tag_id_video_aid
-    ON video_tags(tag_id, video_aid)
   `);
 }
