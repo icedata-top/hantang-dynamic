@@ -54,12 +54,15 @@ function sanitizeJsonValue(value: unknown): unknown {
   if (typeof value === "string") return sanitizeDatabaseString(value);
   if (Array.isArray(value)) return value.map(sanitizeJsonValue);
   if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [
-        sanitizeDatabaseString(key),
-        sanitizeJsonValue(entry),
-      ]),
-    );
+    const entries = new Map<string, unknown>();
+    for (const [key, entry] of Object.entries(value)) {
+      const sanitizedKey = sanitizeDatabaseString(key);
+      if (entries.has(sanitizedKey)) {
+        throw new Error("JSON object keys collide after Unicode normalization");
+      }
+      entries.set(sanitizedKey, sanitizeJsonValue(entry));
+    }
+    return Object.fromEntries(entries);
   }
   return value;
 }
@@ -647,7 +650,11 @@ export async function updateProcessedVideoMetadata(
     [
       entries.map((item) => item.aid.toString()),
       entries.map((item) => item.pidV2 ?? null),
-      entries.map((item) => item.cover43 ?? null),
+      entries.map((item) =>
+        item.cover43 === undefined
+          ? null
+          : sanitizeDatabaseString(item.cover43),
+      ),
     ],
   );
   return result.rowCount ?? 0;

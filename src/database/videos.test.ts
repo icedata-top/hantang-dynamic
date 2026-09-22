@@ -420,6 +420,7 @@ test("terminal deletion rolls back processed deletion when collection state tran
 
 test("supplemental metadata updates changed fields and merges duplicate related entries", async () => {
   const calls: QueryCall[] = [];
+  const unicodeCover = "https://cover/\u0000😀\\u0000";
   const query = {
     async query(sql: string, values?: unknown[]) {
       calls.push({ sql, values });
@@ -431,14 +432,14 @@ test("supplemental metadata updates changed fields and merges duplicate related 
     { aid: 1n, pidV2: 22 },
     { aid: 1n, cover43: "https://cover/1" },
     { aid: 2n, cover43: "" },
-    { aid: 2n, cover43: "https://cover/2" },
+    { aid: 2n, cover43: unicodeCover },
   ]);
 
   assert.equal(updated, 2);
   assert.deepEqual(calls[0]?.values, [
     ["1", "2"],
     [22, null],
-    ["https://cover/1", "https://cover/2"],
+    ["https://cover/1", "https://cover/�😀\\u0000"],
   ]);
   assert.match(calls[0]?.sql ?? "", /video\.aid = metadata\.aid/);
   assert.match(calls[0]?.sql ?? "", /video\.aid = ANY\(\$1::bigint\[\]\)/);
@@ -558,6 +559,26 @@ test("full-detail batch preserves valid Unicode and sanitizes nested JSON values
     },
   });
   assert.deepEqual(payload[0]?.notes, { api_message: "notes�" });
+});
+
+test("full-detail batch rejects metadata keys that collide after Unicode normalization", async () => {
+  const { pool, calls } = createPool();
+  const collisionVideo: VideoData = {
+    ...video,
+    extras: {
+      "\u0000": 1,
+      "�": 2,
+    } as unknown as VideoData["extras"],
+  };
+
+  await assert.rejects(
+    markVideosProcessedWithCollectionState(pool, [
+      { video: collisionVideo, filtered: true },
+    ]),
+    /JSON object keys collide after Unicode normalization/,
+  );
+
+  assert.equal(calls.length, 0);
 });
 
 test("history upgrade records cover and compares canonical TAG IDs", async () => {
