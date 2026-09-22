@@ -8,6 +8,9 @@ export const sharedApiRateLimiter = new RateLimiter(
 /**
  * Recommendation detail collection has its own shared API capacity. Callers
  * that expand recommendation cards (manual refresh and minute gates) use this
- * limiter so source, import, and bridge requests share the same 20 slots.
+ * limiter so source, import, and bridge requests share the configured
+ * application concurrency capacity.
  */
-export const sharedRecommendationApiRateLimiter = new RateLimiter(20);
+export const sharedRecommendationApiRateLimiter = new RateLimiter(
+  config.application.concurrencyLimit,
+);

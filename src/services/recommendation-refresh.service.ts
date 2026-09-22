@@ -1,3 +1,4 @@
+import { config } from "../config/index.js";
 import type {
   ProcessedVideoBatchItem,
   ProcessedVideoRecommendationRefresh,
@@ -12,7 +13,7 @@ import { sharedRecommendationApiRateLimiter } from "../utils/apiRateLimiter.js";
 import { filterVideo } from "../utils/filter.js";
 import type { RateLimiter } from "../utils/rateLimiter.js";
 
-const API_POOL_SIZE = 20;
+const API_POOL_SIZE = config.application.concurrencyLimit;
 const MAX_POSTGRES_INTEGER = 2_147_483_647;
 
 export interface RecommendationSource {

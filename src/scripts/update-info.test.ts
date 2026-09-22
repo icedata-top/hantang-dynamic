@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { config } from "../config/index.js";
 import type {
   ProcessedVideoBatchItem,
   ProcessedVideoRecommendationRefresh,
@@ -177,7 +178,7 @@ test("collector uses one bounded membership and refresh path while admitting onl
   assert.equal(database.pidV2Names.get(8), "not whitelisted");
 });
 
-test("concurrent collectors share twenty slots for source and admission requests", async () => {
+test("concurrent collectors share the configured capacity for source and admission requests", async () => {
   const database = new FakeDatabase([]);
   let active = 0;
   let maximum = 0;
@@ -207,7 +208,7 @@ test("concurrent collectors share twenty slots for source and admission requests
       ),
     ),
   );
-  assert.equal(maximum, 20);
+  assert.equal(maximum, config.application.concurrencyLimit);
   assert.equal(admissionRequests, 50);
 });
 
