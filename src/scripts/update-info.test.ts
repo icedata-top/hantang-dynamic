@@ -12,7 +12,11 @@ import type {
 } from "../types/index.js";
 import { parsePidV2Whitelist, runUpdateInfo } from "./update-info.js";
 
-function related(aid: number, pid_v2?: number): RecommendedVideo {
+function related(
+  aid: number,
+  pid_v2?: number,
+  pid_name_v2?: string,
+): RecommendedVideo {
   return {
     aid,
     bvid: `BV${aid}`,
@@ -36,6 +40,7 @@ function related(aid: number, pid_v2?: number): RecommendedVideo {
       share: 0,
     },
     ...(pid_v2 === undefined ? {} : { pid_v2 }),
+    ...(pid_name_v2 === undefined ? {} : { pid_name_v2 }),
   };
 }
 function detail(
@@ -79,7 +84,8 @@ function video(aid: number): VideoData {
 }
 class FakeDatabase {
   closed = false;
-  calls = { membership: 0, refresh: 0, persist: 0 };
+  calls = { dictionary: 0, membership: 0, refresh: 0, persist: 0 };
+  readonly pidV2Names = new Map<number, string>();
   readonly pidV2ByAid = new Map<number, number>();
   constructor(
     readonly sources: number[],
@@ -119,6 +125,11 @@ class FakeDatabase {
     }
     return items.length;
   }
+  async upsertPidV2Names(names: readonly { pidV2: number; name: string }[]) {
+    this.calls.dictionary++;
+    for (const { pidV2, name } of names) this.pidV2Names.set(pidV2, name);
+    return names.length;
+  }
   async markVideosProcessedWithCollectionState(
     items: readonly ProcessedVideoBatchItem[],
   ) {
@@ -148,14 +159,22 @@ test("collector uses one bounded membership and refresh path while admitting onl
       detail(
         Number(id),
         100,
-        Number(id) === 1 ? [related(2), related(3, 7), related(4, 8)] : [],
+        Number(id) === 1
+          ? [related(2), related(3, 7), related(4, 8, "not whitelisted")]
+          : [],
       ),
   });
   const result = await service.collectForAids([{ aid: 1n }]);
   assert.equal(result.metadataUpdated, 1);
   assert.equal(result.imported, 1);
   assert.deepEqual([...database.existing].sort(), [1, 2, 3]);
-  assert.deepEqual(database.calls, { membership: 1, refresh: 1, persist: 1 });
+  assert.deepEqual(database.calls, {
+    dictionary: 1,
+    membership: 1,
+    refresh: 1,
+    persist: 1,
+  });
+  assert.equal(database.pidV2Names.get(8), "not whitelisted");
 });
 
 test("concurrent collectors share twenty slots for source and admission requests", async () => {

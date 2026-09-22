@@ -44,6 +44,7 @@ export type MinuteDatabase = Pick<
   | "markVideosProcessedWithCollectionState"
   | "refreshProcessedVideosFromRecommendations"
   | "selectDueMinuteVideos"
+  | "upsertPidV2Names"
 >;
 
 export interface MinuteHandlerDependencies {

@@ -55,6 +55,9 @@ function database(onSelect: () => void): MinuteDatabase {
     async refreshProcessedVideosFromRecommendations() {
       return 0;
     },
+    async upsertPidV2Names() {
+      return 0;
+    },
     async selectDueMinuteVideos() {
       onSelect();
       return [];

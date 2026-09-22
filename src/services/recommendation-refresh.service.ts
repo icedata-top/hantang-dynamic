@@ -28,6 +28,9 @@ export interface RecommendationRefreshDatabase {
   refreshProcessedVideosFromRecommendations(
     videos: ReadonlyArray<ProcessedVideoRecommendationRefresh>,
   ): Promise<number>;
+  upsertPidV2Names(
+    names: ReadonlyArray<{ pidV2: number; name: string }>,
+  ): Promise<number>;
 }
 
 export interface RecommendationDetailParser {
@@ -175,6 +178,16 @@ export class RecommendationRefreshService {
       if ((itemSnapshot.viewCount ?? 0) > 10)
         related.push(...itemSnapshot.related);
     }
+
+    await this.options.database.upsertPidV2Names(
+      related.flatMap((item) => {
+        const name =
+          typeof item.pid_name_v2 === "string" ? item.pid_name_v2.trim() : "";
+        return validPidV2(item.pid_v2) && name.length > 0
+          ? [{ pidV2: item.pid_v2, name }]
+          : [];
+      }),
+    );
 
     const recommendations = [
       ...new Map(

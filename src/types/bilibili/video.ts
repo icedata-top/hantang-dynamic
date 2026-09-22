@@ -194,6 +194,7 @@ export interface RecommendedVideo {
   tid: number;
   tname: string;
   pid_v2?: number | null;
+  pid_name_v2?: string | null;
 }
 
 export interface BiliVideoDetailDataForProcessing {

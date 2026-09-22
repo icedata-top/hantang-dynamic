@@ -30,12 +30,14 @@ test("newly processed eligible videos persist with collection state", async () =
   const database = Database.getInstance();
   const originalPersist = database.markVideoProcessedWithCollectionState;
   const originalMetadataUpdate = database.updateProcessedVideoMetadata;
+  const originalPidV2Names = database.upsertPidV2Names;
   let persisted: { video: VideoData; filtered: boolean } | undefined;
   let relatedMetadata: ReadonlyArray<{
     aid: bigint;
     pidV2?: number;
     cover43?: string;
   }> = [];
+  let pidV2Names: ReadonlyArray<{ pidV2: number; name: string }> = [];
   database.markVideoProcessedWithCollectionState = async (
     persistedVideo,
     filtered,
@@ -46,6 +48,10 @@ test("newly processed eligible videos persist with collection state", async () =
     relatedMetadata = metadata;
     return metadata.length;
   };
+  database.upsertPidV2Names = async (names) => {
+    pidV2Names = names;
+    return names.length;
+  };
 
   try {
     const service = new DetailsService();
@@ -54,7 +60,11 @@ test("newly processed eligible videos persist with collection state", async () =
     const result = await Reflect.apply(processResolved, service, [
       video,
       [
-        { aid: 50, pid_v2: 33 } as RecommendedVideo,
+        {
+          aid: 50,
+          pid_v2: 33,
+          pid_name_v2: "related category",
+        } as RecommendedVideo,
         { aid: 51, cover43: "https://cover/51" } as RecommendedVideo,
       ],
       { processRecommendations: false, processRelated: false },
@@ -66,9 +76,11 @@ test("newly processed eligible videos persist with collection state", async () =
       { aid: 50n, pidV2: 33, cover43: undefined },
       { aid: 51n, pidV2: undefined, cover43: "https://cover/51" },
     ]);
+    assert.deepEqual(pidV2Names, [{ pidV2: 33, name: "related category" }]);
   } finally {
     database.markVideoProcessedWithCollectionState = originalPersist;
     database.updateProcessedVideoMetadata = originalMetadataUpdate;
+    database.upsertPidV2Names = originalPidV2Names;
   }
 });
 
@@ -78,6 +90,7 @@ test("new related videos persist pid_v2 supplied by the parent response", async 
   const originalHasProcessedVideo = database.hasProcessedVideo;
   const originalPersist = database.markVideoProcessedWithCollectionState;
   const originalMetadataUpdate = database.updateProcessedVideoMetadata;
+  const originalPidV2Names = database.upsertPidV2Names;
   const originalAddDiscoveredUser = database.addDiscoveredUser;
   const persisted: VideoData[] = [];
 
@@ -87,6 +100,7 @@ test("new related videos persist pid_v2 supplied by the parent response", async 
     persisted.push({ ...videoData });
   };
   database.updateProcessedVideoMetadata = async () => 0;
+  database.upsertPidV2Names = async () => 0;
   database.addDiscoveredUser = async () => undefined;
 
   const detail = (
@@ -163,6 +177,7 @@ test("new related videos persist pid_v2 supplied by the parent response", async 
     database.hasProcessedVideo = originalHasProcessedVideo;
     database.markVideoProcessedWithCollectionState = originalPersist;
     database.updateProcessedVideoMetadata = originalMetadataUpdate;
+    database.upsertPidV2Names = originalPidV2Names;
     database.addDiscoveredUser = originalAddDiscoveredUser;
   }
 });

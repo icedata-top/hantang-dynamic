@@ -27,6 +27,7 @@ import type {
 import type { VideoData } from "../types/models/video.js";
 import { logger } from "../utils/logger.js";
 
+export type { PidV2Name } from "./pidV2Names.js";
 export type {
   BvidListQuery,
   ProcessedVideoBatchItem,
@@ -80,6 +81,7 @@ import {
   selectDueMinuteVideos,
 } from "./collectionState.js";
 import { getCachedForwardBvid, saveDynamic } from "./dynamics.js";
+import { type PidV2Name, upsertPidV2Names } from "./pidV2Names.js";
 import {
   getTopRecommendedVideos,
   type RecommendationInput,
@@ -319,6 +321,12 @@ export class Database {
     videos: ReadonlyArray<ProcessedVideoRecommendationRefresh>,
   ): Promise<number> {
     return refreshProcessedVideosFromRecommendations(this.ensurePool(), videos);
+  }
+
+  public async upsertPidV2Names(
+    names: ReadonlyArray<PidV2Name>,
+  ): Promise<number> {
+    return upsertPidV2Names(this.ensurePool(), names);
   }
 
   /**
