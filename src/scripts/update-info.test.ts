@@ -11,7 +11,11 @@ import type {
   RecommendedVideo,
   VideoData,
 } from "../types/index.js";
-import { parsePidV2Whitelist, runUpdateInfo } from "./update-info.js";
+import {
+  parsePidV2Whitelist,
+  parseUpdateInfoPredicateArgument,
+  runUpdateInfo,
+} from "./update-info.js";
 
 function related(
   aid: number,
@@ -324,6 +328,41 @@ test("partial related cards refresh only their supplied existing fields", async 
   });
   await service.collectForAids([{ aid: 1n }]);
   assert.deepEqual(refreshed, { aid: 2n, description: "", pidV2: 7 });
+});
+
+test("update-info predicate parser accepts pnpm forwarding and ignores whitelist values", () => {
+  const predicate = "aid >= 2746491 AND pid_v2 IS NULL";
+  assert.equal(
+    parseUpdateInfoPredicateArgument([
+      "--update-info",
+      "--",
+      predicate,
+      "--pid-v2-whitelist",
+      "1003,1005,1007",
+    ]),
+    predicate,
+  );
+  assert.equal(
+    parseUpdateInfoPredicateArgument(["--update-info", predicate]),
+    predicate,
+  );
+  assert.equal(
+    parseUpdateInfoPredicateArgument([
+      "--update-info",
+      "--pid-v2-whitelist",
+      "1003,1005,1007",
+    ]),
+    undefined,
+  );
+  assert.equal(
+    parseUpdateInfoPredicateArgument([
+      "--update-info",
+      "--",
+      "--pid-v2-whitelist",
+      "1003,1005,1007",
+    ]),
+    undefined,
+  );
 });
 
 test("whitelist parser rejects malformed explicit values", () => {

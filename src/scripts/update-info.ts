@@ -56,6 +56,16 @@ function validPidV2(value: unknown): value is number {
   );
 }
 
+/** Read the optional positional source predicate used by the update-info CLI. */
+export function parseUpdateInfoPredicateArgument(
+  args: string[],
+): string | undefined {
+  const updateInfoIndex = args.indexOf("--update-info");
+  const following = args[updateInfoIndex + 1];
+  const candidate = following === "--" ? args[updateInfoIndex + 2] : following;
+  return candidate && !candidate.startsWith("--") ? candidate : undefined;
+}
+
 /** Parse a comma-separated list of explicit pid_v2 values. */
 export function parsePidV2Whitelist(value: string | undefined): Set<number> {
   if (value === undefined || value.trim() === "") return new Set();
