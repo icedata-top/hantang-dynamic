@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.0
+
+Recommendation-derived video admission and metadata refresh continue while
+unused relationship persistence and processing are removed.
+
 ## 5.5.0
 
 Improves minute sampling and To View reconciliation, and adds bounded
