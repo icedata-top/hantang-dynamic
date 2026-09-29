@@ -21,6 +21,18 @@ import {
 
 type Toml = Record<string, unknown>;
 
+export class ConfigTomlParseError extends Error {
+  readonly cause: unknown;
+
+  constructor(cause: unknown) {
+    super(
+      "config.toml is invalid TOML; using environment variables as fallback.",
+    );
+    this.name = "ConfigTomlParseError";
+    this.cause = cause;
+  }
+}
+
 function atPath(data: unknown, path: string): unknown {
   let value = data;
   for (const part of path.split(".")) {
@@ -33,13 +45,7 @@ function atPath(data: unknown, path: string): unknown {
 }
 
 function parseConfig(source: string): Toml {
-  try {
-    return parseToml(source);
-  } catch {
-    throw new Error(
-      "config.toml is invalid TOML; fix it before whitelist migration.",
-    );
-  }
+  return parseToml(source);
 }
 
 function arrayEnd(
@@ -217,7 +223,12 @@ function verifyMigration(
 
 export function loadConfigToml(configPath: string): Toml {
   const source = readFileSync(configPath, "utf-8");
-  const original = parseConfig(source);
+  let original: Toml;
+  try {
+    original = parseConfig(source);
+  } catch (error) {
+    throw new ConfigTomlParseError(error);
+  }
   const present = legacyWhitelistPaths.filter(
     ([oldPath]) => atPath(original, oldPath) !== undefined,
   );
@@ -239,11 +250,18 @@ export function loadConfigToml(configPath: string): Toml {
 
   const directory = dirname(configPath);
   const name = basename(configPath);
+  const lock = join(directory, `${name}.migration-lock`);
   const backup = join(directory, `${name}.backup-${randomUUID()}`);
   const temporary = join(directory, `${name}.tmp-${randomUUID()}`);
   let backupMade = false;
   let replaced = false;
+  const lockHandle = openSync(lock, "wx", 0o600);
   try {
+    if (readFileSync(configPath, "utf-8") !== source) {
+      throw new Error(
+        "config.toml changed during whitelist migration; retry after stopping other editors.",
+      );
+    }
     copyFileSync(configPath, backup, constants.COPYFILE_EXCL);
     backupMade = true;
     if (readFileSync(backup, "utf-8") !== source) {
@@ -281,5 +299,7 @@ export function loadConfigToml(configPath: string): Toml {
   } finally {
     rmSync(temporary, { force: true });
     if (!replaced) rmSync(backup, { force: true });
+    closeSync(lockHandle);
+    rmSync(lock);
   }
 }

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
   mkdtempSync,
   readdirSync,
@@ -9,9 +10,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { loadConfigToml } from "./migrate-whitelist";
+import { ConfigTomlParseError, loadConfigToml } from "./migrate-whitelist";
 
 function configFile(
   t: { after: (fn: () => void) => void },
@@ -130,4 +131,40 @@ test("invalid migrated whitelist leaves the original config untouched", (t) => {
   assert.throws(() => loadConfigToml(file), /contentKeywords/);
   assert.equal(readFileSync(file, "utf-8"), source);
   assert.deepEqual(readdirSync(join(file, "..")), ["config.toml"]);
+});
+
+test("invalid source TOML warns and falls back to environment configuration", (t) => {
+  const source = "[processing.filtering\n";
+  const file = configFile(t, source);
+  assert.throws(() => loadConfigToml(file), ConfigTomlParseError);
+  const root = process.cwd();
+  const result = spawnSync(
+    join(root, "node_modules/.bin/tsx"),
+    [
+      "-e",
+      `const { config } = require(${JSON.stringify(join(root, "src/config/index.ts"))}); console.log(config.bilibili.cookieFiles[0].path)`,
+    ],
+    {
+      cwd: dirname(file),
+      encoding: "utf-8",
+      env: { ...process.env, BILIBILI_COOKIE_FILE: "from-environment" },
+    },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /config.toml not found or invalid/);
+  assert.match(result.stdout, /from-environment/);
+  assert.equal(readFileSync(file, "utf-8"), source);
+});
+
+test("an existing migration lock leaves the source unchanged", (t) => {
+  const source = `[processing.filtering]\ncontent_whitelist = ["music"]\n`;
+  const file = configFile(t, source);
+  const lock = `${file}.migration-lock`;
+  writeFileSync(lock, "", { flag: "wx" });
+  assert.throws(() => loadConfigToml(file), /EEXIST/);
+  assert.equal(readFileSync(file, "utf-8"), source);
+  assert.deepEqual(readdirSync(dirname(file)).sort(), [
+    "config.toml",
+    "config.toml.migration-lock",
+  ]);
 });

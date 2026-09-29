@@ -14,8 +14,11 @@ Then fill only the sections you use. On startup, legacy whitelist TOML keys are
 moved to `[whitelist.*]` automatically. Migration keeps a temporary backup
 and replaces the file only after validating the migrated values. A conflicting
 destination, quoted/dotted key, symlinked file needing migration, or
-non-comment multiline string requires a manual edit. Invalid TOML must be
-corrected before startup.
+non-comment multiline string requires a manual edit. Invalid TOML produces a
+warning and falls back to environment variables. Run migration when no other
+process or editor is writing `config.toml`. If a process stops during migration
+and leaves `config.toml.migration-lock`, remove that lock after confirming no
+instance is migrating.
 
 ## Sections
 
