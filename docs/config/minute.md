@@ -15,10 +15,6 @@ min_positive_priority = 1
 max_positive_priority = 720
 bootstrap_priority = 10
 bootstrap_ttl_hours = 24
-bootstrap_label_content_types = ["vocaloid", "maybe_vocaloid"]
-bootstrap_label_origin = "rule"
-bootstrap_label_writers = ["classification_apply", "classification_trigger"]
-bootstrap_tid_v2_allowlist = [2022, 2061]
 processed_backfill_new_video_age_days = 7
 collection_business_timezone = "Asia/Shanghai"
 ```
@@ -121,10 +117,6 @@ rescheduling and increments
 | `max_positive_priority` | `MINUTE_MAX_POSITIVE_PRIORITY` | `720` | Maximum positive interval in minutes. |
 | `bootstrap_priority` | `MINUTE_BOOTSTRAP_PRIORITY` | `10` | Initial interval for newly tracked videos. |
 | `bootstrap_ttl_hours` | `MINUTE_BOOTSTRAP_TTL_HOURS` | `24` | Maximum bootstrap window. |
-| `bootstrap_label_content_types` | `MINUTE_BOOTSTRAP_LABEL_CONTENT_TYPES` | `["vocaloid", "maybe_vocaloid"]` | Label content types eligible for bootstrap. |
-| `bootstrap_label_origin` | `MINUTE_BOOTSTRAP_LABEL_ORIGIN` | `rule` | Required label origin for bootstrap. |
-| `bootstrap_label_writers` | `MINUTE_BOOTSTRAP_LABEL_WRITERS` | `["classification_apply", "classification_trigger"]` | Label writers eligible for bootstrap. |
-| `bootstrap_tid_v2_allowlist` | `MINUTE_BOOTSTRAP_TID_V2_ALLOWLIST` | `[2022, 2061]` | Fallback type IDs eligible for bootstrap. |
 | `processed_backfill_new_video_age_days` | `MINUTE_PROCESSED_BACKFILL_NEW_VIDEO_AGE_DAYS` | `7` | Age cutoff for processed-video bootstrap. |
 | `collection_business_timezone` | `MINUTE_COLLECTION_BUSINESS_TIMEZONE` | `Asia/Shanghai` | Business date timezone for daily refresh. |
 
@@ -132,10 +124,40 @@ rescheduling and increments
 `target_delta_lower`..`target_delta_upper` range after parsing.
 `MINUTE_ENABLED` accepts `1`, `true`, `yes`, and `on` as true values.
 
-Use TOML for array settings such as `bootstrap_label_content_types`,
-`bootstrap_label_writers`, and `bootstrap_tid_v2_allowlist`. Unlike
-`BILIBILI_COOKIE_FILES` and the processing filter lists, these minute array
-settings are not parsed from comma-separated environment strings.
+## Bootstrap eligibility
+
+Bootstrap eligibility is configured under `[whitelist.minute_bootstrap]`:
+
+```toml
+[whitelist.minute_bootstrap]
+label_content_types = ["vocaloid", "maybe_vocaloid"]
+label_origin = "rule"
+label_writers = ["classification_apply", "classification_trigger"]
+tid_v2 = [2022, 2061]
+```
+
+| TOML key | Environment variable | Default | Effect |
+| --- | --- | --- | --- |
+| `label_content_types` | `MINUTE_BOOTSTRAP_LABEL_CONTENT_TYPES` | `["vocaloid", "maybe_vocaloid"]` | Eligible formal label types. |
+| `label_origin` | `MINUTE_BOOTSTRAP_LABEL_ORIGIN` | `rule` | Required label origin. |
+| `label_writers` | `MINUTE_BOOTSTRAP_LABEL_WRITERS` | `["classification_apply", "classification_trigger"]` | Eligible label writers. |
+| `tid_v2` | `MINUTE_BOOTSTRAP_TID_V2_ALLOWLIST` | `[2022, 2061]` | Fallback values when no formal label exists. |
+
+On startup, the app automatically moves these former TOML keys in `config.toml`
+to their current locations:
+
+| Former TOML key | Current TOML key |
+| --- | --- |
+| `minute.bootstrap_label_content_types` | `whitelist.minute_bootstrap.label_content_types` |
+| `minute.bootstrap_label_origin` | `whitelist.minute_bootstrap.label_origin` |
+| `minute.bootstrap_label_writers` | `whitelist.minute_bootstrap.label_writers` |
+| `minute.bootstrap_tid_v2_allowlist` | `whitelist.minute_bootstrap.tid_v2` |
+
+Existing environment variable names remain valid. After changing
+minute-bootstrap values, run `pnpm init-schema` against the database so stored
+SQL function defaults use the new values, then restart the application. Without
+schema initialization, calls that rely on the stored SQL defaults can continue
+using the previously installed bootstrap values.
 
 ## Metrics
 

@@ -12,18 +12,16 @@ export const filterVideo = async (
   ].join(" ");
 
   if (
-    Array.isArray(config.processing.filtering.typeIdWhitelist) &&
-    config.processing.filtering.typeIdWhitelist.length > 0
+    Array.isArray(config.whitelist.video.typeIds) &&
+    config.whitelist.video.typeIds.length > 0
   ) {
-    if (
-      !config.processing.filtering.typeIdWhitelist.includes(videoData.type_id)
-    ) {
+    if (!config.whitelist.video.typeIds.includes(videoData.type_id)) {
       let inwhite = false;
       if (
-        Array.isArray(config.processing.filtering.contentWhitelist) &&
-        config.processing.filtering.contentWhitelist.length > 0
+        Array.isArray(config.whitelist.video.contentKeywords) &&
+        config.whitelist.video.contentKeywords.length > 0
       ) {
-        for (const keyword of config.processing.filtering.contentWhitelist) {
+        for (const keyword of config.whitelist.video.contentKeywords) {
           if (contentToCheck.includes(keyword.toLowerCase())) {
             logger.debug(
               `${videoData.bvid} 包含白名单关键字 "${keyword}"，忽略类型检查: ${videoData.title}`,
@@ -44,21 +42,17 @@ export const filterVideo = async (
 
   // Check copyright whitelist
   if (
-    Array.isArray(config.processing.filtering.copyrightWhitelist) &&
-    config.processing.filtering.copyrightWhitelist.length > 0 &&
+    Array.isArray(config.whitelist.video.copyrightTypes) &&
+    config.whitelist.video.copyrightTypes.length > 0 &&
     videoData.copyright !== undefined
   ) {
-    if (
-      !config.processing.filtering.copyrightWhitelist.includes(
-        videoData.copyright,
-      )
-    ) {
+    if (!config.whitelist.video.copyrightTypes.includes(videoData.copyright)) {
       let inwhite = false;
       if (
-        Array.isArray(config.processing.filtering.contentWhitelist) &&
-        config.processing.filtering.contentWhitelist.length > 0
+        Array.isArray(config.whitelist.video.contentKeywords) &&
+        config.whitelist.video.contentKeywords.length > 0
       ) {
-        for (const keyword of config.processing.filtering.contentWhitelist) {
+        for (const keyword of config.whitelist.video.contentKeywords) {
           if (contentToCheck.includes(keyword.toLowerCase())) {
             logger.debug(
               `${videoData.bvid} 包含白名单关键字 "${keyword}"，忽略版权检查: ${videoData.title}`,

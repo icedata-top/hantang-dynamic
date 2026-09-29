@@ -1,6 +1,7 @@
 # Processing Configuration
 
-`[processing]` controls feature flags and filtering rules.
+`[processing]` controls feature flags and the content blacklist. Video and
+recommendation allowlists are configured under `[whitelist]`.
 
 ## Feature flags
 
@@ -25,17 +26,57 @@ max_recommendation_depth = 1
 
 ```toml
 [processing.filtering]
-type_id_whitelist = []
-copyright_whitelist = []
 content_blacklist = []
-content_whitelist = []
 ```
 
 | TOML key | Environment variable | Default | Meaning |
 | --- | --- | --- | --- |
-| `type_id_whitelist` | `TYPE_ID_WHITE_LIST` | `[]` | Type IDs to include. |
-| `copyright_whitelist` | `COPYRIGHT_WHITE_LIST` | `[]` | Copyright types to include. |
 | `content_blacklist` | `CONTENT_BLACK_LIST` | `[]` | Keywords to exclude. |
-| `content_whitelist` | `CONTENT_WHITE_LIST` | `[]` | Keywords to include. |
 
-For environment variables, list values are comma-separated.
+For environment variables, list values are comma-separated. The blacklist is
+applied after the video allowlists; matching an allowlist never bypasses it.
+
+## Video and recommendation allowlists
+
+Video and recommendation allowlists use these TOML keys. A TOML value takes
+precedence over the corresponding environment variable; environment list values
+are comma-separated. Empty TOML arrays explicitly disable a list.
+
+```toml
+[whitelist.video]
+type_ids = []
+copyright_types = []
+content_keywords = []
+
+[whitelist.recommendation]
+pid_v2 = []
+```
+
+| TOML key | Environment variable | Default | Effect |
+| --- | --- | --- | --- |
+| `whitelist.video.type_ids` | `TYPE_ID_WHITE_LIST` | `[]` | Video types admitted by the type check. |
+| `whitelist.video.copyright_types` | `COPYRIGHT_WHITE_LIST` | `[]` | Copyright types admitted by the copyright check. |
+| `whitelist.video.content_keywords` | `CONTENT_WHITE_LIST` | `[]` | Keywords that bypass the type and copyright checks. Blank keywords are invalid. |
+| `whitelist.recommendation.pid_v2` | `UPDATE_INFO_PID_V2_WHITELIST` | `[]` | Related videos admitted by recommendation collection and `--update-info`. |
+
+An empty video type or copyright list disables that check. A matching content
+keyword bypasses those checks, while `processing.filtering.content_blacklist`
+still excludes matching videos. Recommendation admission requires a listed
+`pid_v2`; `--update-info --pid-v2-whitelist` overrides the configured list for
+that run.
+
+On startup, the app automatically moves these former TOML keys in `config.toml`
+to their current locations:
+
+| Former TOML key | Current TOML key |
+| --- | --- |
+| `processing.filtering.type_id_whitelist` | `whitelist.video.type_ids` |
+| `processing.filtering.copyright_whitelist` | `whitelist.video.copyright_types` |
+| `processing.filtering.content_whitelist` | `whitelist.video.content_keywords` |
+| `processing.filtering.pid_v2_whitelist` | `whitelist.recommendation.pid_v2` |
+
+The migration preserves other configuration text and comments. It stops without
+changing the file if a destination key already exists or the old key uses quoted
+or dotted TOML syntax. Move those keys manually before restarting. Keep
+`processing.filtering.content_blacklist` where it is. Existing environment
+variable names remain valid.

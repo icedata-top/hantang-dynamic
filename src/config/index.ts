@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
+import { ConfigTomlParseError, loadConfigToml } from "./migrate-whitelist";
 import {
   applicationSchema,
   bilibiliSchema,
@@ -16,6 +16,7 @@ import {
   createRepairConfig,
   createServerConfig,
   createSubtitleConfig,
+  createWhitelistConfig,
   databaseSchema,
   exportSchema,
   metricsSchema,
@@ -25,18 +26,21 @@ import {
   repairSchema,
   serverSchema,
   subtitleSchema,
+  whitelistSchema,
 } from "./schemas";
 
+const configPath = resolve(process.cwd(), "config.toml");
 let tomlData: unknown = {};
-try {
-  const configPath = resolve(process.cwd(), "config.toml");
-  const tomlString = readFileSync(configPath, "utf-8");
-  tomlData = parseToml(tomlString);
-} catch (error) {
-  console.warn(
-    "Warning: config.toml not found or invalid. Using environment variables as fallback.",
-  );
-  console.warn("Actual error:", error);
+if (existsSync(configPath)) {
+  try {
+    tomlData = loadConfigToml(configPath);
+  } catch (error) {
+    if (!(error instanceof ConfigTomlParseError)) throw error;
+    console.warn(
+      "Warning: config.toml not found or invalid. Using environment variables as fallback.",
+    );
+    console.warn("Actual error:", error.cause);
+  }
 }
 
 // Helper function to get configuration value from TOML or environment variable
@@ -90,6 +94,7 @@ const configSchema = z.object({
   server: serverSchema,
   subtitle: subtitleSchema,
   notifications: notificationsSchema,
+  whitelist: whitelistSchema,
 });
 
 export const config = configSchema.parse({
@@ -104,4 +109,5 @@ export const config = configSchema.parse({
   server: createServerConfig(getConfigValue),
   subtitle: createSubtitleConfig(getConfigValue),
   notifications: createNotificationsConfig(getConfigValue),
+  whitelist: createWhitelistConfig(getConfigValue),
 });

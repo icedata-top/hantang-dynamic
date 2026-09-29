@@ -12,11 +12,7 @@ export const processingSchema = z.object({
     maxRelatedExpansionDepth: z.coerce.number().default(1),
   }),
   filtering: z.object({
-    typeIdWhitelist: z.array(z.number()).default([]),
     contentBlacklist: z.array(z.string()).default([]),
-    contentWhitelist: z.array(z.string()).default([]),
-    copyrightWhitelist: z.array(z.number()).default([]),
-    pidV2Whitelist: z.array(z.number().int().positive()).default([]),
   }),
 });
 
@@ -39,9 +35,10 @@ export function createProcessingConfig(
     ["processing", "features", "max_recommendation_depth"],
     "MAX_RECOMMENDATION_DEPTH",
   );
-  const pidV2Whitelist = getConfigValue(
-    ["processing", "filtering", "pid_v2_whitelist"],
-    "UPDATE_INFO_PID_V2_WHITELIST",
+  const contentBlacklist = getConfigValue(
+    ["processing", "filtering", "content_blacklist"],
+    "CONTENT_BLACK_LIST",
+    [],
   );
 
   return {
@@ -79,39 +76,10 @@ export function createProcessingConfig(
         1,
     },
     filtering: {
-      typeIdWhitelist:
-        getConfigValue(
-          ["processing", "filtering", "type_id_whitelist"],
-          "TYPE_ID_WHITE_LIST",
-        ) ||
-        process.env.TYPE_ID_WHITE_LIST?.split(",").map(Number) ||
-        [],
       contentBlacklist:
-        getConfigValue(
-          ["processing", "filtering", "content_blacklist"],
-          "CONTENT_BLACK_LIST",
-        ) ||
-        process.env.CONTENT_BLACK_LIST?.split(",").map((s) => s.trim()) ||
-        [],
-      contentWhitelist:
-        getConfigValue(
-          ["processing", "filtering", "content_whitelist"],
-          "CONTENT_WHITE_LIST",
-        ) ||
-        process.env.CONTENT_WHITE_LIST?.split(",").map((s) => s.trim()) ||
-        [],
-      copyrightWhitelist:
-        getConfigValue(
-          ["processing", "filtering", "copyright_whitelist"],
-          "COPYRIGHT_WHITE_LIST",
-        ) ||
-        process.env.COPYRIGHT_WHITE_LIST?.split(",").map(Number) ||
-        [],
-      pidV2Whitelist: Array.isArray(pidV2Whitelist)
-        ? pidV2Whitelist
-        : typeof pidV2Whitelist === "string"
-          ? pidV2Whitelist.split(",").map(Number)
-          : [],
+        typeof contentBlacklist === "string"
+          ? contentBlacklist.split(",").map((entry) => entry.trim())
+          : contentBlacklist,
     },
   };
 }

@@ -350,10 +350,11 @@ export class Database {
       {
         bootstrapPriority: config.minute.bootstrapPriority,
         bootstrapTtlHours: config.minute.bootstrapTtlHours,
-        bootstrapLabelContentTypes: config.minute.bootstrapLabelContentTypes,
-        bootstrapLabelOrigin: config.minute.bootstrapLabelOrigin,
-        bootstrapLabelWriters: config.minute.bootstrapLabelWriters,
-        bootstrapTidV2Allowlist: config.minute.bootstrapTidV2Allowlist,
+        bootstrapLabelContentTypes:
+          config.whitelist.minuteBootstrap.labelContentTypes,
+        bootstrapLabelOrigin: config.whitelist.minuteBootstrap.labelOrigin,
+        bootstrapLabelWriters: config.whitelist.minuteBootstrap.labelWriters,
+        bootstrapTidV2Allowlist: config.whitelist.minuteBootstrap.tidV2,
         processedBackfillNewVideoAgeDays:
           config.minute.processedBackfillNewVideoAgeDays,
       },
@@ -371,10 +372,11 @@ export class Database {
       {
         bootstrapPriority: config.minute.bootstrapPriority,
         bootstrapTtlHours: config.minute.bootstrapTtlHours,
-        bootstrapLabelContentTypes: config.minute.bootstrapLabelContentTypes,
-        bootstrapLabelOrigin: config.minute.bootstrapLabelOrigin,
-        bootstrapLabelWriters: config.minute.bootstrapLabelWriters,
-        bootstrapTidV2Allowlist: config.minute.bootstrapTidV2Allowlist,
+        bootstrapLabelContentTypes:
+          config.whitelist.minuteBootstrap.labelContentTypes,
+        bootstrapLabelOrigin: config.whitelist.minuteBootstrap.labelOrigin,
+        bootstrapLabelWriters: config.whitelist.minuteBootstrap.labelWriters,
+        bootstrapTidV2Allowlist: config.whitelist.minuteBootstrap.tidV2,
         processedBackfillNewVideoAgeDays:
           config.minute.processedBackfillNewVideoAgeDays,
       },
