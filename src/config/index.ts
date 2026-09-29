@@ -16,6 +16,7 @@ import {
   createRepairConfig,
   createServerConfig,
   createSubtitleConfig,
+  createWhitelistConfig,
   databaseSchema,
   exportSchema,
   metricsSchema,
@@ -25,6 +26,7 @@ import {
   repairSchema,
   serverSchema,
   subtitleSchema,
+  whitelistSchema,
 } from "./schemas";
 
 let tomlData: unknown = {};
@@ -90,6 +92,7 @@ const configSchema = z.object({
   server: serverSchema,
   subtitle: subtitleSchema,
   notifications: notificationsSchema,
+  whitelist: whitelistSchema,
 });
 
 export const config = configSchema.parse({
@@ -104,4 +107,5 @@ export const config = configSchema.parse({
   server: createServerConfig(getConfigValue),
   subtitle: createSubtitleConfig(getConfigValue),
   notifications: createNotificationsConfig(getConfigValue),
+  whitelist: createWhitelistConfig(getConfigValue),
 });

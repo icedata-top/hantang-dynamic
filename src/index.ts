@@ -104,7 +104,7 @@ async function main() {
     } = await import("./scripts/update-info");
     const whitelistValue =
       updateInfoWhitelistArgument(args) ??
-      config.processing.filtering.pidV2Whitelist.join(",");
+      config.whitelist.recommendation.pidV2.join(",");
     const where = parseUpdateInfoPredicateArgument(args);
     await runUpdateInfo({
       pidV2Whitelist: parsePidV2Whitelist(whitelistValue),

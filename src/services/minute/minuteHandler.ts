@@ -111,7 +111,7 @@ export class MinuteHandler {
           typeof id === "number"
             ? fetchVideoFullDetail({ aid: id })
             : fetchVideoFullDetail({ bvid: id }),
-        pidV2Whitelist: new Set(config.processing.filtering.pidV2Whitelist),
+        pidV2Whitelist: new Set(config.whitelist.recommendation.pidV2),
       });
   }
 

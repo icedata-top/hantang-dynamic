@@ -82,10 +82,6 @@ min_positive_priority = 1
 max_positive_priority = 720
 bootstrap_priority = 10
 bootstrap_ttl_hours = 24
-bootstrap_label_content_types = ["vocaloid", "maybe_vocaloid"]
-bootstrap_label_origin = "rule"
-bootstrap_label_writers = ["classification_apply", "classification_trigger"]
-bootstrap_tid_v2_allowlist = [2022, 2061]
 processed_backfill_new_video_age_days = 7
 collection_business_timezone = "Asia/Shanghai"
 
@@ -111,11 +107,21 @@ max_recommendation_depth = 1
 
 [processing.filtering]
 # Content filtering settings
-type_id_whitelist = []         # Array of video type IDs to include (e.g., [28, 30, 130])
-copyright_whitelist = []       # Array of copyright types to include (1: Original, 2: Repost)
 content_blacklist = []         # Array of content blacklist keywords
-content_whitelist = []         # Array of content whitelist keywords
-pid_v2_whitelist = []          # Explicit pid_v2 values eligible for recommendation admission
+
+[whitelist.video]
+type_ids = []                  # Video type IDs to include (e.g., [28, 30, 130])
+copyright_types = []          # Copyright types to include (1: Original, 2: Repost)
+content_keywords = []         # Keywords that bypass type and copyright checks
+
+[whitelist.recommendation]
+pid_v2 = []                    # Explicit pid_v2 values eligible for recommendation admission
+
+[whitelist.minute_bootstrap]
+label_content_types = ["vocaloid", "maybe_vocaloid"]
+label_origin = "rule"
+label_writers = ["classification_apply", "classification_trigger"]
+tid_v2 = [2022, 2061]
 
 [export]
 [export.mysql]

@@ -1,25 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createProcessingConfig, processingSchema } from "./processing.js";
+import { createProcessingConfig } from "./processing.js";
 
-test("pid_v2 whitelist prefers TOML values and validates every entry", () => {
-  const config = createProcessingConfig((path, envKey) => {
-    if (path.join(".") === "processing.filtering.pid_v2_whitelist") {
-      return [7, 11];
-    }
-    return envKey === "UPDATE_INFO_PID_V2_WHITELIST" ? "13,17" : undefined;
-  });
-  assert.deepEqual(config.filtering.pidV2Whitelist, [7, 11]);
-  const environmentConfig = createProcessingConfig((_path, envKey) =>
-    envKey === "UPDATE_INFO_PID_V2_WHITELIST" ? "13,17" : undefined,
+test("content blacklist keeps TOML precedence and parses environment entries", () => {
+  const fromToml = createProcessingConfig((path, envKey) =>
+    path.join(".") === "processing.filtering.content_blacklist"
+      ? ["skip"]
+      : envKey === "CONTENT_BLACK_LIST"
+        ? "other, word"
+        : undefined,
   );
-  assert.deepEqual(environmentConfig.filtering.pidV2Whitelist, [13, 17]);
-  assert.throws(
-    () =>
-      processingSchema.parse({
-        features: {},
-        filtering: { pidV2Whitelist: [7, 1.5] },
-      }),
-    /pidV2Whitelist/,
+  assert.deepEqual(fromToml.filtering.contentBlacklist, ["skip"]);
+  const fromEnvironment = createProcessingConfig((_path, envKey) =>
+    envKey === "CONTENT_BLACK_LIST" ? "other, word" : undefined,
   );
+  assert.deepEqual(fromEnvironment.filtering.contentBlacklist, [
+    "other",
+    "word",
+  ]);
 });

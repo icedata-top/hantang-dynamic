@@ -12,3 +12,4 @@ export { createProcessingConfig, processingSchema } from "./processing";
 export { createRepairConfig, repairSchema } from "./repair";
 export { createServerConfig, serverSchema } from "./server";
 export { createSubtitleConfig, subtitleSchema } from "./subtitle";
+export { createWhitelistConfig, whitelistSchema } from "./whitelist";

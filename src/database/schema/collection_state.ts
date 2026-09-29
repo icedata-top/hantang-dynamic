@@ -483,10 +483,10 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       p_now timestamptz DEFAULT now(),
       p_bootstrap_priority integer DEFAULT ${config.minute.bootstrapPriority},
       p_bootstrap_ttl_hours integer DEFAULT ${config.minute.bootstrapTtlHours},
-      p_bootstrap_label_content_types text[] DEFAULT ARRAY[${sqlTextArray(config.minute.bootstrapLabelContentTypes)}]::text[],
-      p_bootstrap_label_origin text DEFAULT '${sqlText(config.minute.bootstrapLabelOrigin)}',
-      p_bootstrap_label_writers text[] DEFAULT ARRAY[${sqlTextArray(config.minute.bootstrapLabelWriters)}]::text[],
-      p_bootstrap_tid_v2_allowlist integer[] DEFAULT ARRAY[${sqlIntegerArray(config.minute.bootstrapTidV2Allowlist)}]::integer[],
+      p_bootstrap_label_content_types text[] DEFAULT ARRAY[${sqlTextArray(config.whitelist.minuteBootstrap.labelContentTypes)}]::text[],
+      p_bootstrap_label_origin text DEFAULT '${sqlText(config.whitelist.minuteBootstrap.labelOrigin)}',
+      p_bootstrap_label_writers text[] DEFAULT ARRAY[${sqlTextArray(config.whitelist.minuteBootstrap.labelWriters)}]::text[],
+      p_bootstrap_tid_v2_allowlist integer[] DEFAULT ARRAY[${sqlIntegerArray(config.whitelist.minuteBootstrap.tidV2)}]::integer[],
       p_processed_backfill_new_video_age_days integer DEFAULT ${config.minute.processedBackfillNewVideoAgeDays}
     ) RETURNS text AS $$
     DECLARE
@@ -660,10 +660,10 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         p_now,
         ${config.minute.bootstrapPriority},
         ${config.minute.bootstrapTtlHours},
-        ARRAY[${sqlTextArray(config.minute.bootstrapLabelContentTypes)}]::text[],
-        '${sqlText(config.minute.bootstrapLabelOrigin)}',
-        ARRAY[${sqlTextArray(config.minute.bootstrapLabelWriters)}]::text[],
-        ARRAY[${sqlIntegerArray(config.minute.bootstrapTidV2Allowlist)}]::integer[],
+        ARRAY[${sqlTextArray(config.whitelist.minuteBootstrap.labelContentTypes)}]::text[],
+        '${sqlText(config.whitelist.minuteBootstrap.labelOrigin)}',
+        ARRAY[${sqlTextArray(config.whitelist.minuteBootstrap.labelWriters)}]::text[],
+        ARRAY[${sqlIntegerArray(config.whitelist.minuteBootstrap.tidV2)}]::integer[],
         ${config.minute.processedBackfillNewVideoAgeDays}
       );
     END;

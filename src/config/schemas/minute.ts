@@ -16,16 +16,6 @@ export const minuteSchema = z.object({
   maxPositivePriority: z.coerce.number().int().positive().default(720),
   bootstrapPriority: z.coerce.number().int().positive().default(10),
   bootstrapTtlHours: z.coerce.number().int().positive().max(24).default(24),
-  bootstrapLabelContentTypes: z
-    .array(z.string())
-    .default(["vocaloid", "maybe_vocaloid"]),
-  bootstrapLabelOrigin: z.string().default("rule"),
-  bootstrapLabelWriters: z
-    .array(z.string())
-    .default(["classification_apply", "classification_trigger"]),
-  bootstrapTidV2Allowlist: z
-    .array(z.coerce.number().int())
-    .default([2022, 2061]),
   processedBackfillNewVideoAgeDays: z.coerce
     .number()
     .int()
@@ -91,26 +81,6 @@ export function createMinuteConfig(
       ["minute", "bootstrap_ttl_hours"],
       "MINUTE_BOOTSTRAP_TTL_HOURS",
       24,
-    ),
-    bootstrapLabelContentTypes: getConfigValue(
-      ["minute", "bootstrap_label_content_types"],
-      "MINUTE_BOOTSTRAP_LABEL_CONTENT_TYPES",
-      ["vocaloid", "maybe_vocaloid"],
-    ),
-    bootstrapLabelOrigin: getConfigValue(
-      ["minute", "bootstrap_label_origin"],
-      "MINUTE_BOOTSTRAP_LABEL_ORIGIN",
-      "rule",
-    ),
-    bootstrapLabelWriters: getConfigValue(
-      ["minute", "bootstrap_label_writers"],
-      "MINUTE_BOOTSTRAP_LABEL_WRITERS",
-      ["classification_apply", "classification_trigger"],
-    ),
-    bootstrapTidV2Allowlist: getConfigValue(
-      ["minute", "bootstrap_tid_v2_allowlist"],
-      "MINUTE_BOOTSTRAP_TID_V2_ALLOWLIST",
-      [2022, 2061],
     ),
     processedBackfillNewVideoAgeDays: getConfigValue(
       ["minute", "processed_backfill_new_video_age_days"],
