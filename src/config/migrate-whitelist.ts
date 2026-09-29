@@ -14,7 +14,10 @@ import {
 import { basename, dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parse as parseToml } from "smol-toml";
-import { legacyWhitelistPaths } from "./schemas/whitelist";
+import {
+  createWhitelistConfig,
+  legacyWhitelistPaths,
+} from "./schemas/whitelist";
 
 type Toml = Record<string, unknown>;
 
@@ -213,12 +216,6 @@ function verifyMigration(
 }
 
 export function loadConfigToml(configPath: string): Toml {
-  const stat = lstatSync(configPath);
-  if (!stat.isFile()) {
-    throw new Error(
-      "config.toml must be a regular file; symlinks cannot be migrated automatically.",
-    );
-  }
   const source = readFileSync(configPath, "utf-8");
   const original = parseConfig(source);
   const present = legacyWhitelistPaths.filter(
@@ -226,6 +223,19 @@ export function loadConfigToml(configPath: string): Toml {
   );
   const migrated = migrateWhitelistText(source);
   if (migrated === source) return original;
+  const stat = lstatSync(configPath);
+  if (!stat.isFile()) {
+    throw new Error(
+      "config.toml must be a regular file; symlinks cannot be migrated automatically.",
+    );
+  }
+  const migratedData = parseConfig(migrated);
+  createWhitelistConfig((tomlPath, envKey, defaultValue) => {
+    const value = atPath(migratedData, tomlPath.join("."));
+    if (value !== undefined && value !== "") return value;
+    const envValue = process.env[envKey];
+    return envValue !== undefined && envValue !== "" ? envValue : defaultValue;
+  });
 
   const directory = dirname(configPath);
   const name = basename(configPath);

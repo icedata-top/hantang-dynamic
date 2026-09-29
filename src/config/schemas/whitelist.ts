@@ -42,7 +42,7 @@ export const whitelistSchema = z.object({
       "classification_apply",
       "classification_trigger",
     ]),
-    tidV2: z.array(z.number().int()).default([2022, 2061]),
+    tidV2: z.array(z.coerce.number().int()).default([2022, 2061]),
   }),
 });
 

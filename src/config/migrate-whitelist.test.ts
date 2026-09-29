@@ -98,3 +98,36 @@ test("a symlinked config cannot be rewritten automatically", (t) => {
   assert.throws(() => loadConfigToml(link), /symlinks cannot be migrated/);
   assert.equal(readFileSync(target, "utf-8"), original);
 });
+
+test("a symlinked config without legacy keys remains readable", (t) => {
+  const target = configFile(
+    t,
+    `[whitelist.video]\ncontent_keywords = ["music"]\n`,
+  );
+  const link = join(target, "..", "linked.toml");
+  symlinkSync(target, link);
+  assert.deepEqual(loadConfigToml(link).whitelist, {
+    video: { content_keywords: ["music"] },
+  });
+  assert.equal(readFileSync(target, "utf-8"), readFileSync(link, "utf-8"));
+});
+
+test("migration retains numeric-string minute IDs", (t) => {
+  const file = configFile(
+    t,
+    `[minute]\nbootstrap_tid_v2_allowlist = ["2022"]\n`,
+  );
+  const migrated = loadConfigToml(file);
+  assert.deepEqual(migrated.whitelist, {
+    minute_bootstrap: { tid_v2: ["2022"] },
+  });
+  assert.match(readFileSync(file, "utf-8"), /tid_v2 = \["2022"\]/);
+});
+
+test("invalid migrated whitelist leaves the original config untouched", (t) => {
+  const source = `[processing.filtering]\ncontent_whitelist = ["   "]\n`;
+  const file = configFile(t, source);
+  assert.throws(() => loadConfigToml(file), /contentKeywords/);
+  assert.equal(readFileSync(file, "utf-8"), source);
+  assert.deepEqual(readdirSync(join(file, "..")), ["config.toml"]);
+});

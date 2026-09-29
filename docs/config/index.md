@@ -13,8 +13,9 @@ cp config.toml.example config.toml
 Then fill only the sections you use. On startup, legacy whitelist TOML keys are
 moved to `[whitelist.*]` automatically. Migration keeps a temporary backup
 and replaces the file only after validating the migrated values. A conflicting
-destination, quoted/dotted key, symlink, or non-comment multiline string
-requires a manual edit. Invalid TOML must be corrected before startup.
+destination, quoted/dotted key, symlinked file needing migration, or
+non-comment multiline string requires a manual edit. Invalid TOML must be
+corrected before startup.
 
 ## Sections
 
