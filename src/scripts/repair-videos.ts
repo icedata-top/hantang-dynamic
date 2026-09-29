@@ -114,7 +114,6 @@ async function processVideo(
 ): Promise<ProcessResult> {
   try {
     const { video } = await detailsService.processVideoById(bvid, {
-      processRecommendations: false,
       processRelated: false,
       storeOwner: false,
       skipCacheCheck: true,
@@ -167,7 +166,6 @@ async function processBatchItem(
       bvid,
       item.data,
       {
-        processRecommendations: false,
         processRelated: false,
         storeOwner: false,
       },

@@ -23,18 +23,6 @@ export interface UserStatsUpdate {
 }
 
 /**
- * Recommendation data
- */
-export interface RecommendationData {
-  videoAid: bigint;
-  recommendedByAid: bigint;
-  recommendCount: number;
-  recommendOrder: number;
-  firstSeen: Date;
-  lastSeen: Date;
-}
-
-/**
  * User data with statistics
  */
 export interface UserData {
@@ -121,7 +109,6 @@ export interface DynamicData {
 export interface DatabaseStats {
   processedVideosCount: number;
   dynamicsCount: number;
-  recommendationsCount: number;
   discoveredUsersCount: number;
   filteredVideosCount: number;
 }

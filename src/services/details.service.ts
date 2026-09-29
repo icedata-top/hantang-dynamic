@@ -20,7 +20,6 @@ interface VideoProcessingOptions {
   pidV2?: number;
   cover43?: string;
   enrichRelatedMetadata?: boolean;
-  processRecommendations?: boolean;
   processRelated?: boolean;
   skipCacheCheck?: boolean;
 }
@@ -165,7 +164,6 @@ export class DetailsService {
   async processVideoById(
     id: string | number,
     options: {
-      processRecommendations?: boolean;
       processRelated?: boolean;
       storeOwner?: boolean;
       skipCacheCheck?: boolean;
@@ -178,7 +176,6 @@ export class DetailsService {
     relatedVideos: RelatedVideoWorkItem[];
   }> {
     const {
-      processRecommendations = true,
       processRelated = true,
       storeOwner = true,
       enrichRelatedMetadata = true,
@@ -247,7 +244,6 @@ export class DetailsService {
 
       return await this.processResolvedVideoData(videoData, relatedVideos, {
         enrichRelatedMetadata,
-        processRecommendations,
         processRelated,
       });
     } catch (error) {
@@ -397,7 +393,6 @@ export class DetailsService {
       cover43?: string;
       enrichRelatedMetadata?: boolean;
       pidV2?: number;
-      processRecommendations?: boolean;
       processRelated?: boolean;
       storeOwner?: boolean;
     } = {},
@@ -406,7 +401,6 @@ export class DetailsService {
     relatedVideos: RelatedVideoWorkItem[];
   }> {
     const {
-      processRecommendations = true,
       processRelated = true,
       storeOwner = true,
       enrichRelatedMetadata = true,
@@ -427,7 +421,6 @@ export class DetailsService {
 
       return await this.processResolvedVideoData(videoData, relatedVideos, {
         enrichRelatedMetadata,
-        processRecommendations,
         processRelated,
       });
     } catch (error) {
@@ -466,7 +459,6 @@ export class DetailsService {
     relatedVideos: RecommendedVideo[],
     options: {
       enrichRelatedMetadata?: boolean;
-      processRecommendations: boolean;
       processRelated: boolean;
     },
   ): Promise<{
@@ -477,14 +469,6 @@ export class DetailsService {
 
     if (options.enrichRelatedMetadata !== false) {
       await this.enrichRelatedVideoMetadata(relatedVideos);
-    }
-
-    if (options.processRecommendations && relatedVideos.length > 0) {
-      const recommendations = this.buildRecommendationInputs(
-        videoData.aid,
-        relatedVideos,
-      );
-      await this.db.trackRecommendationsBatch(recommendations);
     }
 
     await this.db.markVideoProcessedWithCollectionState(
@@ -763,27 +747,5 @@ export class DetailsService {
         ? { cover43: video.cover43 }
         : {}),
     }));
-  }
-
-  private buildRecommendationInputs(
-    sourceAid: bigint,
-    relatedVideos: RecommendedVideo[],
-  ): Array<{ videoAid: number; recommendedByAid: bigint; order: number }> {
-    const seenAids = new Set<number>();
-
-    return relatedVideos.flatMap((video, index) => {
-      if (seenAids.has(video.aid)) {
-        return [];
-      }
-      seenAids.add(video.aid);
-
-      return [
-        {
-          videoAid: video.aid,
-          recommendedByAid: sourceAid,
-          order: index,
-        },
-      ];
-    });
   }
 }
