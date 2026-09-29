@@ -67,7 +67,7 @@ test("newly processed eligible videos persist with collection state", async () =
         } as RecommendedVideo,
         { aid: 51, cover43: "https://cover/51" } as RecommendedVideo,
       ],
-      { processRecommendations: false, processRelated: false },
+      { processRelated: false },
     ]);
 
     assert.equal((result as ProcessedVideoResult).video, video);
@@ -150,7 +150,6 @@ test("new related videos persist pid_v2 supplied by the parent response", async 
       "BV1source",
       detail(42n, "BV1source", [related]),
       {
-        processRecommendations: false,
         processRelated: true,
         storeOwner: false,
       },
@@ -163,7 +162,6 @@ test("new related videos persist pid_v2 supplied by the parent response", async 
     await service.processVideo(source.relatedVideos[0].dynamic, {
       pidV2: source.relatedVideos[0].pidV2,
       cover43: source.relatedVideos[0].cover43,
-      processRecommendations: false,
       processRelated: false,
       skipCacheCheck: true,
     });

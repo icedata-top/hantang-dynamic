@@ -12,7 +12,6 @@ import { initCronVideoStatic } from "./cron/video_static.js";
 import { initDynamicsSchema } from "./dynamics.js";
 import { initFunctionsSchema } from "./functions.js";
 import { initPidV2NamesSchema } from "./pid_v2_names.js";
-import { initRecommendationsSchema } from "./recommendations.js";
 import { initUserHistorySchema } from "./user_history.js";
 import { initUsersSchema } from "./users.js";
 import { initVideoDailySchema } from "./video_daily.js";
@@ -46,7 +45,6 @@ export async function initializeSchema(
   await initVideoHistorySchema(pool);
 
   await Promise.all([
-    initRecommendationsSchema(pool),
     initUserHistorySchema(pool),
     initCollectionStateSchema(pool),
   ]);

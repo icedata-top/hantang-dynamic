@@ -32,7 +32,6 @@ export type {
 export type {
   DatabaseStats,
   DiscoveredUserData,
-  RecommendationData,
   UserData,
   UserStatsUpdate,
 } from "./models/database";

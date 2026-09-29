@@ -120,7 +120,6 @@ export async function runImportCsv() {
   let skippedCount = skippedImmediately;
   let errorCount = 0;
   const features = config.processing?.features;
-  const recordRelatedEdges = features?.enableRelatedQualitySignal ?? true;
   const enableRelatedExpansion =
     features?.enableRelatedExpansion ?? features?.enableRecommendation ?? false;
   const maxRelatedExpansionDepth =
@@ -152,7 +151,6 @@ export async function runImportCsv() {
         const { video, relatedVideos } = await detailsService.processVideoById(
           id,
           {
-            processRecommendations: recordRelatedEdges,
             processRelated:
               enableRelatedExpansion && maxRelatedExpansionDepth > 1,
             skipCacheCheck: true,
@@ -179,7 +177,6 @@ export async function runImportCsv() {
               maxRelatedExpansionDepth,
               collectedVideos,
               processedBvids,
-              recordRelatedEdges,
             );
           }
 
@@ -230,7 +227,6 @@ async function processRelatedQueue(
   maxDepth: number,
   results: VideoData[],
   seenBvids: Set<string>,
-  processRecommendations: boolean,
 ) {
   if (depth >= maxDepth || queue.length === 0) return;
 
@@ -247,7 +243,6 @@ async function processRelatedQueue(
         {
           pidV2: item.pidV2,
           cover43: item.cover43,
-          processRecommendations,
           processRelated: depth < maxDepth,
           skipCacheCheck: true,
         },
@@ -269,7 +264,6 @@ async function processRelatedQueue(
       maxDepth,
       results,
       seenBvids,
-      processRecommendations,
     );
   }
 }
