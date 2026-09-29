@@ -74,6 +74,38 @@ bootstrap_tid_v2_allowlist = [2022]
   assert.equal(readFileSync(file, "utf-8"), migrated);
 });
 
+test("inline triple-quote comments do not block migration", (t) => {
+  const source = `[processing.filtering]\ncontent_whitelist = ["music"] # example: """text"""\n`;
+  const file = configFile(t, source);
+  loadConfigToml(file);
+  assert.match(
+    readFileSync(file, "utf-8"),
+    /content_keywords = \["music"\] # example: """text"""/,
+  );
+});
+
+test("actual multiline strings still require manual migration", (t) => {
+  const source = `[processing.filtering]\ncontent_whitelist = ["music"]\ndescription = """first\nsecond"""\n`;
+  const file = configFile(t, source);
+  assert.throws(() => loadConfigToml(file), /multiline strings/);
+  assert.equal(readFileSync(file, "utf-8"), source);
+});
+
+test("attached comments follow their legacy key, but separated section comments stay", (t) => {
+  const source = `[processing.filtering]\n# section guidance\n\n# keywords for this video\n# keep this note with the key\ncontent_whitelist = ["music"]\ncontent_blacklist = ["spam"]\n`;
+  const file = configFile(t, source);
+  loadConfigToml(file);
+  const migrated = readFileSync(file, "utf-8");
+  assert.match(
+    migrated,
+    /\[processing\.filtering\]\n# section guidance\n\ncontent_blacklist/,
+  );
+  assert.match(
+    migrated,
+    /\[whitelist\.video\]\n# keywords for this video\n# keep this note with the key\ncontent_keywords = \["music"\]/,
+  );
+});
+
 test("conflicts and unsupported old key forms leave config.toml unchanged", (t) => {
   for (const source of [
     `[processing.filtering]\ncontent_whitelist = ["music"]\n[whitelist.video]\ncontent_keywords = ["dance"]\n`,

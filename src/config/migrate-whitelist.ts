@@ -48,28 +48,39 @@ function parseConfig(source: string): Toml {
   return parseToml(source);
 }
 
+function hasMultilineString(line: string): boolean {
+  let quote: '"' | "'" | undefined;
+  let escaped = false;
+  for (let index = 0; index < line.length; index++) {
+    const char = line[index];
+    if (quote) {
+      if (quote === '"' && !escaped && char === "\\") escaped = true;
+      else {
+        if (!escaped && char === quote) quote = undefined;
+        escaped = false;
+      }
+    } else if (char === "#") {
+      break;
+    } else if (char === '"' || char === "'") {
+      if (line.startsWith(char.repeat(3), index)) return true;
+      quote = char;
+    }
+  }
+  return false;
+}
+
 function arrayEnd(
   lines: string[],
   start: number,
   value: string,
   path: string,
 ): number {
-  if (value.includes('"""') || value.includes("'''")) {
-    throw new Error(
-      `Cannot automatically migrate ${path}: multiline strings are unsupported.`,
-    );
-  }
   if (!value.trimStart().startsWith("[")) return start;
   let depth = 0;
   let quote: '"' | "'" | undefined;
   let escaped = false;
   for (let row = start; row < lines.length; row++) {
     const part = row === start ? value : lines[row];
-    if (part.includes('"""') || part.includes("'''")) {
-      throw new Error(
-        `Cannot automatically migrate ${path}: multiline strings are unsupported.`,
-      );
-    }
     for (const char of part) {
       if (quote) {
         if (quote === '"' && !escaped && char === "\\") escaped = true;
@@ -97,15 +108,7 @@ export function migrateWhitelistText(source: string): string {
     ([oldPath]) => atPath(parsed, oldPath) !== undefined,
   );
   if (present.length === 0) return source;
-  if (
-    source
-      .split(/\r?\n/)
-      .some(
-        (line) =>
-          !line.trimStart().startsWith("#") &&
-          (line.includes('"""') || line.includes("'''")),
-      )
-  ) {
+  if (source.split(/\r?\n/).some(hasMultilineString)) {
     throw new Error(
       "Cannot automatically migrate config.toml containing multiline strings; move legacy whitelist keys manually.",
     );
@@ -123,7 +126,7 @@ export function migrateWhitelistText(source: string): string {
   const sections = new Map<string, { end: number }>();
   const assignments = new Map<
     string,
-    { start: number; end: number; text: string }
+    { start: number; end: number; leading: string; text: string }
   >();
   let section = "";
   for (let row = 0; row < lines.length; row++) {
@@ -147,9 +150,12 @@ export function migrateWhitelistText(source: string): string {
     const path = section ? `${section}.${assignment[2]}` : assignment[2];
     if (!present.some(([oldPath]) => oldPath === path)) continue;
     const end = arrayEnd(lines, row, assignment[4], path);
+    let start = row;
+    while (start > 0 && /^\s*#/.test(lines[start - 1])) start--;
     assignments.set(path, {
-      start: row,
+      start,
       end,
+      leading: lines.slice(start, row).join(""),
       text: lines.slice(row, end + 1).join(""),
     });
     row = end;
@@ -173,7 +179,7 @@ export function migrateWhitelistText(source: string): string {
       /^(\s*)[A-Za-z0-9_-]+(\s*=)/,
       `$1${key}$2`,
     );
-    const statement = renamed.endsWith("\n") ? renamed : `${renamed}${newline}`;
+    const statement = `${match.leading}${renamed.endsWith("\n") ? renamed : `${renamed}${newline}`}`;
     const target = sections.get(destination);
     if (target) {
       const pending = insertions.get(target.end) ?? [];
