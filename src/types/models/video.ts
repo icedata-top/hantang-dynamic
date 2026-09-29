@@ -21,6 +21,7 @@ export interface VideoData {
   description: string; // desc
   dynamic?: string; // 动态文字内容
   pic: string;
+  cover43?: string;
   tag: string; // 保留分号分隔
   tag_new?: string[];
   tagSnapshot?: Array<{ tagId: bigint; tagName: string }>;

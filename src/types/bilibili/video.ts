@@ -172,6 +172,7 @@ export interface RecommendedVideo {
   cid: number;
   title: string;
   pic: string;
+  cover43?: string | null;
   owner: {
     mid: number;
     name: string;

@@ -29,16 +29,20 @@ interface ProcessedVideoResult {
 test("newly processed eligible videos persist with collection state", async () => {
   const database = Database.getInstance();
   const originalPersist = database.markVideoProcessedWithCollectionState;
-  const originalPidV2Update = database.updateProcessedVideoPidV2;
+  const originalMetadataUpdate = database.updateProcessedVideoMetadata;
   let persisted: { video: VideoData; filtered: boolean } | undefined;
-  let relatedMetadata: ReadonlyArray<{ aid: bigint; pidV2: number }> = [];
+  let relatedMetadata: ReadonlyArray<{
+    aid: bigint;
+    pidV2?: number;
+    cover43?: string;
+  }> = [];
   database.markVideoProcessedWithCollectionState = async (
     persistedVideo,
     filtered,
   ) => {
     persisted = { video: persistedVideo, filtered };
   };
-  database.updateProcessedVideoPidV2 = async (metadata) => {
+  database.updateProcessedVideoMetadata = async (metadata) => {
     relatedMetadata = metadata;
     return metadata.length;
   };
@@ -49,16 +53,22 @@ test("newly processed eligible videos persist with collection state", async () =
     assert.equal(typeof processResolved, "function");
     const result = await Reflect.apply(processResolved, service, [
       video,
-      [{ aid: 50, pid_v2: 33 } as RecommendedVideo],
+      [
+        { aid: 50, pid_v2: 33 } as RecommendedVideo,
+        { aid: 51, cover43: "https://cover/51" } as RecommendedVideo,
+      ],
       { processRecommendations: false, processRelated: false },
     ]);
 
     assert.equal((result as ProcessedVideoResult).video, video);
     assert.deepEqual(persisted, { video, filtered: true });
-    assert.deepEqual(relatedMetadata, [{ aid: 50n, pidV2: 33 }]);
+    assert.deepEqual(relatedMetadata, [
+      { aid: 50n, pidV2: 33, cover43: undefined },
+      { aid: 51n, pidV2: undefined, cover43: "https://cover/51" },
+    ]);
   } finally {
     database.markVideoProcessedWithCollectionState = originalPersist;
-    database.updateProcessedVideoPidV2 = originalPidV2Update;
+    database.updateProcessedVideoMetadata = originalMetadataUpdate;
   }
 });
 
@@ -67,7 +77,7 @@ test("new related videos persist pid_v2 supplied by the parent response", async 
   const originalHasProcessedVideoById = database.hasProcessedVideoById;
   const originalHasProcessedVideo = database.hasProcessedVideo;
   const originalPersist = database.markVideoProcessedWithCollectionState;
-  const originalPidV2Update = database.updateProcessedVideoPidV2;
+  const originalMetadataUpdate = database.updateProcessedVideoMetadata;
   const originalAddDiscoveredUser = database.addDiscoveredUser;
   const persisted: VideoData[] = [];
 
@@ -76,7 +86,7 @@ test("new related videos persist pid_v2 supplied by the parent response", async 
   database.markVideoProcessedWithCollectionState = async (videoData) => {
     persisted.push({ ...videoData });
   };
-  database.updateProcessedVideoPidV2 = async () => 0;
+  database.updateProcessedVideoMetadata = async () => 0;
   database.addDiscoveredUser = async () => undefined;
 
   const detail = (
@@ -112,6 +122,7 @@ test("new related videos persist pid_v2 supplied by the parent response", async 
     aid: 50,
     bvid: "BV1related",
     pid_v2: 33,
+    cover43: "https://cover/related",
     owner: { mid: 8, name: "related owner", face: "" },
     pubdate: 2,
     pic: "",
@@ -137,6 +148,7 @@ test("new related videos persist pid_v2 supplied by the parent response", async 
     );
     await service.processVideo(source.relatedVideos[0].dynamic, {
       pidV2: source.relatedVideos[0].pidV2,
+      cover43: source.relatedVideos[0].cover43,
       processRecommendations: false,
       processRelated: false,
       skipCacheCheck: true,
@@ -145,11 +157,12 @@ test("new related videos persist pid_v2 supplied by the parent response", async 
     assert.equal(persisted.length, 2);
     assert.equal(persisted[1].bvid, "BV1related");
     assert.equal(persisted[1].pid_v2, 33);
+    assert.equal(persisted[1].cover43, "https://cover/related");
   } finally {
     database.hasProcessedVideoById = originalHasProcessedVideoById;
     database.hasProcessedVideo = originalHasProcessedVideo;
     database.markVideoProcessedWithCollectionState = originalPersist;
-    database.updateProcessedVideoPidV2 = originalPidV2Update;
+    database.updateProcessedVideoMetadata = originalMetadataUpdate;
     database.addDiscoveredUser = originalAddDiscoveredUser;
   }
 });

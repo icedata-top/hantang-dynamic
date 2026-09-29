@@ -29,6 +29,9 @@ import { logger } from "../utils/logger.js";
 
 export type {
   BvidListQuery,
+  ProcessedVideoMetadata,
+  ProcessedVideoMetadataCandidate,
+  ProcessedVideoMetadataSweep,
   VideoDeletionNotes,
   VideoIdentity,
 } from "./videos.js";
@@ -112,13 +115,18 @@ import {
   type BvidListQuery,
   getAllProcessedIds,
   getBvidList,
+  getProcessedVideoMetadataCandidates,
+  getProcessedVideoMetadataUpperAid,
   getProcessedVideos,
   getVideoHistory,
   hasProcessedVideo,
   hasProcessedVideoById,
   markVideoDeleted,
   markVideoProcessedWithCollectionState,
-  updateProcessedVideoPidV2,
+  type ProcessedVideoMetadata,
+  type ProcessedVideoMetadataCandidate,
+  type ProcessedVideoMetadataSweep,
+  updateProcessedVideoMetadata,
   type VideoDeletionNotes,
   type VideoIdentity,
 } from "./videos.js";
@@ -316,10 +324,20 @@ export class Database {
     );
   }
 
-  public async updateProcessedVideoPidV2(
-    metadata: ReadonlyArray<{ aid: bigint; pidV2: number }>,
+  public async updateProcessedVideoMetadata(
+    metadata: ReadonlyArray<ProcessedVideoMetadata>,
   ): Promise<number> {
-    return updateProcessedVideoPidV2(this.ensurePool(), metadata);
+    return updateProcessedVideoMetadata(this.ensurePool(), metadata);
+  }
+
+  public async getProcessedVideoMetadataUpperAid(): Promise<bigint | null> {
+    return getProcessedVideoMetadataUpperAid(this.ensurePool());
+  }
+
+  public async getProcessedVideoMetadataCandidates(
+    options: ProcessedVideoMetadataSweep,
+  ): Promise<ProcessedVideoMetadataCandidate[]> {
+    return getProcessedVideoMetadataCandidates(this.ensurePool(), options);
   }
 
   /**

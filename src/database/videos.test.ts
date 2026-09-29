@@ -5,7 +5,7 @@ import { backfillMissionIds } from "./schema/videos";
 import {
   markVideoDeleted,
   markVideoProcessedWithCollectionState,
-  updateProcessedVideoPidV2,
+  updateProcessedVideoMetadata,
 } from "./videos";
 
 interface QueryCall {
@@ -148,13 +148,13 @@ test("missing TAG snapshots preserve stored names and normalized relations", asy
 
   assert.match(
     calls[1]?.sql ?? "",
-    /WHEN \$23::boolean THEN EXCLUDED\.tag\s+ELSE processed_videos\.tag/,
+    /WHEN \$24::boolean THEN EXCLUDED\.tag\s+ELSE processed_videos\.tag/,
   );
   assert.match(
     calls[1]?.sql ?? "",
-    /WHEN \$23::boolean THEN EXCLUDED\.tag_new\s+ELSE processed_videos\.tag_new/,
+    /WHEN \$24::boolean THEN EXCLUDED\.tag_new\s+ELSE processed_videos\.tag_new/,
   );
-  assert.equal(calls[1]?.values?.[22], false);
+  assert.equal(calls[1]?.values?.[23], false);
   assert.equal(
     calls.some((call) => call.sql.includes("DELETE FROM video_tags")),
     false,
@@ -172,7 +172,7 @@ test("authoritative empty TAG snapshots clear names and normalized relations", a
 
   assert.equal(calls[1]?.values?.[5], "");
   assert.deepEqual(calls[1]?.values?.[13], []);
-  assert.equal(calls[1]?.values?.[22], true);
+  assert.equal(calls[1]?.values?.[23], true);
   assert.deepEqual(calls[2]?.values, [[], []]);
   assert.match(calls[3]?.sql ?? "", /DELETE FROM video_tags/);
   assert.deepEqual(calls[4]?.values, ["42", []]);
@@ -244,7 +244,7 @@ test("terminal deletion rolls back processed deletion when collection state tran
   assert.equal(calls[calls.length - 1]?.sql, "ROLLBACK");
 });
 
-test("pid_v2 metadata updates only matching changed videos", async () => {
+test("supplemental metadata updates changed fields and merges duplicate related entries", async () => {
   const calls: QueryCall[] = [];
   const query = {
     async query(sql: string, values?: unknown[]) {
@@ -253,21 +253,44 @@ test("pid_v2 metadata updates only matching changed videos", async () => {
     },
   };
 
-  const updated = await updateProcessedVideoPidV2(query as unknown as Pool, [
+  const updated = await updateProcessedVideoMetadata(query as unknown as Pool, [
     { aid: 1n, pidV2: 22 },
-    { aid: 2n, pidV2: 33 },
+    { aid: 1n, cover43: "https://cover/1" },
+    { aid: 2n, cover43: "" },
+    { aid: 2n, cover43: "https://cover/2" },
   ]);
 
   assert.equal(updated, 2);
   assert.deepEqual(calls[0]?.values, [
     ["1", "2"],
-    [22, 33],
+    [22, null],
+    ["https://cover/1", "https://cover/2"],
   ]);
   assert.match(calls[0]?.sql ?? "", /video\.aid = metadata\.aid/);
   assert.match(calls[0]?.sql ?? "", /video\.aid = ANY\(\$1::bigint\[\]\)/);
   assert.match(
     calls[0]?.sql ?? "",
     /video\.pid_v2 IS DISTINCT FROM metadata\.pid_v2/,
+  );
+  assert.match(
+    calls[0]?.sql ?? "",
+    /video\.cover43 IS DISTINCT FROM metadata\.cover43/,
+  );
+});
+
+test("ordinary detail writes preserve an existing cover43 when it is omitted", async () => {
+  const { pool, calls } = createPool();
+
+  await markVideoProcessedWithCollectionState(
+    pool,
+    { ...video, cover43: "" },
+    true,
+  );
+
+  assert.equal(calls[1]?.values?.[22], null);
+  assert.match(
+    calls[1]?.sql ?? "",
+    /cover43 = COALESCE\(EXCLUDED\.cover43, processed_videos\.cover43\)/,
   );
 });
 

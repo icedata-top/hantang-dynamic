@@ -63,6 +63,7 @@ export async function initVideosSchema(pool: Pool): Promise<void> {
       description TEXT,
       tag TEXT,
       pic VARCHAR,
+      cover43 VARCHAR,
       type_id INTEGER,
       user_id BIGINT,
       is_filtered BOOLEAN NOT NULL,
@@ -85,6 +86,7 @@ export async function initVideosSchema(pool: Pool): Promise<void> {
 
   await pool.query(`
     ALTER TABLE processed_videos
+      ADD COLUMN IF NOT EXISTS cover43 VARCHAR,
       ADD COLUMN IF NOT EXISTS pid_v2 INTEGER,
       ADD COLUMN IF NOT EXISTS mission_id BIGINT
   `);
@@ -103,9 +105,6 @@ export async function initVideosSchema(pool: Pool): Promise<void> {
       PRIMARY KEY (video_aid, tag_id)
     )
   `);
-
-  await pool.query(`DROP INDEX IF EXISTS idx_processed_bvid`);
-  await pool.query(`DROP INDEX IF EXISTS idx_processed_user`);
 
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_processed_filtered

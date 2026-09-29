@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { updateProcessedVideoPidV2 } from "./videos.js";
+import { updateProcessedVideoMetadata } from "./videos.js";
 
 export type WatchLaterAction = "add" | "delete";
 
@@ -59,7 +59,7 @@ export async function syncWatchLaterSnapshot(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await updateProcessedVideoPidV2(client, pidV2Metadata);
+    await updateProcessedVideoMetadata(client, pidV2Metadata);
 
     const membershipResult = await client.query(
       `UPDATE video_collection_state

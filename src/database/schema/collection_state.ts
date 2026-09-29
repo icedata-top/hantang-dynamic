@@ -128,10 +128,6 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
   `);
 
   await pool.query(`
-    DROP INDEX IF EXISTS idx_video_collection_subtitle_pending
-  `);
-
-  await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_video_collection_subtitle_pending_order
     ON video_collection_state(last_view DESC NULLS LAST, aid ASC)
     WHERE subtitle_state = 'pending'
