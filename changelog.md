@@ -1,5 +1,35 @@
 # Changelog
 
+## 5.5.0
+
+Improves minute sampling and To View reconciliation, and adds bounded
+recommendation metadata refresh for existing data and new playback-gate
+crossings.
+
+- Makes minute sampling retries, failure accounting, scheduling, and
+  gate-crossing attribution durable so completed observations continue to
+  advance collection.
+- Adds authenticated To View sampling with per-account enablement,
+  reconciliation, rate-limit handling, and favorite fallback coverage.
+- Adds a manual `update-info` command for bounded recommendation metadata
+  refreshes, with source predicates and PID V2 admission allowlists.
+- Refreshes recommendation metadata after newly persisted minute playback-gate
+  crossings while bounding queued and concurrent work.
+- Stores observed PID V2 names and preserves sparse recommendation metadata,
+  related-video covers, TAG identities, and history cover metadata.
+- Processes persisted videos in batches and removes obsolete `video_tags`
+  relation writes.
+- Makes daily history synchronization bounded and recoverable, with
+  deduplication and explicit range backfill support.
+- Preserves legacy cookie-account configuration, isolates proxy detail-login
+  fallback, and corrects detail diagnostic query parameters.
+- Normalizes PostgreSQL text and JSON values by replacing NUL characters and
+  lone surrogates with U+FFFD; normalized-key collisions remain validation
+  errors.
+- Expands configuration guidance for database schema initialization, minute
+  collection, To View accounts, recommendations, exports, notifications, and
+  application settings.
+
 ## 5.4.1
 
 Improves failure isolation for multi-account deployments. Auth failures from
