@@ -17,6 +17,7 @@ export const processingSchema = z.object({
     contentBlacklist: z.array(z.string()).default([]),
     contentWhitelist: z.array(z.string()).default([]),
     copyrightWhitelist: z.array(z.number()).default([]),
+    pidV2Whitelist: z.array(z.number().int().positive()).default([]),
   }),
 });
 
@@ -38,6 +39,10 @@ export function createProcessingConfig(
   const legacyMaxRecommendationDepth = getConfigValue(
     ["processing", "features", "max_recommendation_depth"],
     "MAX_RECOMMENDATION_DEPTH",
+  );
+  const pidV2Whitelist = getConfigValue(
+    ["processing", "filtering", "pid_v2_whitelist"],
+    "UPDATE_INFO_PID_V2_WHITELIST",
   );
 
   return {
@@ -108,6 +113,11 @@ export function createProcessingConfig(
         ) ||
         process.env.COPYRIGHT_WHITE_LIST?.split(",").map(Number) ||
         [],
+      pidV2Whitelist: Array.isArray(pidV2Whitelist)
+        ? pidV2Whitelist
+        : typeof pidV2Whitelist === "string"
+          ? pidV2Whitelist.split(",").map(Number)
+          : [],
     },
   };
 }

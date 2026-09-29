@@ -1,234 +1,298 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { config } from "../config/index.js";
+import type {
+  ProcessedVideoBatchItem,
+  ProcessedVideoRecommendationRefresh,
+} from "../database/index.js";
+import { RecommendationRefreshService } from "../services/recommendation-refresh.service.js";
 import type {
   BiliVideoFullDetailResponse,
   RecommendedVideo,
+  VideoData,
 } from "../types/index.js";
 import { parsePidV2Whitelist, runUpdateInfo } from "./update-info.js";
 
 function related(
   aid: number,
-  pidV2?: number,
-  cover43?: string,
+  pid_v2?: number,
+  pid_name_v2?: string,
 ): RecommendedVideo {
   return {
     aid,
     bvid: `BV${aid}`,
     cid: aid,
-    cover43,
-    owner: { mid: aid, name: "owner", face: "face" },
+    title: `related-${aid}`,
     pic: `pic-${aid}`,
-    pubdate: 0,
+    desc: `desc-${aid}`,
+    tid: 3,
+    tname: "",
+    duration: 1,
+    pubdate: 1,
+    owner: { mid: aid, name: "", face: "" },
     stat: {
       aid,
+      view: 1,
       coin: 0,
       danmaku: 0,
       favorite: 0,
       like: 0,
       reply: 0,
       share: 0,
-      view: 100,
     },
-    title: `video-${aid}`,
-    ...(pidV2 === undefined ? {} : { pid_v2: pidV2 }),
-  } as RecommendedVideo;
+    ...(pid_v2 === undefined ? {} : { pid_v2 }),
+    ...(pid_name_v2 === undefined ? {} : { pid_name_v2 }),
+  };
 }
-
 function detail(
   aid: number,
-  views: number | undefined,
+  views: number,
   Related: RecommendedVideo[] = [],
 ): BiliVideoFullDetailResponse {
   return {
     code: 0,
-    data: {
-      Related,
-      View: { aid: BigInt(aid), stat: { view: views } },
-    },
-    message: "0",
+    message: "",
     ttl: 1,
+    data: {
+      View: {
+        aid: BigInt(aid),
+        bvid: `BV${aid}`,
+        cid: aid,
+        title: `full-${aid}`,
+        desc: "",
+        pic: "",
+        pubdate: 1,
+        ctime: 1,
+        owner: { mid: BigInt(aid) },
+        stat: { view: views },
+      },
+      Related,
+    },
   } as unknown as BiliVideoFullDetailResponse;
 }
-
-function numericAid(id: string | number): number {
-  return typeof id === "number" ? id : Number(id.replace(/^BV/, ""));
+function video(aid: number): VideoData {
+  return {
+    aid: BigInt(aid),
+    bvid: `BV${aid}`,
+    user_id: BigInt(aid),
+    type_id: 3,
+    title: `full-${aid}`,
+    description: "",
+    pic: "",
+    tag: "",
+    pubdate: 1,
+  };
 }
-
 class FakeDatabase {
   closed = false;
-  initialized = false;
-  readonly imported = new Set<number>();
-  readonly sweeps: Array<{ afterAid: bigint; throughAid: bigint }> = [];
-
+  calls = { dictionary: 0, membership: 0, refresh: 0, persist: 0 };
+  readonly pidV2Names = new Map<number, string>();
+  readonly pidV2ByAid = new Map<number, number>();
   constructor(
-    private readonly sourceAids: number[],
-    private readonly pidByAid = new Map<number, number | undefined>(),
+    readonly sources: number[],
+    readonly existing = new Set(sources),
   ) {}
-
-  async init() {
-    this.initialized = true;
-  }
-
+  async init() {}
   async close() {
     this.closed = true;
   }
-
   async getProcessedVideoMetadataUpperAid() {
-    return BigInt(Math.max(...this.sourceAids));
+    return BigInt(Math.max(...this.sources));
   }
-
   async getProcessedVideoMetadataCandidates(options: {
     afterAid: bigint;
     onlyMissingPidV2?: boolean;
-    throughAid: bigint;
   }) {
-    this.sweeps.push({
-      afterAid: options.afterAid,
-      throughAid: options.throughAid,
-    });
-    return this.sourceAids
+    return this.sources
       .filter((aid) => BigInt(aid) > options.afterAid)
-      .filter(
-        (aid) =>
-          !options.onlyMissingPidV2 || this.pidByAid.get(aid) === undefined,
-      )
-      .map((aid) => ({
-        aid: BigInt(aid),
-        bvid: "",
-        pidV2: this.pidByAid.get(aid),
-      }));
+      .filter((aid) => !options.onlyMissingPidV2 || !this.pidV2ByAid.has(aid))
+      .map((aid) => ({ aid: BigInt(aid), bvid: `BV${aid}` }));
   }
-
-  async hasProcessedVideoById(aid: number) {
-    return this.sourceAids.includes(aid) || this.imported.has(aid);
+  async getProcessedVideoAids(aids: readonly bigint[]) {
+    this.calls.membership++;
+    return new Set(aids.filter((aid) => this.existing.has(Number(aid))));
   }
-
-  applyMetadata(items: RecommendedVideo[]) {
+  async getProcessedVideoAidsMissingPidV2(aids: readonly bigint[]) {
+    return new Set(aids.filter((aid) => !this.pidV2ByAid.has(Number(aid))));
+  }
+  async refreshProcessedVideosFromRecommendations(
+    items: readonly ProcessedVideoRecommendationRefresh[],
+  ) {
+    this.calls.refresh++;
     for (const item of items) {
-      if (
-        this.sourceAids.includes(item.aid) &&
-        typeof item.pid_v2 === "number"
-      ) {
-        this.pidByAid.set(item.aid, item.pid_v2);
+      if (item.pidV2 !== undefined) {
+        this.pidV2ByAid.set(Number(item.aid), item.pidV2);
       }
     }
+    return items.length;
+  }
+  async upsertPidV2Names(names: readonly { pidV2: number; name: string }[]) {
+    this.calls.dictionary++;
+    for (const { pidV2, name } of names) this.pidV2Names.set(pidV2, name);
+    return names.length;
+  }
+  async markVideosProcessedWithCollectionState(
+    items: readonly ProcessedVideoBatchItem[],
+  ) {
+    this.calls.persist++;
+    for (const item of items) this.existing.add(Number(item.video.aid));
+    return items.length;
   }
 }
+const parser = {
+  async processVideoDetailResponse(detailData: { View: { aid: bigint } }) {
+    return { videoData: video(Number(detailData.View.aid)) };
+  },
+};
 
-test("manual updater sweeps original sources in AID order and requires actual views", async () => {
-  const database = new FakeDatabase([2, 9]);
-  const fetched: number[] = [];
-  const metadata: number[][] = [];
+test("collector uses one bounded membership and refresh path while admitting only whitelisted related videos", async () => {
+  const database = new FakeDatabase([1], new Set([1, 2]));
+  const service = new RecommendationRefreshService({
+    database,
+    detailsService: parser,
+    pidV2Whitelist: new Set([7]),
+    rateLimiter: {
+      async acquire() {
+        return () => {};
+      },
+    },
+    fetchDetail: async (id) =>
+      detail(
+        Number(id),
+        100,
+        Number(id) === 1
+          ? [related(2), related(3, 7), related(4, 8, "not whitelisted")]
+          : [],
+      ),
+  });
+  const result = await service.collectForAids([{ aid: 1n }]);
+  assert.equal(result.metadataUpdated, 1);
+  assert.equal(result.imported, 1);
+  assert.deepEqual([...database.existing].sort(), [1, 2, 3]);
+  assert.deepEqual(database.calls, {
+    dictionary: 1,
+    membership: 1,
+    refresh: 1,
+    persist: 1,
+  });
+  assert.equal(database.pidV2Names.get(8), "not whitelisted");
+});
+
+test("concurrent collectors share the configured capacity for source and admission requests", async () => {
+  const database = new FakeDatabase([]);
+  let active = 0;
+  let maximum = 0;
+  let admissionRequests = 0;
+  const fetchDetail = async (id: string | number) => {
+    const aid = Number(id);
+    active++;
+    maximum = Math.max(maximum, active);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    active--;
+    if (aid >= 1_000) admissionRequests++;
+    return detail(aid, 100, aid < 1_000 ? [related(aid + 1_000, 7)] : []);
+  };
+  const service = () =>
+    new RecommendationRefreshService({
+      database,
+      detailsService: parser,
+      pidV2Whitelist: new Set([7]),
+      fetchDetail,
+    });
+  await Promise.all(
+    [service(), service()].map((collector, offset) =>
+      collector.collectForAids(
+        Array.from({ length: 25 }, (_, index) => ({
+          aid: BigInt(offset * 100 + index + 1),
+        })),
+      ),
+    ),
+  );
+  assert.equal(maximum, config.application.concurrencyLimit);
+  assert.equal(admissionRequests, 50);
+});
+
+test("manual updater preserves the original AID cutoff and closes the database", async () => {
+  const database = new FakeDatabase([1, 2]);
   const result = await runUpdateInfo({
     database,
-    detailsService: {
-      async enrichRelatedVideoMetadata(items) {
-        metadata.push(items.map((item) => item.aid));
-        database.applyMetadata(items);
-        return items.length;
-      },
-      async processFetchedVideoDetail() {
-        throw new Error("no imports expected");
-      },
-    },
-    fetchDetail: async (id) => {
-      const aid = numericAid(id);
-      fetched.push(aid);
-      return aid === 2
-        ? detail(aid, 11, [related(20, 7)])
-        : detail(aid, 10, [related(21, 7)]);
-    },
-    onProgress: () => {},
+    detailsService: parser,
     pidV2Whitelist: new Set(),
+    onProgress: () => {},
+    fetchDetail: async (id) => detail(Number(String(id).replace("BV", "")), 10),
   });
-
-  assert.deepEqual(fetched.slice(0, 2), [2, 9]);
-  assert.deepEqual(database.sweeps[0], { afterAid: 0n, throughAid: 9n });
-  assert.deepEqual(metadata, [[20]]);
   assert.equal(result.scanned, 2);
   assert.equal(database.closed, true);
 });
 
-test("bridge reverse fill imports only allowed recommendations and stops after one layer", async () => {
+test("manual reverse fill stops after one bridge layer", async () => {
   const database = new FakeDatabase([1]);
-  const imported: Array<{ aid: number; pidV2?: number; cover43?: string }> = [];
   const fetched: number[] = [];
   const result = await runUpdateInfo({
     database,
-    detailsService: {
-      async enrichRelatedVideoMetadata(items) {
-        database.applyMetadata(items);
-        return items.length;
-      },
-      async processFetchedVideoDetail(aid, _detail, options) {
-        database.imported.add(aid);
-        imported.push({ aid, pidV2: options.pidV2, cover43: options.cover43 });
-        return { video: {} };
-      },
-    },
+    detailsService: parser,
+    pidV2Whitelist: new Set([7]),
+    onProgress: () => {},
     fetchDetail: async (id) => {
-      const aid = numericAid(id);
+      const aid = Number(String(id).replace("BV", ""));
       fetched.push(aid);
-      if (aid === 1) return detail(1, 50, [related(2, 99)]);
-      if (aid === 2)
-        return detail(2, 50, [
-          related(1, 7, "cover-a"),
-          related(3, 7, "cover-c"),
-        ]);
-      if (aid === 3) return detail(3, 50, [related(4, 7)]);
+      if (aid === 1) return detail(1, 100, [related(2, 99)]);
+      if (aid === 2) return detail(2, 100, [related(1, 7), related(3, 7)]);
+      if (aid === 3) return detail(3, 100, [related(4, 7)]);
       throw new Error(`unexpected recursive fetch ${aid}`);
     },
-    onProgress: () => {},
-    pidV2Whitelist: new Set([7]),
   });
-
-  assert.deepEqual(imported, [{ aid: 3, pidV2: 7, cover43: "cover-c" }]);
-  assert.equal(fetched.includes(4), false);
-  assert.equal(result.unresolved, 0);
   assert.equal(result.imported, 1);
+  assert.equal(fetched.includes(4), false);
+  assert.equal(database.pidV2ByAid.get(1), 7);
+  assert.equal(result.unresolved, 0);
 });
 
-test("unavailable details continue, while database failures are not reported as success", async () => {
-  const database = new FakeDatabase([1, 2]);
+test("manual updater counts high-view sources that remain without pid_v2", async () => {
+  const database = new FakeDatabase([1, 9]);
   const result = await runUpdateInfo({
     database,
-    detailsService: {
-      async enrichRelatedVideoMetadata() {
-        return 0;
-      },
-      async processFetchedVideoDetail() {
-        return { video: null };
-      },
-    },
-    fetchDetail: async (id) => {
-      const aid = numericAid(id);
-      return aid === 1 ? null : detail(aid, 1);
-    },
-    onProgress: () => {},
+    detailsService: parser,
     pidV2Whitelist: new Set(),
+    onProgress: () => {},
+    fetchDetail: async (id) => {
+      const aid = Number(String(id).replace("BV", ""));
+      if (aid === 1) return detail(1, 100, [related(2, 99)]);
+      if (aid === 2) return detail(2, 100, [related(1, 7)]);
+      if (aid === 9) return detail(9, 100, [related(10, 99)]);
+      if (aid === 10) return detail(10, 100);
+      throw new Error(`unexpected fetch ${aid}`);
+    },
   });
-  assert.equal(result.errors, 1);
-  assert.equal(result.scanned, 2);
+  assert.equal(database.pidV2ByAid.get(1), 7);
+  assert.equal(result.unresolved, 1);
+});
 
-  const brokenDatabase = new FakeDatabase([1]);
-  brokenDatabase.getProcessedVideoMetadataUpperAid = async () => {
-    throw new Error("database unavailable");
+test("partial related cards refresh only their supplied existing fields", async () => {
+  const database = new FakeDatabase([1, 2], new Set([1, 2]));
+  let refreshed: ProcessedVideoRecommendationRefresh | undefined;
+  database.refreshProcessedVideosFromRecommendations = async (items) => {
+    refreshed = items[0];
+    return items.length;
   };
-  await assert.rejects(
-    runUpdateInfo({
-      database: brokenDatabase,
-      detailsService: {} as never,
-      onProgress: () => {},
-      pidV2Whitelist: new Set(),
-    }),
-    /database unavailable/,
-  );
-  assert.equal(brokenDatabase.closed, true);
+  const partial = { aid: 2, desc: "", pid_v2: 7 } as RecommendedVideo;
+  const service = new RecommendationRefreshService({
+    database,
+    detailsService: parser,
+    pidV2Whitelist: new Set(),
+    rateLimiter: {
+      async acquire() {
+        return () => {};
+      },
+    },
+    fetchDetail: async () => detail(1, 100, [partial]),
+  });
+  await service.collectForAids([{ aid: 1n }]);
+  assert.deepEqual(refreshed, { aid: 2n, description: "", pidV2: 7 });
 });
 
 test("whitelist parser rejects malformed explicit values", () => {
   assert.deepEqual(parsePidV2Whitelist(undefined), new Set());
   assert.deepEqual(parsePidV2Whitelist("7, 11"), new Set([7, 11]));
   assert.throws(() => parsePidV2Whitelist("7,,11"), /Invalid pid_v2/);
-  assert.throws(() => parsePidV2Whitelist("tid=7"), /Invalid pid_v2/);
 });

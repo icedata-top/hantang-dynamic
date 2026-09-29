@@ -31,6 +31,7 @@ export interface RequestConfig extends InternalAxiosRequestConfig {
   metadata?: {
     startTime: number;
     silent?: boolean;
+    proxyDetailLoginFallback?: boolean;
   };
 }
 
@@ -297,6 +298,17 @@ function createClient(
           `HTTP 416 from ${baseURL}${response.config.url}; request failed without stopping the process.`,
         );
         return Promise.reject(new Error("API Error: HTTP 416"));
+      }
+
+      const requestConfig = response.config as RequestConfig;
+      const proxyDetailLoginRequired =
+        skipCookie &&
+        requestConfig.metadata?.proxyDetailLoginFallback === true &&
+        response.data?.code === -403;
+
+      if (proxyDetailLoginRequired) {
+        recordApiRequest(baseURL, response.config.url, "success", timeUsed);
+        return response;
       }
 
       const logicalApiCode = apiCodeLabel(response.data);

@@ -22,6 +22,73 @@ export interface VideoDeletionNotes {
   api_message?: string;
 }
 
+export interface ProcessedVideoRecommendationRefresh {
+  aid: bigint;
+  bvid?: string;
+  title?: string;
+  description?: string;
+  pic?: string;
+  cover43?: string;
+  typeId?: number;
+  userId?: bigint;
+  pubdate?: number;
+  pidV2?: number;
+}
+
+export interface ProcessedVideoBatchItem {
+  video: VideoData;
+  filtered: boolean;
+}
+
+const unsupportedPostgresUnicode =
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+function sanitizeDatabaseString(value: string): string {
+  return value
+    .split("\u0000")
+    .join("\uFFFD")
+    .replace(unsupportedPostgresUnicode, "\uFFFD");
+}
+
+function sanitizeJsonValue(value: unknown): unknown {
+  if (typeof value === "string") return sanitizeDatabaseString(value);
+  if (Array.isArray(value)) return value.map(sanitizeJsonValue);
+  if (value !== null && typeof value === "object") {
+    const entries = new Map<string, unknown>();
+    for (const [key, entry] of Object.entries(value)) {
+      const sanitizedKey = sanitizeDatabaseString(key);
+      if (entries.has(sanitizedKey)) {
+        throw new Error("JSON object keys collide after Unicode normalization");
+      }
+      entries.set(sanitizedKey, sanitizeJsonValue(entry));
+    }
+    return Object.fromEntries(entries);
+  }
+  return value;
+}
+
+/** Serialize JSON values after replacing code units PostgreSQL cannot store. */
+function stringifyDatabaseJson(value: unknown): string {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) return "null";
+
+  return JSON.stringify(sanitizeJsonValue(JSON.parse(serialized)));
+}
+
+function canonicalTagSnapshot(
+  tagSnapshot: VideoData["tagSnapshot"],
+): Array<{ tagId: bigint; tagName: string }> | undefined {
+  if (tagSnapshot === undefined) return undefined;
+
+  const tagsById = new Map<bigint, string>();
+  for (const tag of tagSnapshot) {
+    if (!tagsById.has(tag.tagId)) tagsById.set(tag.tagId, tag.tagName);
+  }
+  return [...tagsById]
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([tagId, tagName]) => ({ tagId, tagName }));
+}
+
 /**
  * Check if a video has been processed
  */
@@ -76,6 +143,116 @@ export async function getAllProcessedIds(
 }
 
 /**
+ * Return the subset of a bounded AID batch that is already processed.
+ */
+export async function getProcessedVideoAids(
+  pool: Pool,
+  aids: ReadonlyArray<bigint>,
+): Promise<Set<bigint>> {
+  const uniqueAids = [...new Set(aids.map((aid) => aid.toString()))];
+  if (uniqueAids.length === 0) return new Set();
+
+  const result = await pool.query(
+    `SELECT aid
+     FROM processed_videos
+     WHERE aid = ANY($1::bigint[])`,
+    [uniqueAids],
+  );
+  return new Set(result.rows.map((row) => BigInt(row.aid as string)));
+}
+
+/** Return the missing-pid subset of a bounded processed-video AID batch. */
+export async function getProcessedVideoAidsMissingPidV2(
+  pool: Pool,
+  aids: ReadonlyArray<bigint>,
+): Promise<Set<bigint>> {
+  const uniqueAids = [...new Set(aids.map((aid) => aid.toString()))];
+  if (uniqueAids.length === 0) return new Set();
+
+  const result = await pool.query(
+    `SELECT aid
+     FROM processed_videos
+     WHERE aid = ANY($1::bigint[])
+       AND pid_v2 IS NULL`,
+    [uniqueAids],
+  );
+  return new Set(result.rows.map((row) => BigInt(row.aid as string)));
+}
+
+/**
+ * Refresh fields supplied by recommendation cards without changing review
+ * state, detail-only fields, or authoritative TAG relations.
+ */
+export async function refreshProcessedVideosFromRecommendations(
+  pool: DatabaseQuery,
+  videos: ReadonlyArray<ProcessedVideoRecommendationRefresh>,
+): Promise<number> {
+  const byAid = new Map<bigint, ProcessedVideoRecommendationRefresh>();
+  for (const video of videos) byAid.set(video.aid, video);
+  const entries = [...byAid.values()];
+  if (entries.length === 0) return 0;
+
+  const result = await pool.query(
+    `WITH incoming AS (
+       SELECT *
+       FROM jsonb_to_recordset($1::jsonb) AS input(
+         aid bigint, bvid varchar, title varchar, description text, pic varchar,
+         cover43 varchar, type_id integer, user_id bigint, pubdate bigint,
+         pid_v2 integer
+       )
+     )
+     UPDATE processed_videos AS video
+     SET bvid = COALESCE(incoming.bvid, video.bvid),
+         title = COALESCE(incoming.title, video.title),
+         description = COALESCE(incoming.description, video.description),
+         pic = COALESCE(incoming.pic, video.pic),
+         cover43 = COALESCE(incoming.cover43, video.cover43),
+         type_id = COALESCE(incoming.type_id, video.type_id),
+         user_id = COALESCE(incoming.user_id, video.user_id),
+         pubdate = COALESCE(incoming.pubdate, video.pubdate),
+         pid_v2 = COALESCE(incoming.pid_v2, video.pid_v2),
+         updated_at = NOW()
+     FROM incoming
+     WHERE video.aid = incoming.aid
+       AND (
+         video.bvid IS DISTINCT FROM COALESCE(incoming.bvid, video.bvid)
+         OR video.title IS DISTINCT FROM COALESCE(incoming.title, video.title)
+         OR video.description IS DISTINCT FROM COALESCE(incoming.description, video.description)
+         OR video.pic IS DISTINCT FROM COALESCE(incoming.pic, video.pic)
+         OR (incoming.cover43 IS NOT NULL
+             AND video.cover43 IS DISTINCT FROM incoming.cover43)
+         OR video.type_id IS DISTINCT FROM COALESCE(incoming.type_id, video.type_id)
+         OR video.user_id IS DISTINCT FROM COALESCE(incoming.user_id, video.user_id)
+         OR video.pubdate IS DISTINCT FROM COALESCE(incoming.pubdate, video.pubdate)
+         OR (incoming.pid_v2 IS NOT NULL
+             AND video.pid_v2 IS DISTINCT FROM incoming.pid_v2)
+       )`,
+    [
+      stringifyDatabaseJson(
+        entries.map((video) => ({
+          aid: video.aid.toString(),
+          ...(video.bvid === undefined ? {} : { bvid: video.bvid }),
+          ...(video.title === undefined ? {} : { title: video.title }),
+          ...(video.description === undefined
+            ? {}
+            : { description: video.description }),
+          ...(video.pic === undefined ? {} : { pic: video.pic }),
+          cover43:
+            video.cover43 && video.cover43.length > 0 ? video.cover43 : null,
+          ...(video.typeId === undefined ? {} : { type_id: video.typeId }),
+          ...(video.userId === undefined
+            ? {}
+            : { user_id: video.userId.toString() }),
+          ...(video.pubdate === undefined ? {} : { pubdate: video.pubdate }),
+          ...(video.pidV2 === undefined ? {} : { pid_v2: video.pidV2 }),
+        })),
+      ),
+    ],
+  );
+  return result.rowCount ?? 0;
+}
+
+/**
  * Mark a video as processed
  */
 export async function markVideoProcessed(
@@ -83,21 +260,22 @@ export async function markVideoProcessed(
   video: VideoData,
   filtered: boolean,
 ): Promise<void> {
+  const tagSnapshot = canonicalTagSnapshot(video.tagSnapshot);
   await pool.query(
     `
     INSERT INTO processed_videos 
       (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id, is_filtered, 
        staff, tid_v2, dynamic, tag_new, participle, ctime, is_deleted, copyright,
-       pid_v2, mission_id, extras, notes, cover43, updated_at)
+       pid_v2, mission_id, extras, notes, cover43, tag_ids, updated_at)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-            $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, NOW())
+            $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, NOW())
     ON CONFLICT (bvid) DO UPDATE SET
       aid = EXCLUDED.aid,
       pubdate = EXCLUDED.pubdate,
       title = EXCLUDED.title,
       description = EXCLUDED.description,
       tag = CASE
-        WHEN $24::boolean THEN EXCLUDED.tag
+        WHEN $25::boolean THEN EXCLUDED.tag
         ELSE processed_videos.tag
       END,
       pic = EXCLUDED.pic,
@@ -109,8 +287,12 @@ export async function markVideoProcessed(
       tid_v2 = EXCLUDED.tid_v2,
       dynamic = EXCLUDED.dynamic,
       tag_new = CASE
-        WHEN $24::boolean THEN EXCLUDED.tag_new
+        WHEN $25::boolean THEN EXCLUDED.tag_new
         ELSE processed_videos.tag_new
+      END,
+      tag_ids = CASE
+        WHEN $25::boolean THEN EXCLUDED.tag_ids
+        ELSE processed_videos.tag_ids
       END,
       participle = EXCLUDED.participle,
       ctime = EXCLUDED.ctime,
@@ -119,40 +301,45 @@ export async function markVideoProcessed(
       pid_v2 = COALESCE(EXCLUDED.pid_v2, processed_videos.pid_v2),
       mission_id = COALESCE(EXCLUDED.mission_id, processed_videos.mission_id),
       extras = EXCLUDED.extras,
-      notes = EXCLUDED.notes,
+      notes = COALESCE(EXCLUDED.notes, processed_videos.notes),
       updated_at = NOW()
   `,
     [
       BigInt(video.aid).toString(),
-      video.bvid,
+      sanitizeDatabaseString(video.bvid),
       video.pubdate,
-      video.title,
-      video.description,
-      video.tag,
-      video.pic,
+      sanitizeDatabaseString(video.title),
+      sanitizeDatabaseString(video.description),
+      sanitizeDatabaseString(video.tag),
+      sanitizeDatabaseString(video.pic),
       video.type_id,
       BigInt(video.user_id).toString(),
       filtered,
       video.staff ? video.staff.map((s) => s.toString()) : null,
       video.tid_v2 ?? null,
-      video.dynamic ?? null,
-      video.tag_new ?? null,
-      video.participle ?? null,
+      video.dynamic === undefined
+        ? null
+        : sanitizeDatabaseString(video.dynamic),
+      video.tag_new?.map(sanitizeDatabaseString) ?? null,
+      video.participle?.map(sanitizeDatabaseString) ?? null,
       video.ctime ?? null,
       video.is_deleted ?? false,
       video.copyright ?? null,
       video.pid_v2 ?? null,
       video.mission_id?.toString() ?? null,
-      video.extras ? JSON.stringify(video.extras) : null,
-      video.notes ? JSON.stringify(video.notes) : null,
-      video.cover43 && video.cover43.length > 0 ? video.cover43 : null,
-      video.tagSnapshot !== undefined,
+      video.extras ? stringifyDatabaseJson(video.extras) : null,
+      video.notes ? stringifyDatabaseJson(video.notes) : null,
+      video.cover43 && video.cover43.length > 0
+        ? sanitizeDatabaseString(video.cover43)
+        : null,
+      tagSnapshot?.map((tag) => tag.tagId.toString()) ?? null,
+      tagSnapshot !== undefined,
     ],
   );
 
-  if (video.tagSnapshot !== undefined) {
-    const tagIds = video.tagSnapshot.map((tag) => tag.tagId.toString());
-    const tagNames = video.tagSnapshot.map((tag) => tag.tagName);
+  if (tagSnapshot !== undefined) {
+    const tagIds = tagSnapshot.map((tag) => tag.tagId.toString());
+    const tagNames = tagSnapshot.map((tag) => tag.tagName);
     await pool.query(
       `INSERT INTO tags (tag_id, tag_name, updated_at)
        SELECT tag_id, tag_name, NOW()
@@ -160,20 +347,195 @@ export async function markVideoProcessed(
        ON CONFLICT (tag_id) DO UPDATE SET
          tag_name = EXCLUDED.tag_name,
          updated_at = EXCLUDED.updated_at`,
-      [tagIds, tagNames],
+      [tagIds, tagNames.map(sanitizeDatabaseString)],
     );
-    await pool.query(
-      `DELETE FROM video_tags
-       WHERE video_aid = $1::bigint`,
-      [video.aid.toString()],
+  }
+}
+
+function batchVideoRow(item: ProcessedVideoBatchItem) {
+  const { video } = item;
+  const tagSnapshot = canonicalTagSnapshot(video.tagSnapshot);
+  return {
+    aid: video.aid.toString(),
+    bvid: video.bvid,
+    pubdate: video.pubdate,
+    title: video.title,
+    description: video.description,
+    tag: tagSnapshot === undefined ? null : video.tag,
+    pic: video.pic,
+    type_id: video.type_id,
+    user_id: video.user_id.toString(),
+    is_filtered: item.filtered,
+    staff: video.staff?.map((staff) => staff.toString()) ?? null,
+    tid_v2: video.tid_v2 ?? null,
+    dynamic: video.dynamic ?? null,
+    tag_new: tagSnapshot === undefined ? null : (video.tag_new ?? null),
+    tag_ids: tagSnapshot?.map((tag) => tag.tagId.toString()) ?? null,
+    tag_snapshot:
+      tagSnapshot === undefined
+        ? null
+        : tagSnapshot.map((tag) => ({
+            tagId: tag.tagId.toString(),
+            tagName: tag.tagName,
+          })),
+    participle: video.participle ?? null,
+    ctime: video.ctime ?? null,
+    is_deleted: video.is_deleted ?? false,
+    copyright: video.copyright ?? null,
+    pid_v2: video.pid_v2 ?? null,
+    mission_id: video.mission_id?.toString() ?? null,
+    extras: video.extras ?? null,
+    notes: video.notes ?? null,
+    cover43: video.cover43 && video.cover43.length > 0 ? video.cover43 : null,
+  };
+}
+
+/**
+ * Persist a bounded set of full-detail videos and their collection state in a
+ * single transaction. TAG snapshots are authoritative only when supplied.
+ */
+export async function markVideosProcessedWithCollectionState(
+  pool: Pool,
+  items: ReadonlyArray<ProcessedVideoBatchItem>,
+  now = new Date(),
+  options?: ProcessedVideoCollectionOptions,
+): Promise<number> {
+  const byAid = new Map<bigint, ProcessedVideoBatchItem>();
+  for (const item of items) byAid.set(item.video.aid, item);
+  const rows = [...byAid.values()].map(batchVideoRow);
+  if (rows.length === 0) return 0;
+
+  const payload = stringifyDatabaseJson(rows);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const written = await client.query(
+      `WITH incoming AS (
+         SELECT *
+         FROM jsonb_to_recordset($1::jsonb) AS input(
+           aid bigint, bvid varchar, pubdate bigint, title varchar,
+           description text, tag text, pic varchar, type_id integer,
+           user_id bigint, is_filtered boolean, staff bigint[], tid_v2 integer,
+           dynamic text, tag_new varchar[], tag_ids bigint[], tag_snapshot jsonb,
+           participle varchar[], ctime bigint, is_deleted boolean, copyright integer,
+           pid_v2 integer, mission_id bigint, extras jsonb, notes jsonb, cover43 varchar
+         )
+       )
+       INSERT INTO processed_videos AS video (
+         aid, bvid, pubdate, title, description, tag, pic, type_id, user_id,
+         is_filtered, staff, tid_v2, dynamic, tag_new, tag_ids, participle,
+         ctime, is_deleted, copyright, pid_v2, mission_id, extras, notes, cover43,
+         updated_at
+       )
+       SELECT aid, bvid, pubdate, title, description, tag, pic, type_id, user_id,
+              is_filtered, staff, tid_v2, dynamic, tag_new, tag_ids, participle,
+              ctime, is_deleted, copyright, pid_v2, mission_id, extras, notes, cover43,
+              NOW()
+       FROM incoming
+       ON CONFLICT (aid) DO UPDATE SET
+         bvid = EXCLUDED.bvid,
+         pubdate = EXCLUDED.pubdate,
+         title = EXCLUDED.title,
+         description = EXCLUDED.description,
+         tag = COALESCE(EXCLUDED.tag, video.tag),
+         pic = EXCLUDED.pic,
+         cover43 = COALESCE(EXCLUDED.cover43, video.cover43),
+         type_id = EXCLUDED.type_id,
+         user_id = EXCLUDED.user_id,
+         is_filtered = EXCLUDED.is_filtered,
+         staff = EXCLUDED.staff,
+         tid_v2 = EXCLUDED.tid_v2,
+         dynamic = EXCLUDED.dynamic,
+         tag_new = COALESCE(EXCLUDED.tag_new, video.tag_new),
+         tag_ids = COALESCE(EXCLUDED.tag_ids, video.tag_ids),
+         participle = EXCLUDED.participle,
+         ctime = EXCLUDED.ctime,
+         is_deleted = EXCLUDED.is_deleted,
+         copyright = EXCLUDED.copyright,
+         pid_v2 = COALESCE(EXCLUDED.pid_v2, video.pid_v2),
+         mission_id = COALESCE(EXCLUDED.mission_id, video.mission_id),
+         extras = EXCLUDED.extras,
+         notes = COALESCE(EXCLUDED.notes, video.notes),
+         updated_at = NOW()
+       WHERE video.bvid IS DISTINCT FROM EXCLUDED.bvid
+          OR video.pubdate IS DISTINCT FROM EXCLUDED.pubdate
+          OR video.title IS DISTINCT FROM EXCLUDED.title
+          OR video.description IS DISTINCT FROM EXCLUDED.description
+          OR (EXCLUDED.tag IS NOT NULL AND video.tag IS DISTINCT FROM EXCLUDED.tag)
+          OR video.pic IS DISTINCT FROM EXCLUDED.pic
+          OR (EXCLUDED.cover43 IS NOT NULL AND video.cover43 IS DISTINCT FROM EXCLUDED.cover43)
+          OR video.type_id IS DISTINCT FROM EXCLUDED.type_id
+          OR video.user_id IS DISTINCT FROM EXCLUDED.user_id
+          OR video.is_filtered IS DISTINCT FROM EXCLUDED.is_filtered
+          OR video.staff IS DISTINCT FROM EXCLUDED.staff
+          OR video.tid_v2 IS DISTINCT FROM EXCLUDED.tid_v2
+          OR video.dynamic IS DISTINCT FROM EXCLUDED.dynamic
+          OR (EXCLUDED.tag_new IS NOT NULL AND video.tag_new IS DISTINCT FROM EXCLUDED.tag_new)
+          OR (EXCLUDED.tag_ids IS NOT NULL AND video.tag_ids IS DISTINCT FROM EXCLUDED.tag_ids)
+          OR video.participle IS DISTINCT FROM EXCLUDED.participle
+          OR video.ctime IS DISTINCT FROM EXCLUDED.ctime
+          OR video.is_deleted IS DISTINCT FROM EXCLUDED.is_deleted
+          OR video.copyright IS DISTINCT FROM EXCLUDED.copyright
+          OR (EXCLUDED.pid_v2 IS NOT NULL AND video.pid_v2 IS DISTINCT FROM EXCLUDED.pid_v2)
+          OR (EXCLUDED.mission_id IS NOT NULL AND video.mission_id IS DISTINCT FROM EXCLUDED.mission_id)
+          OR video.extras IS DISTINCT FROM EXCLUDED.extras
+          OR (EXCLUDED.notes IS NOT NULL AND video.notes IS DISTINCT FROM EXCLUDED.notes)
+       RETURNING aid`,
+      [payload],
     );
-    await pool.query(
-      `INSERT INTO video_tags (video_aid, tag_id)
-       SELECT $1::bigint, tag_id
-       FROM unnest($2::bigint[]) AS snapshot(tag_id)
-       ON CONFLICT (video_aid, tag_id) DO NOTHING`,
-      [video.aid.toString(), tagIds],
+    await client.query(
+      `WITH incoming AS (
+         SELECT *
+         FROM jsonb_to_recordset($1::jsonb) AS input(aid bigint, tag_snapshot jsonb)
+       ), tags_to_upsert AS (
+         SELECT DISTINCT ON ((tag->>'tagId')::bigint)
+           (tag->>'tagId')::bigint AS tag_id,
+           tag->>'tagName' AS tag_name
+         FROM incoming
+         CROSS JOIN LATERAL jsonb_array_elements(COALESCE(tag_snapshot, '[]'::jsonb)) AS tag
+         ORDER BY (tag->>'tagId')::bigint, tag->>'tagName'
+       )
+       INSERT INTO tags (tag_id, tag_name, updated_at)
+       SELECT tag_id, tag_name, NOW()
+       FROM tags_to_upsert
+       ON CONFLICT (tag_id) DO UPDATE SET
+         tag_name = EXCLUDED.tag_name,
+         updated_at = EXCLUDED.updated_at`,
+      [payload],
     );
+    await client.query(
+      `SELECT fn_upsert_collection_state_from_processed_video(
+         input.aid, input.pubdate, input.ctime, input.tid_v2,
+         NULL, NULL, NULL, input.is_deleted, input.is_filtered,
+         $2::timestamptz, $3::integer, $4::integer, $5::text[], $6::text,
+         $7::text[], $8::integer[], $9::integer
+       )
+       FROM jsonb_to_recordset($1::jsonb) AS input(
+         aid bigint, pubdate bigint, ctime bigint, tid_v2 integer,
+         is_deleted boolean, is_filtered boolean
+       )`,
+      [
+        payload,
+        now,
+        options?.bootstrapPriority ?? 10,
+        options?.bootstrapTtlHours ?? 24,
+        options?.bootstrapLabelContentTypes ?? ["vocaloid", "maybe_vocaloid"],
+        options?.bootstrapLabelOrigin ?? "rule",
+        options?.bootstrapLabelWriters ?? [
+          "classification_apply",
+          "classification_trigger",
+        ],
+        options?.bootstrapTidV2Allowlist ?? [2022, 2061],
+        options?.processedBackfillNewVideoAgeDays ?? 7,
+      ],
+    );
+    await client.query("COMMIT");
+    return written.rowCount ?? 0;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
@@ -288,7 +650,11 @@ export async function updateProcessedVideoMetadata(
     [
       entries.map((item) => item.aid.toString()),
       entries.map((item) => item.pidV2 ?? null),
-      entries.map((item) => item.cover43 ?? null),
+      entries.map((item) =>
+        item.cover43 === undefined
+          ? null
+          : sanitizeDatabaseString(item.cover43),
+      ),
     ],
   );
   return result.rowCount ?? 0;
@@ -418,7 +784,7 @@ export async function markVideoDeleted(
   identity: VideoIdentity,
   notes?: VideoDeletionNotes,
 ): Promise<bigint> {
-  const notesJson = notes ? JSON.stringify(notes) : null;
+  const notesJson = notes ? stringifyDatabaseJson(notes) : null;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -494,8 +860,8 @@ export async function getVideoHistory(
   limit = 50,
 ): Promise<VideoSnapshot[]> {
   const result = await pool.query(
-    `SELECT aid, bvid, recorded_at, title, description, tag, tag_new,
-            pic, is_deleted, is_filtered, extras, notes
+    `SELECT aid, bvid, recorded_at, title, description, tag, tag_new, tag_ids,
+            pic, cover43, is_deleted, is_filtered, extras, notes
      FROM video_history
      WHERE bvid = $1
      ORDER BY recorded_at DESC
@@ -511,7 +877,11 @@ export async function getVideoHistory(
     description: row.description as string | null,
     tag: row.tag as string | null,
     tagNew: row.tag_new as string[] | null,
+    tagIds: Array.isArray(row.tag_ids)
+      ? (row.tag_ids as Array<string | number>).map((tagId) => BigInt(tagId))
+      : null,
     pic: row.pic as string | null,
+    cover43: row.cover43 as string | null,
     isDeleted: row.is_deleted as boolean | null,
     isFiltered: row.is_filtered as boolean | null,
     extras: row.extras as Record<string, unknown> | null,

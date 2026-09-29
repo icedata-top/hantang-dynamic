@@ -73,6 +73,7 @@ export async function initVideosSchema(pool: Pool): Promise<void> {
       tid_v2 INTEGER,
       dynamic TEXT,
       tag_new VARCHAR[],
+      tag_ids BIGINT[],
       participle VARCHAR[],
       ctime BIGINT,
       is_deleted BOOLEAN DEFAULT FALSE,
@@ -88,7 +89,8 @@ export async function initVideosSchema(pool: Pool): Promise<void> {
     ALTER TABLE processed_videos
       ADD COLUMN IF NOT EXISTS cover43 VARCHAR,
       ADD COLUMN IF NOT EXISTS pid_v2 INTEGER,
-      ADD COLUMN IF NOT EXISTS mission_id BIGINT
+      ADD COLUMN IF NOT EXISTS mission_id BIGINT,
+      ADD COLUMN IF NOT EXISTS tag_ids BIGINT[]
   `);
 
   await pool.query(`
@@ -98,14 +100,6 @@ export async function initVideosSchema(pool: Pool): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS video_tags (
-      video_aid BIGINT NOT NULL,
-      tag_id BIGINT NOT NULL,
-      PRIMARY KEY (video_aid, tag_id)
-    )
-  `);
-
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_processed_filtered
     ON processed_videos(is_filtered)
@@ -124,9 +118,5 @@ export async function initVideosSchema(pool: Pool): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_processed_mission_id
     ON processed_videos(mission_id)
     WHERE mission_id IS NOT NULL
-  `);
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_video_tags_tag_id_video_aid
-    ON video_tags(tag_id, video_aid)
   `);
 }

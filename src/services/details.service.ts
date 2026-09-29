@@ -506,6 +506,15 @@ export class DetailsService {
   async enrichRelatedVideoMetadata(
     relatedVideos: RecommendedVideo[],
   ): Promise<number> {
+    await this.db.upsertPidV2Names(
+      relatedVideos.flatMap((video) => {
+        const name =
+          typeof video.pid_name_v2 === "string" ? video.pid_name_v2.trim() : "";
+        return validPidV2(video.pid_v2) && name.length > 0
+          ? [{ pidV2: video.pid_v2, name }]
+          : [];
+      }),
+    );
     const metadata = relatedVideos.flatMap((video) => {
       const pidV2 = validPidV2(video.pid_v2) ? video.pid_v2 : undefined;
       const cover43 =

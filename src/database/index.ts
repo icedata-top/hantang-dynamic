@@ -27,11 +27,14 @@ import type {
 import type { VideoData } from "../types/models/video.js";
 import { logger } from "../utils/logger.js";
 
+export type { PidV2Name } from "./pidV2Names.js";
 export type {
   BvidListQuery,
+  ProcessedVideoBatchItem,
   ProcessedVideoMetadata,
   ProcessedVideoMetadataCandidate,
   ProcessedVideoMetadataSweep,
+  ProcessedVideoRecommendationRefresh,
   VideoDeletionNotes,
   VideoIdentity,
 } from "./videos.js";
@@ -78,12 +81,14 @@ import {
   selectDueMinuteVideos,
 } from "./collectionState.js";
 import { getCachedForwardBvid, saveDynamic } from "./dynamics.js";
+import { type PidV2Name, upsertPidV2Names } from "./pidV2Names.js";
 import {
   getTopRecommendedVideos,
   type RecommendationInput,
   trackRecommendationsBatch,
 } from "./recommendations.js";
 import { initializeSchema } from "./schema/index.js";
+import { upgradeVideoHistoryTagIdentitySchema } from "./schema/video_history.js";
 import { getStats } from "./stats.js";
 import {
   cidHasAiSubtitle,
@@ -110,11 +115,15 @@ import { getDailyCollectionCandidates } from "./videoDaily.js";
 import {
   getLatestVideoMinuteSamples,
   insertVideoMinuteSamples,
+  insertVideoMinuteSamplesWithGateCrossings,
+  type VideoMinuteInsertResult,
 } from "./videoMinute.js";
 import {
   type BvidListQuery,
   getAllProcessedIds,
   getBvidList,
+  getProcessedVideoAids,
+  getProcessedVideoAidsMissingPidV2,
   getProcessedVideoMetadataCandidates,
   getProcessedVideoMetadataUpperAid,
   getProcessedVideos,
@@ -123,9 +132,13 @@ import {
   hasProcessedVideoById,
   markVideoDeleted,
   markVideoProcessedWithCollectionState,
+  markVideosProcessedWithCollectionState,
+  type ProcessedVideoBatchItem,
   type ProcessedVideoMetadata,
   type ProcessedVideoMetadataCandidate,
   type ProcessedVideoMetadataSweep,
+  type ProcessedVideoRecommendationRefresh,
+  refreshProcessedVideosFromRecommendations,
   updateProcessedVideoMetadata,
   type VideoDeletionNotes,
   type VideoIdentity,
@@ -287,6 +300,35 @@ export class Database {
     return getAllProcessedIds(this.ensurePool(), type);
   }
 
+  public async getProcessedVideoAids(
+    aids: ReadonlyArray<bigint>,
+  ): Promise<Set<bigint>> {
+    return getProcessedVideoAids(this.ensurePool(), aids);
+  }
+
+  public async getProcessedVideoAidsMissingPidV2(
+    aids: ReadonlyArray<bigint>,
+  ): Promise<Set<bigint>> {
+    return getProcessedVideoAidsMissingPidV2(this.ensurePool(), aids);
+  }
+
+  /** Apply the standalone TAG identity and cover43 history upgrade. */
+  public async upgradeVideoHistory(): Promise<void> {
+    await upgradeVideoHistoryTagIdentitySchema(this.ensurePool());
+  }
+
+  public async refreshProcessedVideosFromRecommendations(
+    videos: ReadonlyArray<ProcessedVideoRecommendationRefresh>,
+  ): Promise<number> {
+    return refreshProcessedVideosFromRecommendations(this.ensurePool(), videos);
+  }
+
+  public async upsertPidV2Names(
+    names: ReadonlyArray<PidV2Name>,
+  ): Promise<number> {
+    return upsertPidV2Names(this.ensurePool(), names);
+  }
+
   /**
    * Mark a video as deleted, preserving existing fields.
    * Optionally records the API error code and message in notes.
@@ -310,6 +352,27 @@ export class Database {
       this.ensurePool(),
       video,
       filtered,
+      now,
+      {
+        bootstrapPriority: config.minute.bootstrapPriority,
+        bootstrapTtlHours: config.minute.bootstrapTtlHours,
+        bootstrapLabelContentTypes: config.minute.bootstrapLabelContentTypes,
+        bootstrapLabelOrigin: config.minute.bootstrapLabelOrigin,
+        bootstrapLabelWriters: config.minute.bootstrapLabelWriters,
+        bootstrapTidV2Allowlist: config.minute.bootstrapTidV2Allowlist,
+        processedBackfillNewVideoAgeDays:
+          config.minute.processedBackfillNewVideoAgeDays,
+      },
+    );
+  }
+
+  public async markVideosProcessedWithCollectionState(
+    items: ReadonlyArray<ProcessedVideoBatchItem>,
+    now?: Date,
+  ): Promise<number> {
+    return markVideosProcessedWithCollectionState(
+      this.ensurePool(),
+      items,
       now,
       {
         bootstrapPriority: config.minute.bootstrapPriority,
@@ -593,6 +656,15 @@ export class Database {
     samples: VideoMinuteSample[],
   ): Promise<number> {
     return insertVideoMinuteSamples(this.ensurePool(), samples);
+  }
+
+  public async insertVideoMinuteSamplesWithGateCrossings(
+    samples: VideoMinuteSample[],
+  ): Promise<VideoMinuteInsertResult> {
+    return insertVideoMinuteSamplesWithGateCrossings(
+      this.ensurePool(),
+      samples,
+    );
   }
 
   public async getLatestVideoMinuteSamples(

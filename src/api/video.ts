@@ -81,9 +81,15 @@ export const fetchVideoFullDetail = async (
       const response =
         await webInterfaceClient.get<BiliVideoFullDetailResponse>(endpoint, {
           params,
-          ...({ metadata: { silent: true } } as RequestConfig),
+          ...({
+            metadata: { silent: true, proxyDetailLoginFallback: true },
+          } as RequestConfig),
         });
-      return checkResponseCode(response.data, id);
+      if (response.data.code === -403) {
+        logger.debug(`Proxy requires login for ${id}, trying direct API`);
+      } else {
+        return checkResponseCode(response.data, id);
+      }
     } catch (proxyError) {
       if (isAccountAuthError(proxyError)) {
         throw proxyError;
