@@ -19,8 +19,8 @@ max_recommendation_depth = 1
 | `enable_tag_fetch` | `ENABLE_TAG_FETCH` | `false` | Fetch video tags. |
 | `enable_user_relation` | `ENABLE_USER_RELATION` | `false` | Enable user relation features. |
 | `enable_deduplication` | `ENABLE_DEDUPLICATION` | `true` | Deduplicate by AID. |
-| `enable_recommendation` | `ENABLE_RECOMMENDATION` | `false` | Track recommendations. |
-| `max_recommendation_depth` | `MAX_RECOMMENDATION_DEPTH` | `1` | Recommendation recursion depth. |
+| `enable_recommendation` | `ENABLE_RECOMMENDATION` | `false` | Enable related-video expansion when `enable_related_expansion` is unset. |
+| `max_recommendation_depth` | `MAX_RECOMMENDATION_DEPTH` | `1` | Related-video expansion depth when `max_related_expansion_depth` is unset. |
 
 ## Filtering
 

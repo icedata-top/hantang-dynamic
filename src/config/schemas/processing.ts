@@ -8,7 +8,6 @@ export const processingSchema = z.object({
     enableDeduplication: z.coerce.boolean().default(true),
     enableRecommendation: z.coerce.boolean().default(false),
     maxRecommendationDepth: z.coerce.number().default(1),
-    enableRelatedQualitySignal: z.coerce.boolean().default(true),
     enableRelatedExpansion: z.coerce.boolean().default(false),
     maxRelatedExpansionDepth: z.coerce.number().default(1),
   }),
@@ -61,11 +60,6 @@ export function createProcessingConfig(
       ),
       enableRecommendation: legacyEnableRecommendation ?? false,
       maxRecommendationDepth: legacyMaxRecommendationDepth ?? 1,
-      enableRelatedQualitySignal: getConfigValue(
-        ["processing", "features", "enable_related_quality_signal"],
-        "ENABLE_RELATED_QUALITY_SIGNAL",
-        true,
-      ),
       enableRelatedExpansion:
         getConfigValue(
           ["processing", "features", "enable_related_expansion"],

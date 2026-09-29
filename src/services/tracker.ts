@@ -205,7 +205,6 @@ export class DynamicTracker {
     const relatedQueue: RelatedVideoWorkItem[] = [];
 
     const features = config.processing?.features;
-    const recordRelatedEdges = features?.enableRelatedQualitySignal ?? true;
     const enableRelatedExpansion =
       features?.enableRelatedExpansion ??
       features?.enableRecommendation ??
@@ -233,7 +232,6 @@ export class DynamicTracker {
             await this.detailsService.processVideo(workItem.dynamic, {
               pidV2: workItem.pidV2,
               cover43: workItem.cover43,
-              processRecommendations: recordRelatedEdges,
               processRelated: expandRelated,
             });
 

@@ -13,7 +13,6 @@ import type {
   DatabaseStats,
   DiscoveredUserData,
   DynamicData,
-  RecommendationData,
   UserData,
   UserProfileSnapshot,
   UserStatsUpdate,
@@ -82,11 +81,6 @@ import {
 } from "./collectionState.js";
 import { getCachedForwardBvid, saveDynamic } from "./dynamics.js";
 import { type PidV2Name, upsertPidV2Names } from "./pidV2Names.js";
-import {
-  getTopRecommendedVideos,
-  type RecommendationInput,
-  trackRecommendationsBatch,
-} from "./recommendations.js";
 import { initializeSchema } from "./schema/index.js";
 import { upgradeVideoHistoryTagIdentitySchema } from "./schema/video_history.js";
 import { getStats } from "./stats.js";
@@ -558,26 +552,6 @@ export class Database {
     followingIds: Set<string>,
   ): Promise<void> {
     return syncFollowingStatus(this.ensurePool(), crawlerUid, followingIds);
-  }
-
-  // ===== Recommendation Operations =====
-
-  /**
-   * Batch track recommendation relationships
-   */
-  public async trackRecommendationsBatch(
-    recommendations: RecommendationInput[],
-  ): Promise<void> {
-    return trackRecommendationsBatch(this.ensurePool(), recommendations);
-  }
-
-  /**
-   * Get top recommended videos
-   */
-  public async getTopRecommendedVideos(
-    limit: number,
-  ): Promise<RecommendationData[]> {
-    return getTopRecommendedVideos(this.ensurePool(), limit);
   }
 
   // ===== Stats Operations =====
