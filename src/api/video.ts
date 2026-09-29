@@ -140,10 +140,7 @@ export const fetchVideoFullDetail = async (
       return null;
     }
 
-    const baseUrl = directClient.defaults.baseURL || "";
-    const fullUrl = `${baseUrl}${endpoint}?bvid=${params.bvid || ""}&aid=${
-      params.aid || ""
-    }`;
+    const fullUrl = directClient.getUri({ url: endpoint, params });
     logger.error(`API Error for URL: ${fullUrl}`, error);
     if (error instanceof Error) {
       logger.error(error.stack);

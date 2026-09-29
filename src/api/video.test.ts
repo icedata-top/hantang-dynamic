@@ -130,8 +130,10 @@ test("proxy login-required detail response hands off to the authenticated direct
   assert.deepEqual(warnings, []);
 });
 
-test("a direct login-required detail response after proxy handoff still fails", async () => {
+test("direct detail failure diagnostics omit an absent video identifier", async () => {
   const originalAdapter = webInterfaceClient.defaults.adapter;
+  const originalConsoleError = console.error;
+  const errors: string[] = [];
   const restoreWbiState = setTestWbiState();
   const proxyAdapter: AxiosAdapter = async (request) => ({
     config: request,
@@ -141,22 +143,45 @@ test("a direct login-required detail response after proxy handoff still fails", 
     statusText: "OK",
   });
   const directClient = axios.create();
-  directClient.defaults.adapter = async (request) => ({
-    config: request,
-    data: response(-403),
-    headers: {},
-    status: 200,
-    statusText: "OK",
-  });
+  const requestUris: string[] = [];
+  directClient.defaults.adapter = async (request) => {
+    requestUris.push(directClient.getUri(request));
+    return {
+      config: request,
+      data: response(-403),
+      headers: {},
+      status: 200,
+      statusText: "OK",
+    };
+  };
 
   webInterfaceClient.defaults.adapter = proxyAdapter;
+  console.error = (...args: unknown[]) => errors.push(args.join(" "));
   try {
-    await assert.rejects(
-      fetchVideoFullDetail({ bvid: "BVdirect-failure" }, directClient),
-      /Fetch video full detail failed/,
-    );
+    for (const params of [
+      { bvid: "BVdirect-failure" },
+      { aid: 123 },
+    ] as const) {
+      await assert.rejects(
+        fetchVideoFullDetail(params, directClient),
+        /Fetch video full detail failed/,
+      );
+    }
   } finally {
     webInterfaceClient.defaults.adapter = originalAdapter;
+    console.error = originalConsoleError;
     restoreWbiState();
   }
+
+  assert.deepEqual(requestUris, [
+    "/view/detail?bvid=BVdirect-failure",
+    "/view/detail?aid=123",
+  ]);
+  const diagnosticUrls = errors
+    .filter((message) => message.includes("API Error for URL:"))
+    .map(
+      (message) =>
+        message.replace(/^.*API Error for URL: /, "").split(" Error:", 1)[0],
+    );
+  assert.deepEqual(diagnosticUrls, requestUris);
 });

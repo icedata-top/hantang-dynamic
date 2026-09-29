@@ -11,7 +11,11 @@ import type {
   RecommendedVideo,
   VideoData,
 } from "../types/index.js";
-import { parsePidV2Whitelist, runUpdateInfo } from "./update-info.js";
+import {
+  parsePidV2Whitelist,
+  parseUpdateInfoPredicateArgument,
+  runUpdateInfo,
+} from "./update-info.js";
 
 function related(
   aid: number,
@@ -86,6 +90,11 @@ function video(aid: number): VideoData {
 class FakeDatabase {
   closed = false;
   calls = { dictionary: 0, membership: 0, refresh: 0, persist: 0 };
+  readonly candidateRequests: Array<{
+    afterAid: bigint;
+    onlyMissingPidV2?: boolean;
+    where?: string;
+  }> = [];
   readonly pidV2Names = new Map<number, string>();
   readonly pidV2ByAid = new Map<number, number>();
   constructor(
@@ -102,7 +111,9 @@ class FakeDatabase {
   async getProcessedVideoMetadataCandidates(options: {
     afterAid: bigint;
     onlyMissingPidV2?: boolean;
+    where?: string;
   }) {
+    this.candidateRequests.push(options);
     return this.sources
       .filter((aid) => BigInt(aid) > options.afterAid)
       .filter((aid) => !options.onlyMissingPidV2 || !this.pidV2ByAid.has(aid))
@@ -212,6 +223,30 @@ test("concurrent collectors share the configured capacity for source and admissi
   assert.equal(admissionRequests, 50);
 });
 
+test("manual updater passes its source predicate to both sweeps", async () => {
+  const database = new FakeDatabase([4, 5]);
+  const where = "aid >= 4 AND pid_v2 IS NULL";
+  const fetched: number[] = [];
+  const result = await runUpdateInfo({
+    where,
+    database,
+    detailsService: parser,
+    pidV2Whitelist: new Set(),
+    onProgress: () => {},
+    fetchDetail: async (id) => {
+      const aid = Number(String(id).replace("BV", ""));
+      fetched.push(aid);
+      return detail(aid, 10);
+    },
+  });
+  assert.equal(result.scanned, 2);
+  assert.deepEqual(fetched, [4, 5, 4, 5]);
+  assert.deepEqual(
+    database.candidateRequests.map((request) => request.where),
+    [where, where],
+  );
+});
+
 test("manual updater preserves the original AID cutoff and closes the database", async () => {
   const database = new FakeDatabase([1, 2]);
   const result = await runUpdateInfo({
@@ -222,6 +257,10 @@ test("manual updater preserves the original AID cutoff and closes the database",
     fetchDetail: async (id) => detail(Number(String(id).replace("BV", "")), 10),
   });
   assert.equal(result.scanned, 2);
+  assert.deepEqual(
+    database.candidateRequests.map((request) => request.where),
+    [undefined, undefined],
+  );
   assert.equal(database.closed, true);
 });
 
@@ -289,6 +328,41 @@ test("partial related cards refresh only their supplied existing fields", async 
   });
   await service.collectForAids([{ aid: 1n }]);
   assert.deepEqual(refreshed, { aid: 2n, description: "", pidV2: 7 });
+});
+
+test("update-info predicate parser accepts pnpm forwarding and ignores whitelist values", () => {
+  const predicate = "aid >= 2746491 AND pid_v2 IS NULL";
+  assert.equal(
+    parseUpdateInfoPredicateArgument([
+      "--update-info",
+      "--",
+      predicate,
+      "--pid-v2-whitelist",
+      "1003,1005,1007",
+    ]),
+    predicate,
+  );
+  assert.equal(
+    parseUpdateInfoPredicateArgument(["--update-info", predicate]),
+    predicate,
+  );
+  assert.equal(
+    parseUpdateInfoPredicateArgument([
+      "--update-info",
+      "--pid-v2-whitelist",
+      "1003,1005,1007",
+    ]),
+    undefined,
+  );
+  assert.equal(
+    parseUpdateInfoPredicateArgument([
+      "--update-info",
+      "--",
+      "--pid-v2-whitelist",
+      "1003,1005,1007",
+    ]),
+    undefined,
+  );
 });
 
 test("whitelist parser rejects malformed explicit values", () => {

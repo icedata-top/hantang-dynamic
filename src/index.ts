@@ -97,14 +97,18 @@ async function main() {
   const args = process.argv.slice(2);
 
   if (args.includes("--update-info")) {
-    const { parsePidV2Whitelist, runUpdateInfo } = await import(
-      "./scripts/update-info"
-    );
+    const {
+      parsePidV2Whitelist,
+      parseUpdateInfoPredicateArgument,
+      runUpdateInfo,
+    } = await import("./scripts/update-info");
     const whitelistValue =
       updateInfoWhitelistArgument(args) ??
       config.processing.filtering.pidV2Whitelist.join(",");
+    const where = parseUpdateInfoPredicateArgument(args);
     await runUpdateInfo({
       pidV2Whitelist: parsePidV2Whitelist(whitelistValue),
+      ...(where === undefined ? {} : { where }),
     });
     return;
   }

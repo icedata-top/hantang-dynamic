@@ -29,6 +29,7 @@ interface UpdateInfoDatabase extends RecommendationRefreshDatabase {
 
 export interface UpdateInfoOptions {
   afterAid?: bigint;
+  where?: string;
   database?: UpdateInfoDatabase;
   detailsService?: RecommendationDetailParser;
   fetchDetail?: (
@@ -53,6 +54,16 @@ function validPidV2(value: unknown): value is number {
     value > 0 &&
     value <= MAX_POSTGRES_INTEGER
   );
+}
+
+/** Read the optional positional source predicate used by the update-info CLI. */
+export function parseUpdateInfoPredicateArgument(
+  args: string[],
+): string | undefined {
+  const updateInfoIndex = args.indexOf("--update-info");
+  const following = args[updateInfoIndex + 1];
+  const candidate = following === "--" ? args[updateInfoIndex + 2] : following;
+  return candidate && !candidate.startsWith("--") ? candidate : undefined;
 }
 
 /** Parse a comma-separated list of explicit pid_v2 values. */
@@ -154,6 +165,7 @@ export async function runUpdateInfo(
       createdBefore,
       throughAid,
       ...(options.afterAid === undefined ? {} : { afterAid: options.afterAid }),
+      ...(options.where === undefined ? {} : { where: options.where }),
     };
     const collector = new RecommendationRefreshService({
       database,
