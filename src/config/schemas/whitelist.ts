@@ -3,7 +3,7 @@ import { z } from "zod";
 const stringList = z.array(z.string());
 const numberList = z.array(z.number());
 
-const legacyWhitelistPaths = [
+export const legacyWhitelistPaths = [
   ["processing.filtering.type_id_whitelist", "whitelist.video.type_ids"],
   [
     "processing.filtering.copyright_whitelist",
@@ -25,24 +25,6 @@ const legacyWhitelistPaths = [
   ],
   ["minute.bootstrap_tid_v2_allowlist", "whitelist.minute_bootstrap.tid_v2"],
 ] as const;
-
-export function validateLegacyWhitelistPaths(toml: unknown): void {
-  const found = legacyWhitelistPaths.filter(([oldPath]) => {
-    let value: unknown = toml;
-    for (const segment of oldPath.split(".")) {
-      if (value === null || typeof value !== "object" || !(segment in value)) {
-        return false;
-      }
-      value = (value as Record<string, unknown>)[segment];
-    }
-    return true;
-  });
-  if (found.length > 0) {
-    throw new Error(
-      `Obsolete whitelist TOML keys; move them to the new paths:\n${found.map(([oldPath, newPath]) => `  ${oldPath} -> ${newPath}`).join("\n")}`,
-    );
-  }
-}
 
 export const whitelistSchema = z.object({
   video: z.object({

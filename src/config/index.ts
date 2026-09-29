@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
+import { loadConfigToml } from "./migrate-whitelist";
 import {
   applicationSchema,
   bilibiliSchema,
@@ -28,21 +28,11 @@ import {
   subtitleSchema,
   whitelistSchema,
 } from "./schemas";
-import { validateLegacyWhitelistPaths } from "./schemas/whitelist";
 
-let tomlData: unknown = {};
-try {
-  const configPath = resolve(process.cwd(), "config.toml");
-  const tomlString = readFileSync(configPath, "utf-8");
-  tomlData = parseToml(tomlString);
-} catch (error) {
-  console.warn(
-    "Warning: config.toml not found or invalid. Using environment variables as fallback.",
-  );
-  console.warn("Actual error:", error);
-}
-
-validateLegacyWhitelistPaths(tomlData);
+const configPath = resolve(process.cwd(), "config.toml");
+const tomlData: unknown = existsSync(configPath)
+  ? loadConfigToml(configPath)
+  : {};
 
 // Helper function to get configuration value from TOML or environment variable
 function getConfigValue(

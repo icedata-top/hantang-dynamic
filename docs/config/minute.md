@@ -143,7 +143,8 @@ tid_v2 = [2022, 2061]
 | `label_writers` | `MINUTE_BOOTSTRAP_LABEL_WRITERS` | `["classification_apply", "classification_trigger"]` | Eligible label writers. |
 | `tid_v2` | `MINUTE_BOOTSTRAP_TID_V2_ALLOWLIST` | `[2022, 2061]` | Fallback values when no formal label exists. |
 
-Move these former TOML keys before starting the application:
+On startup, the app automatically moves these former TOML keys in `config.toml`
+to their current locations:
 
 | Former TOML key | Current TOML key |
 | --- | --- |

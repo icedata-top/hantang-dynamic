@@ -65,7 +65,8 @@ still excludes matching videos. Recommendation admission requires a listed
 `pid_v2`; `--update-info --pid-v2-whitelist` overrides the configured list for
 that run.
 
-Move these former TOML keys before starting the application:
+On startup, the app automatically moves these former TOML keys in `config.toml`
+to their current locations:
 
 | Former TOML key | Current TOML key |
 | --- | --- |
@@ -74,5 +75,8 @@ Move these former TOML keys before starting the application:
 | `processing.filtering.content_whitelist` | `whitelist.video.content_keywords` |
 | `processing.filtering.pid_v2_whitelist` | `whitelist.recommendation.pid_v2` |
 
-Keep `processing.filtering.content_blacklist` where it is. Existing environment
+The migration preserves other configuration text and comments. It stops without
+changing the file if a destination key already exists or the old key uses quoted
+or dotted TOML syntax. Move those keys manually before restarting. Keep
+`processing.filtering.content_blacklist` where it is. Existing environment
 variable names remain valid.
