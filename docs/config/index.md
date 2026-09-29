@@ -19,7 +19,6 @@ Then fill only the sections you use.
 - [Database](./database.md)
 - [Adaptive minute collection](./minute.md)
 - [Processing and filtering](./processing.md)
-- [Whitelist configuration](./whitelist.md)
 - [Export](./export.md)
 - [Notifications](./notifications.md)
 

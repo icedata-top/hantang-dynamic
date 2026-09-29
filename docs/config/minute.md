@@ -124,10 +124,39 @@ rescheduling and increments
 `target_delta_lower`..`target_delta_upper` range after parsing.
 `MINUTE_ENABLED` accepts `1`, `true`, `yes`, and `on` as true values.
 
-Bootstrap eligibility lists are configured under
-[`[whitelist.minute_bootstrap]`](./whitelist.md). Changing those values requires
-schema initialization to refresh the SQL function defaults as well as restarting
-the application.
+## Bootstrap eligibility
+
+Bootstrap eligibility is configured under `[whitelist.minute_bootstrap]`:
+
+```toml
+[whitelist.minute_bootstrap]
+label_content_types = ["vocaloid", "maybe_vocaloid"]
+label_origin = "rule"
+label_writers = ["classification_apply", "classification_trigger"]
+tid_v2 = [2022, 2061]
+```
+
+| TOML key | Environment variable | Default | Effect |
+| --- | --- | --- | --- |
+| `label_content_types` | `MINUTE_BOOTSTRAP_LABEL_CONTENT_TYPES` | `["vocaloid", "maybe_vocaloid"]` | Eligible formal label types. |
+| `label_origin` | `MINUTE_BOOTSTRAP_LABEL_ORIGIN` | `rule` | Required label origin. |
+| `label_writers` | `MINUTE_BOOTSTRAP_LABEL_WRITERS` | `["classification_apply", "classification_trigger"]` | Eligible label writers. |
+| `tid_v2` | `MINUTE_BOOTSTRAP_TID_V2_ALLOWLIST` | `[2022, 2061]` | Fallback values when no formal label exists. |
+
+Move these former TOML keys before starting the application:
+
+| Former TOML key | Current TOML key |
+| --- | --- |
+| `minute.bootstrap_label_content_types` | `whitelist.minute_bootstrap.label_content_types` |
+| `minute.bootstrap_label_origin` | `whitelist.minute_bootstrap.label_origin` |
+| `minute.bootstrap_label_writers` | `whitelist.minute_bootstrap.label_writers` |
+| `minute.bootstrap_tid_v2_allowlist` | `whitelist.minute_bootstrap.tid_v2` |
+
+Existing environment variable names remain valid. After changing
+minute-bootstrap values, run `pnpm init-schema` against the database so stored
+SQL function defaults use the new values, then restart the application. Without
+schema initialization, calls that rely on the stored SQL defaults can continue
+using the previously installed bootstrap values.
 
 ## Metrics
 

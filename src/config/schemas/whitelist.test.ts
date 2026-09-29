@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createWhitelistConfig, whitelistSchema } from "./whitelist.js";
+import {
+  createWhitelistConfig,
+  validateLegacyWhitelistPaths,
+  whitelistSchema,
+} from "./whitelist.js";
 
 test("whitelist sections use TOML before environment values", () => {
   const toml = new Map<string, unknown>([
@@ -55,5 +59,48 @@ test("whitelist environment lists parse and defaults retain minute admission", (
         key === "UPDATE_INFO_PID_V2_WHITELIST" ? "7,,11" : undefined,
       ),
     /pidV2/,
+  );
+});
+
+test("content keywords reject blank entries from environment and TOML", () => {
+  assert.throws(
+    () =>
+      createWhitelistConfig((_path, key) =>
+        key === "CONTENT_WHITE_LIST" ? "music, " : undefined,
+      ),
+    /contentKeywords/,
+  );
+  assert.throws(
+    () =>
+      createWhitelistConfig((path) =>
+        path.join(".") === "whitelist.video.content_keywords"
+          ? ["music", "   "]
+          : undefined,
+      ),
+    /contentKeywords/,
+  );
+});
+
+test("legacy whitelist TOML keys identify their replacement paths", () => {
+  assert.throws(
+    () =>
+      validateLegacyWhitelistPaths({
+        processing: { filtering: { content_whitelist: [] } },
+        minute: { bootstrap_tid_v2_allowlist: [2022] },
+      }),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes(
+        "processing.filtering.content_whitelist -> whitelist.video.content_keywords",
+      ) &&
+      error.message.includes(
+        "minute.bootstrap_tid_v2_allowlist -> whitelist.minute_bootstrap.tid_v2",
+      ),
+  );
+  assert.doesNotThrow(() =>
+    validateLegacyWhitelistPaths({
+      whitelist: { video: { content_keywords: [] } },
+      processing: { filtering: { content_blacklist: [] } },
+    }),
   );
 });

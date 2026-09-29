@@ -3,11 +3,52 @@ import { z } from "zod";
 const stringList = z.array(z.string());
 const numberList = z.array(z.number());
 
+const legacyWhitelistPaths = [
+  ["processing.filtering.type_id_whitelist", "whitelist.video.type_ids"],
+  [
+    "processing.filtering.copyright_whitelist",
+    "whitelist.video.copyright_types",
+  ],
+  [
+    "processing.filtering.content_whitelist",
+    "whitelist.video.content_keywords",
+  ],
+  ["processing.filtering.pid_v2_whitelist", "whitelist.recommendation.pid_v2"],
+  [
+    "minute.bootstrap_label_content_types",
+    "whitelist.minute_bootstrap.label_content_types",
+  ],
+  ["minute.bootstrap_label_origin", "whitelist.minute_bootstrap.label_origin"],
+  [
+    "minute.bootstrap_label_writers",
+    "whitelist.minute_bootstrap.label_writers",
+  ],
+  ["minute.bootstrap_tid_v2_allowlist", "whitelist.minute_bootstrap.tid_v2"],
+] as const;
+
+export function validateLegacyWhitelistPaths(toml: unknown): void {
+  const found = legacyWhitelistPaths.filter(([oldPath]) => {
+    let value: unknown = toml;
+    for (const segment of oldPath.split(".")) {
+      if (value === null || typeof value !== "object" || !(segment in value)) {
+        return false;
+      }
+      value = (value as Record<string, unknown>)[segment];
+    }
+    return true;
+  });
+  if (found.length > 0) {
+    throw new Error(
+      `Obsolete whitelist TOML keys; move them to the new paths:\n${found.map(([oldPath, newPath]) => `  ${oldPath} -> ${newPath}`).join("\n")}`,
+    );
+  }
+}
+
 export const whitelistSchema = z.object({
   video: z.object({
     typeIds: numberList.default([]),
     copyrightTypes: numberList.default([]),
-    contentKeywords: stringList.default([]),
+    contentKeywords: z.array(z.string().trim().min(1)).default([]),
   }),
   recommendation: z.object({
     pidV2: z.array(z.number().int().positive()).default([]),

@@ -28,6 +28,7 @@ import {
   subtitleSchema,
   whitelistSchema,
 } from "./schemas";
+import { validateLegacyWhitelistPaths } from "./schemas/whitelist";
 
 let tomlData: unknown = {};
 try {
@@ -40,6 +41,8 @@ try {
   );
   console.warn("Actual error:", error);
 }
+
+validateLegacyWhitelistPaths(tomlData);
 
 // Helper function to get configuration value from TOML or environment variable
 function getConfigValue(
