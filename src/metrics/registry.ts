@@ -134,8 +134,15 @@ export const minuteBatchesTotal = new Counter({
 
 export const minuteSamplesTotal = new Counter({
   name: `${PREFIX}minute_samples_total`,
-  help: "Total adaptive minute samples by outcome.",
+  help: "Total adaptive minute samples by persistence outcome.",
   labelNames: ["outcome"] as const,
+  registers: [metricsRegistry],
+});
+
+export const minuteFallbackResponseMissesTotal = new Counter({
+  name: `${PREFIX}minute_fallback_response_misses_total`,
+  help: "Requested AIDs without a usable old-path favorite response by reason.",
+  labelNames: ["reason"] as const,
   registers: [metricsRegistry],
 });
 
@@ -143,6 +150,27 @@ export const minuteBatchDurationSeconds = new Histogram({
   name: `${PREFIX}minute_batch_duration_seconds`,
   help: "Adaptive minute batch duration in seconds.",
   buckets: [0.1, 0.5, 1, 2, 5, 10, 30, 60],
+  registers: [metricsRegistry],
+});
+
+export const watchLaterEnabledAccounts = new Gauge({
+  name: `${PREFIX}watch_later_enabled_accounts`,
+  help: "Enabled Watch Later accounts in the latest completed snapshot-health scan by state.",
+  labelNames: ["state"] as const,
+  registers: [metricsRegistry],
+});
+
+export const watchLaterMutationsTotal = new Counter({
+  name: `${PREFIX}watch_later_mutations_total`,
+  help: "Attempted Watch Later POST requests by action and outcome.",
+  labelNames: ["action", "outcome"] as const,
+  registers: [metricsRegistry],
+});
+
+export const watchLaterReconciliationsTotal = new Counter({
+  name: `${PREFIX}watch_later_reconciliations_total`,
+  help: "Watch Later reconciliation cycles by final outcome.",
+  labelNames: ["outcome"] as const,
   registers: [metricsRegistry],
 });
 

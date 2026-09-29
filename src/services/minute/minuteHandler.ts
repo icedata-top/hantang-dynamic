@@ -1,18 +1,45 @@
 import { config } from "../../config";
+import { loadAccounts } from "../../core/account";
 import { Database } from "../../database";
 import {
   minuteBatchDurationSeconds,
   minuteBatchesTotal,
   minuteSamplesTotal,
 } from "../../metrics/registry";
-import type { VideoMinuteSample } from "../../types/models/minute";
+import type {
+  PersistableVideoMinuteSample,
+  VideoMinuteSample,
+} from "../../types/models/minute";
 import { logger } from "../../utils/logger";
 import { batchSampleVideoStats } from "./batchSampleVideoStats";
+import { isPersistableVideoMinuteSample } from "./completeSample";
+import { shouldPersistMinuteSample } from "./persistencePolicy";
+import { runAutomaticWatchLaterManagement } from "./watchLaterReconciliation";
 
 const MAX_SLEEP_MS = 60_000;
 const MIN_SLEEP_MS = 100;
 /** Non-gate videos wait at most this long before being flushed. */
 const BATCH_TIMEOUT_MS = 30_000;
+export const WATCH_LATER_RATE_LIMIT_COOLDOWN_MS = 30 * 60_000;
+
+export type MinuteDatabase = Pick<
+  Database,
+  | "advanceFailedMinuteVideos"
+  | "advanceSuppressedMinuteSamples"
+  | "getDesiredWatchLaterSet"
+  | "syncWatchLaterSnapshot"
+  | "getLatestVideoMinuteSamples"
+  | "getNextMinuteDueAt"
+  | "insertVideoMinuteSamples"
+  | "selectDueMinuteVideos"
+>;
+
+export interface MinuteHandlerDependencies {
+  database?: MinuteDatabase;
+  loadAccounts?: typeof loadAccounts;
+  sampleVideoStats?: typeof batchSampleVideoStats;
+  runWatchLaterManagement?: typeof runAutomaticWatchLaterManagement;
+}
 
 function cancellableSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -29,16 +56,39 @@ function cancellableSleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 export class MinuteHandler {
-  private db = Database.getInstance();
+  private db: MinuteDatabase;
+  private readonly accounts: typeof loadAccounts;
+  private readonly sampleVideoStats: typeof batchSampleVideoStats;
+  private readonly runWatchLaterManagement: typeof runAutomaticWatchLaterManagement;
   private isRunning = false;
   private loopPromise: Promise<void> | null = null;
   private abortController: AbortController | null = null;
+  private watchLaterManagementPromise: Promise<void> | null = null;
+  private readonly healthyWatchLaterAccountIds = new Set<bigint>();
+  private watchLaterCycle = 0;
+  private readonly watchLaterRateLimits = new Map<
+    bigint,
+    { lastCycle: number; cooldownUntil: number | null }
+  >();
+
+  constructor(dependencies: MinuteHandlerDependencies = {}) {
+    this.db = dependencies.database ?? Database.getInstance();
+    this.accounts = dependencies.loadAccounts ?? loadAccounts;
+    this.sampleVideoStats =
+      dependencies.sampleVideoStats ?? batchSampleVideoStats;
+    this.runWatchLaterManagement =
+      dependencies.runWatchLaterManagement ?? runAutomaticWatchLaterManagement;
+  }
 
   start(): void {
     if (this.loopPromise) return;
     this.isRunning = true;
+    this.healthyWatchLaterAccountIds.clear();
     this.abortController = new AbortController();
     this.loopPromise = this.loop(this.abortController.signal);
+    this.watchLaterManagementPromise = this.runWatchLaterController(
+      this.abortController.signal,
+    );
     logger.info("Adaptive minute handler started (batch-accumulation)");
   }
 
@@ -48,6 +98,9 @@ export class MinuteHandler {
     logger.info("Adaptive minute handler stopping");
     if (this.loopPromise) {
       await this.loopPromise;
+    }
+    if (this.watchLaterManagementPromise) {
+      await this.watchLaterManagementPromise;
     }
     this.abortController = null;
     logger.info("Adaptive minute handler stopped");
@@ -135,90 +188,191 @@ export class MinuteHandler {
     this.loopPromise = null;
   }
 
+  private async runWatchLaterController(signal: AbortSignal): Promise<void> {
+    while (this.isRunning) {
+      const startedAt = Date.now();
+      this.setHealthyWatchLaterAccounts(new Set());
+      try {
+        await this.runWatchLaterManagement(
+          this.db,
+          this.accounts(),
+          undefined,
+          {
+            shouldContinue: () => this.isRunning,
+            onHealthyAccounts: (accountIds) =>
+              this.setHealthyWatchLaterAccounts(accountIds),
+            isAccountRateLimited: (accountId) =>
+              this.isWatchLaterAccountRateLimited(accountId),
+            onAccountRateLimited: (accountId) =>
+              this.recordWatchLaterRateLimit(accountId),
+            onAccountRecovered: (accountId) =>
+              this.watchLaterRateLimits.delete(accountId),
+          },
+        );
+      } catch (error) {
+        logger.error("Watch-later management failed:", error);
+      }
+      const nextDelay = Math.max(0, 15 * 60_000 - (Date.now() - startedAt));
+      await cancellableSleep(nextDelay, signal);
+      this.watchLaterCycle += 1;
+    }
+  }
+
+  private setHealthyWatchLaterAccounts(accountIds: ReadonlySet<bigint>): void {
+    this.healthyWatchLaterAccountIds.clear();
+    for (const accountId of accountIds) {
+      if (!this.isWatchLaterAccountRateLimited(accountId)) {
+        this.healthyWatchLaterAccountIds.add(accountId);
+      }
+    }
+  }
+
+  private isWatchLaterAccountRateLimited(accountId: bigint): boolean {
+    const rateLimit = this.watchLaterRateLimits.get(accountId);
+    if (!rateLimit) return false;
+    if (rateLimit.lastCycle === this.watchLaterCycle) return true;
+    return (
+      rateLimit.cooldownUntil !== null && Date.now() < rateLimit.cooldownUntil
+    );
+  }
+
+  private recordWatchLaterRateLimit(accountId: bigint): void {
+    const previous = this.watchLaterRateLimits.get(accountId);
+    if (!previous) {
+      this.watchLaterRateLimits.set(accountId, {
+        lastCycle: this.watchLaterCycle,
+        cooldownUntil: null,
+      });
+    } else if (previous.lastCycle !== this.watchLaterCycle) {
+      this.watchLaterRateLimits.set(accountId, {
+        lastCycle: this.watchLaterCycle,
+        cooldownUntil: Date.now() + WATCH_LATER_RATE_LIMIT_COOLDOWN_MS,
+      });
+    }
+    this.healthyWatchLaterAccountIds.delete(accountId);
+  }
+
   /**
-   * Fetch stats for a pre-selected set of due videos, diff against last_view,
-   * then insert changed samples / advance unchanged / mark failed.
+   * Fetch valid stats for due videos, then persist samples that meet the
+   * counter-aware minute policy and advance all remaining valid coverage.
    */
-  private async processBatch(
-    due: { aid: bigint; lastView: bigint | null }[],
+  async processBatch(
+    due: {
+      aid: bigint;
+      lastView: bigint | null;
+      watchLaterManagedAccountIds: bigint[];
+    }[],
   ): Promise<number> {
     if (due.length === 0) return 0;
     const endBatch = minuteBatchDurationSeconds.startTimer();
+    const attemptStartedAt = new Date();
 
     const aids = due.map((d) => d.aid);
-    const lastViewByAid = new Map(
-      due.map((d) => [d.aid.toString(), d.lastView]),
-    );
-
     let samples: VideoMinuteSample[] = [];
     try {
+      const accounts = this.accounts();
+      const observedWatchLaterAccountIdsByAid = new Map(
+        due.map(
+          (item) =>
+            [item.aid.toString(), item.watchLaterManagedAccountIds] as const,
+        ),
+      );
       try {
-        samples = await batchSampleVideoStats(aids, {
+        samples = await this.sampleVideoStats(aids, {
           batchSize: config.minute.batchSize,
+          toViewAccounts: accounts,
+          observedWatchLaterAccountIdsByAid,
+          healthyWatchLaterAccountIds: this.healthyWatchLaterAccountIds,
+          onWatchLaterToViewAccountFailure: (accountId) => {
+            this.healthyWatchLaterAccountIds.delete(accountId);
+          },
+          onWatchLaterToViewAccountRateLimit: (accountId) => {
+            this.recordWatchLaterRateLimit(accountId);
+          },
         });
       } catch (error) {
         logger.error("Minute stats batch request failed:", error);
         minuteSamplesTotal.inc({ outcome: "failed" }, aids.length);
-        await this.db.advanceFailedMinuteVideos(aids);
+        await this.db.advanceFailedMinuteVideos(aids, attemptStartedAt);
         return aids.length;
       }
 
       const changed: VideoMinuteSample[] = [];
-      const unchangedAids: bigint[] = [];
-      const sampledAidSet = new Set<string>();
+      const suppressedSamples: PersistableVideoMinuteSample[] = [];
+      const samplesByAid = new Map<string, PersistableVideoMinuteSample>();
+      const invalidAids = new Set<string>();
 
       for (const sample of samples) {
         const key = sample.aid.toString();
-        // Skip samples with missing view — inserting NULL view would overwrite
-        // last_view and break near-gate scheduling. Let it fall to failedAids.
-        if (sample.view === null || sample.view === undefined) {
+        if (!isPersistableVideoMinuteSample(sample)) {
+          invalidAids.add(key);
           continue;
         }
-        sampledAidSet.add(key);
-        const prev = lastViewByAid.get(key);
-        if (
-          prev === null ||
-          prev === undefined ||
-          BigInt(sample.view) !== prev
-        ) {
+        if (samplesByAid.has(key)) {
+          invalidAids.add(key);
+          continue;
+        }
+        samplesByAid.set(key, sample);
+      }
+
+      let previousSamples: Map<bigint, PersistableVideoMinuteSample>;
+      try {
+        previousSamples = await this.db.getLatestVideoMinuteSamples(
+          [...samplesByAid]
+            .filter(([key]) => !invalidAids.has(key))
+            .map(([, sample]) => sample.aid),
+        );
+      } catch (error) {
+        minuteSamplesTotal.inc({ outcome: "failed" }, aids.length);
+        throw error;
+      }
+      for (const [key, sample] of samplesByAid) {
+        if (invalidAids.has(key)) continue;
+        const previous = previousSamples.get(sample.aid) ?? null;
+        if (shouldPersistMinuteSample(previous, sample)) {
           changed.push(sample);
         } else {
-          unchangedAids.push(sample.aid);
+          suppressedSamples.push(sample);
         }
       }
 
       const failedAids = aids.filter(
-        (aid) => !sampledAidSet.has(aid.toString()),
+        (aid) =>
+          !samplesByAid.has(aid.toString()) || invalidAids.has(aid.toString()),
       );
 
       if (changed.length > 0) {
         try {
           await this.db.insertVideoMinuteSamples(changed);
+          minuteSamplesTotal.inc({ outcome: "persisted" }, changed.length);
         } catch (error) {
           logger.error("Minute sample write failed:", error);
           minuteSamplesTotal.inc({ outcome: "failed" }, aids.length);
-          await this.db.advanceFailedMinuteVideos(aids);
+          await this.db.advanceFailedMinuteVideos(aids, attemptStartedAt);
           return aids.length;
         }
       }
 
-      if (unchangedAids.length > 0) {
-        await this.db.advanceUnchangedMinuteVideos(unchangedAids);
+      if (suppressedSamples.length > 0) {
+        try {
+          await this.db.advanceSuppressedMinuteSamples(suppressedSamples);
+        } catch (error) {
+          minuteSamplesTotal.inc(
+            { outcome: "failed" },
+            suppressedSamples.length + failedAids.length,
+          );
+          throw error;
+        }
+        minuteSamplesTotal.inc(
+          { outcome: "suppressed" },
+          suppressedSamples.length,
+        );
       }
 
       if (failedAids.length > 0) {
         logger.warn(`Minute stats response missed ${failedAids.length} aid(s)`);
-        await this.db.advanceFailedMinuteVideos(failedAids);
-      }
-
-      if (changed.length > 0) {
-        minuteSamplesTotal.inc({ outcome: "changed" }, changed.length);
-      }
-      if (unchangedAids.length > 0) {
-        minuteSamplesTotal.inc({ outcome: "unchanged" }, unchangedAids.length);
-      }
-      if (failedAids.length > 0) {
         minuteSamplesTotal.inc({ outcome: "failed" }, failedAids.length);
+        await this.db.advanceFailedMinuteVideos(failedAids, attemptStartedAt);
       }
 
       return aids.length;

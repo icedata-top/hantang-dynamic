@@ -9,6 +9,11 @@ import { DynamicTracker } from "./services/tracker";
 import { logger } from "./utils/logger";
 import { APP_VERSION } from "./version";
 
+function argumentValue(args: string[], name: string): string | undefined {
+  const index = args.indexOf(name);
+  return index < 0 ? undefined : args[index + 1];
+}
+
 function waitForShutdownSignal(): Promise<void> {
   return new Promise(() => {
     // Process lifetime is controlled by SIGINT/SIGTERM handlers.
@@ -82,6 +87,42 @@ async function main() {
     await db.init(config.database.url, { initializeSchema: true });
     await db.close();
     logger.info("Database schema initialization complete");
+    return;
+  }
+
+  if (args.includes("--backfill-mission-ids")) {
+    const { runMissionIdBackfill } = await import(
+      "./scripts/backfill-mission-ids"
+    );
+    await runMissionIdBackfill();
+    return;
+  }
+
+  if (args.includes("--backfill-video-daily")) {
+    const startDate = argumentValue(args, "--from");
+    const endDate = argumentValue(args, "--through");
+    const batchSizeValue = argumentValue(args, "--batch-size");
+    if (!startDate || !endDate) {
+      throw new Error(
+        "--backfill-video-daily requires --from and --through dates",
+      );
+    }
+    const { syncVideoDailyRange } = await import("./database/videoDaily");
+    const batchSize =
+      batchSizeValue === undefined ? undefined : Number(batchSizeValue);
+    const db = Database.getInstance();
+    try {
+      await db.init();
+      await syncVideoDailyRange(db.getPool(), {
+        startDate,
+        endDate,
+        schema: config.database.schema,
+        batchSize,
+        onProgress: (message) => logger.info(message),
+      });
+    } finally {
+      await db.close();
+    }
     return;
   }
 

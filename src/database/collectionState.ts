@@ -1,5 +1,20 @@
-import type { Pool } from "pg";
-import type { ProcessedVideoCollectionInput } from "../types/models/minute.js";
+import type { Pool, PoolClient } from "pg";
+import type {
+  PersistableVideoMinuteSample,
+  ProcessedVideoCollectionInput,
+} from "../types/models/minute.js";
+
+export type DatabaseQuery = Pick<PoolClient, "query">;
+
+export interface ProcessedVideoCollectionOptions {
+  bootstrapPriority?: number;
+  bootstrapTtlHours?: number;
+  bootstrapLabelContentTypes?: string[];
+  bootstrapLabelOrigin?: string;
+  bootstrapLabelWriters?: string[];
+  bootstrapTidV2Allowlist?: number[];
+  processedBackfillNewVideoAgeDays?: number;
+}
 
 export async function refreshVideoCollectionStateFromDaily(
   pool: Pool,
@@ -42,18 +57,10 @@ export async function refreshVideoCollectionStateFromDaily(
 }
 
 export async function upsertCollectionStateFromProcessedVideo(
-  pool: Pool,
+  pool: DatabaseQuery,
   input: ProcessedVideoCollectionInput,
   now = new Date(),
-  options?: {
-    bootstrapPriority?: number;
-    bootstrapTtlHours?: number;
-    bootstrapLabelContentTypes?: string[];
-    bootstrapLabelOrigin?: string;
-    bootstrapLabelWriters?: string[];
-    bootstrapTidV2Allowlist?: number[];
-    processedBackfillNewVideoAgeDays?: number;
-  },
+  options?: ProcessedVideoCollectionOptions,
 ): Promise<string> {
   const result = await pool.query(
     `
@@ -114,10 +121,16 @@ export async function selectDueMinuteVideos(
   limit = 50,
   now = new Date(),
 ): Promise<
-  { aid: bigint; lastView: bigint | null; nearGate: boolean; dueAt: Date }[]
+  {
+    aid: bigint;
+    lastView: bigint | null;
+    nearGate: boolean;
+    dueAt: Date;
+    watchLaterManagedAccountIds: bigint[];
+  }[]
 > {
   const result = await pool.query(
-    "SELECT aid, last_view, near_gate, due_at FROM fn_select_due_minute_videos($1, $2)",
+    "SELECT aid, last_view, near_gate, due_at, watch_later_managed_account_ids FROM fn_select_due_minute_videos($1, $2)",
     [now, limit],
   );
   return result.rows.map((row: Record<string, unknown>) => ({
@@ -128,18 +141,28 @@ export async function selectDueMinuteVideos(
         : BigInt(row.last_view as string | number),
     nearGate: row.near_gate as boolean,
     dueAt: new Date(row.due_at as string | number),
+    watchLaterManagedAccountIds: Array.isArray(
+      row.watch_later_managed_account_ids,
+    )
+      ? row.watch_later_managed_account_ids.map((value) =>
+          BigInt(value as string | number),
+        )
+      : [],
   }));
 }
 
-export async function advanceUnchangedMinuteVideos(
+export async function advanceSuppressedMinuteSamples(
   pool: Pool,
-  aids: bigint[],
-  now = new Date(),
+  samples: Pick<PersistableVideoMinuteSample, "aid" | "time" | "view">[],
 ): Promise<number> {
-  if (aids.length === 0) return 0;
+  if (samples.length === 0) return 0;
   const result = await pool.query(
-    "SELECT fn_advance_unchanged_minute_videos($1::bigint[], $2) AS count",
-    [aids.map((a) => a.toString()), now],
+    "SELECT fn_advance_suppressed_minute_samples($1::bigint[], $2::timestamptz[], $3::bigint[]) AS count",
+    [
+      samples.map((sample) => sample.aid.toString()),
+      samples.map((sample) => sample.time),
+      samples.map((sample) => sample.view),
+    ],
   );
   return Number(result.rows[0]?.count ?? 0);
 }
@@ -147,12 +170,13 @@ export async function advanceUnchangedMinuteVideos(
 export async function advanceFailedMinuteVideos(
   pool: Pool,
   aids: bigint[],
+  attemptStartedAt: Date,
   now = new Date(),
 ): Promise<number> {
   if (aids.length === 0) return 0;
   const result = await pool.query(
-    "SELECT fn_advance_failed_minute_videos($1::bigint[], $2) AS count",
-    [aids.map((a) => a.toString()), now],
+    "SELECT fn_advance_failed_minute_videos($1::bigint[], $2, $3) AS count",
+    [aids.map((a) => a.toString()), attemptStartedAt, now],
   );
   return Number(result.rows[0]?.count ?? 0);
 }

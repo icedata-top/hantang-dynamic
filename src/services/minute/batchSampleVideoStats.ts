@@ -1,117 +1,360 @@
 import {
-  favoriteClient,
-  favoriteDirectClient,
-  type RequestConfig,
+  favoriteClient as defaultFavoriteClient,
+  favoriteDirectClient as defaultFavoriteDirectClient,
 } from "../../api/client";
 import { config } from "../../config";
+import { minuteFallbackResponseMissesTotal } from "../../metrics/registry";
 import type { VideoMinuteSample } from "../../types/models/minute";
 import { sharedApiRateLimiter } from "../../utils/apiRateLimiter";
 import { logger } from "../../utils/logger";
+import { isMinuteCounter } from "./completeSample";
+import { partitionMinuteSamplingCoverage } from "./samplingPlan";
+import {
+  MINUTE_REQUEST_TIMEOUT_MS,
+  sampleWatchLaterToViewAccountsWithStatus,
+  type ToViewRequestAccount,
+} from "./toview";
 
-interface BiliFavoriteResourceInfo {
-  id: number;
-  bvid?: string;
-  cnt_info?: {
-    coin?: number;
-    collect?: number;
-    danmaku?: number;
-    play?: number;
-    reply?: number;
-    share?: number;
-    thumb_up?: number;
-  };
+interface BiliFavoriteCounterInfo {
+  coin?: number;
+  collect?: number;
+  danmaku?: number;
+  play: number;
+  reply?: number;
+  share?: number;
+  thumb_up?: number;
 }
 
-interface BiliFavoriteResponse {
+type UnknownRecord = { [key: string]: unknown };
+
+interface ValidatedBiliFavoriteResourceInfo {
+  aid: bigint;
+  cnt_info: BiliFavoriteCounterInfo;
+}
+
+type MinuteFallbackResponseMissReason =
+  | "api_failure"
+  | "invalid_response"
+  | "missing_response_item"
+  | "invalid_response_item";
+
+export interface BiliFavoriteResponse {
   code: number;
   message?: string;
-  data?: BiliFavoriteResourceInfo[];
+  data?: unknown;
 }
 
-function chunk<T>(items: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size));
+export interface BatchSampleDependencies {
+  fetchStatsBatch(aids: bigint[]): Promise<BiliFavoriteResponse>;
+  favoriteClient: FavoriteRequestClient;
+  favoriteDirectClient: FavoriteRequestClient;
+}
+
+interface FavoriteRequestClient {
+  get(
+    url: string,
+    config: {
+      params: { resources: string };
+      noRetry: true;
+      timeout: number;
+      metadata: { silent: true };
+    },
+  ): Promise<{ data: BiliFavoriteResponse }>;
+}
+
+export function selectWatchLaterRouting(
+  aids: readonly bigint[],
+  observedAccountIdsByAid: ReadonlyMap<string, readonly bigint[]>,
+  healthyAccountIds: ReadonlySet<bigint>,
+): Map<bigint, bigint[]> {
+  const selected = new Map<bigint, bigint[]>();
+  const seen = new Set<string>();
+  for (const aid of aids) {
+    const key = aid.toString();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const accountId = [...(observedAccountIdsByAid.get(key) ?? [])]
+      .filter((id) => id > 0n && healthyAccountIds.has(id))
+      .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))[0];
+    if (accountId === undefined) continue;
+    const accountAids = selected.get(accountId) ?? [];
+    accountAids.push(aid);
+    selected.set(accountId, accountAids);
   }
-  return chunks;
+  return selected;
 }
 
 function toMinuteSample(
-  item: BiliFavoriteResourceInfo,
+  item: unknown,
   sampledAt: Date,
 ): VideoMinuteSample | null {
-  if (!item.id || !item.cnt_info) return null;
+  const resource = parseBiliFavoriteResourceInfo(item);
+  if (resource === null) return null;
 
   return {
-    aid: BigInt(item.id),
+    aid: resource.aid,
     time: sampledAt,
-    coin: item.cnt_info.coin ?? null,
-    favorite: item.cnt_info.collect ?? null,
-    danmaku: item.cnt_info.danmaku ?? null,
-    view: item.cnt_info.play ?? null,
-    reply: item.cnt_info.reply ?? null,
-    share: item.cnt_info.share ?? null,
-    like: item.cnt_info.thumb_up ?? null,
+    view: resource.cnt_info.play,
+    ...(resource.cnt_info.coin === undefined
+      ? {}
+      : { coin: resource.cnt_info.coin }),
+    ...(resource.cnt_info.collect === undefined
+      ? {}
+      : { favorite: resource.cnt_info.collect }),
+    ...(resource.cnt_info.danmaku === undefined
+      ? {}
+      : { danmaku: resource.cnt_info.danmaku }),
+    ...(resource.cnt_info.reply === undefined
+      ? {}
+      : { reply: resource.cnt_info.reply }),
+    ...(resource.cnt_info.share === undefined
+      ? {}
+      : { share: resource.cnt_info.share }),
+    ...(resource.cnt_info.thumb_up === undefined
+      ? {}
+      : { like: resource.cnt_info.thumb_up }),
   };
+}
+
+function isUnknownRecord(value: unknown): value is UnknownRecord {
+  return typeof value === "object" && value !== null;
+}
+
+function parseBiliFavoriteCounterInfo(
+  value: unknown,
+): BiliFavoriteCounterInfo | null {
+  if (!isUnknownRecord(value)) return null;
+  const play = parseMinuteCounter(value.play);
+  if (play === null) return null;
+
+  const counters: BiliFavoriteCounterInfo = { play };
+  const optionalFields = [
+    "coin",
+    "collect",
+    "danmaku",
+    "reply",
+    "share",
+    "thumb_up",
+  ] as const;
+  for (const field of optionalFields) {
+    if (!(field in value)) continue;
+    const counter = parseMinuteCounter(value[field]);
+    if (counter === null) return null;
+    counters[field] = counter;
+  }
+  return counters;
+}
+
+function parseBiliFavoriteResourceInfo(
+  value: unknown,
+): ValidatedBiliFavoriteResourceInfo | null {
+  if (!isUnknownRecord(value)) return null;
+  const aid = parsePositiveAid(value.id);
+  const cntInfo = parseBiliFavoriteCounterInfo(value.cnt_info);
+  if (aid === null || cntInfo === null) return null;
+  return { aid, cnt_info: cntInfo };
+}
+
+function requestedAidKey(item: unknown): string | null {
+  return isUnknownRecord(item)
+    ? (parsePositiveAid(item.id)?.toString() ?? null)
+    : null;
+}
+
+function parsePositiveAid(value: unknown): bigint | null {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value > 0 ? BigInt(value) : null;
+  }
+  if (typeof value !== "string" || !/^\d+$/.test(value)) return null;
+  const aid = BigInt(value);
+  return aid > 0n ? aid : null;
+}
+
+function parseMinuteCounter(value: unknown): number | null {
+  if (isMinuteCounter(value)) return value;
+  if (typeof value !== "string" || !/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return isMinuteCounter(parsed) ? parsed : null;
+}
+
+function recordFallbackResponseMiss(
+  reason: MinuteFallbackResponseMissReason,
+  count: number,
+): void {
+  if (count === 0) return;
+  minuteFallbackResponseMissesTotal.inc({ reason }, count);
 }
 
 async function fetchStatsBatch(
   aids: bigint[],
-  useDirect: boolean,
+  client: FavoriteRequestClient,
 ): Promise<BiliFavoriteResponse> {
   const resources = aids.map((aid) => `${aid}:2`).join(",");
-  const client = useDirect ? favoriteDirectClient : favoriteClient;
-  const response = await client.get<BiliFavoriteResponse>("/resource/infos", {
+  const response = await client.get("/resource/infos", {
     params: { resources },
-    ...({ metadata: { silent: true } } as RequestConfig),
+    noRetry: true,
+    timeout: MINUTE_REQUEST_TIMEOUT_MS,
+    metadata: { silent: true },
   });
   return response.data;
 }
 
 export async function batchSampleVideoStats(
   aids: bigint[],
-  options?: { batchSize?: number; sampledAt?: Date },
+  options?: {
+    batchSize?: number;
+    now?: () => Date;
+    toViewAccounts?: ToViewRequestAccount[];
+    observedWatchLaterAccountIdsByAid?: ReadonlyMap<string, readonly bigint[]>;
+    healthyWatchLaterAccountIds?: ReadonlySet<bigint>;
+    onWatchLaterToViewAccountFailure?(accountId: bigint): void;
+    onWatchLaterToViewAccountRateLimit?(accountId: bigint): void;
+    dependencies?: Partial<BatchSampleDependencies>;
+  },
 ): Promise<VideoMinuteSample[]> {
-  const sampledAt = options?.sampledAt ?? new Date();
+  const now = options?.now ?? (() => new Date());
   const batchSize = options?.batchSize ?? config.minute.batchSize;
-  const samples: VideoMinuteSample[] = [];
+  const requestedAids = new Set(aids.map((aid) => aid.toString()));
+  const samplesByAid = new Map<string, VideoMinuteSample>();
+  const toViewSamples: VideoMinuteSample[] = [];
 
-  for (const aidBatch of chunk(aids, batchSize)) {
+  const routing = selectWatchLaterRouting(
+    aids,
+    options?.observedWatchLaterAccountIdsByAid ?? new Map(),
+    options?.healthyWatchLaterAccountIds ?? new Set(),
+  );
+  if (options?.toViewAccounts && routing.size > 0) {
+    const toViewResult = await sampleWatchLaterToViewAccountsWithStatus(
+      options.toViewAccounts,
+      [...routing.keys()].map((accountId) => ({ accountId })),
+      now,
+      options.onWatchLaterToViewAccountRateLimit,
+    );
+    for (const accountId of toViewResult.failedAccountIds) {
+      options.onWatchLaterToViewAccountFailure?.(accountId);
+    }
+    for (const [accountId, accountAids] of routing) {
+      const accountSamples =
+        toViewResult.samplesByAccountId.get(accountId) ?? [];
+      const accountAidKeys = new Set(accountAids.map((aid) => aid.toString()));
+      toViewSamples.push(
+        ...accountSamples.filter((sample) =>
+          accountAidKeys.has(sample.aid.toString()),
+        ),
+      );
+    }
+  }
+
+  const coverage = partitionMinuteSamplingCoverage(aids, toViewSamples);
+  for (const sample of coverage.toViewSamples) {
+    if (requestedAids.has(sample.aid.toString())) {
+      samplesByAid.set(sample.aid.toString(), sample);
+    }
+  }
+
+  for (
+    let index = 0;
+    index < coverage.favoriteFallbackAids.length;
+    index += batchSize
+  ) {
+    const aidBatch = coverage.favoriteFallbackAids.slice(
+      index,
+      index + batchSize,
+    );
     const release = await sharedApiRateLimiter.acquire();
     try {
-      const data = await fetchStatsBatchWithFallback(aidBatch);
+      let data: BiliFavoriteResponse;
+      try {
+        data = options?.dependencies?.fetchStatsBatch
+          ? await options.dependencies.fetchStatsBatch(aidBatch)
+          : await fetchStatsBatchWithFallback(
+              aidBatch,
+              options?.dependencies?.favoriteClient ?? defaultFavoriteClient,
+              options?.dependencies?.favoriteDirectClient ??
+                defaultFavoriteDirectClient,
+            );
+      } catch (error) {
+        recordFallbackResponseMiss("api_failure", aidBatch.length);
+        throw error;
+      }
+      const sampledAt = now();
 
-      if (data.code !== 0 || !Array.isArray(data.data)) {
+      if (data.code !== 0) {
         logger.warn(`Minute stats API failed with code ${data.code}`);
+        recordFallbackResponseMiss("api_failure", aidBatch.length);
         continue;
       }
 
+      if (!Array.isArray(data.data)) {
+        logger.warn("Minute stats API returned an invalid response payload");
+        recordFallbackResponseMiss("invalid_response", aidBatch.length);
+        continue;
+      }
+
+      const samplesFromResponse = new Map<string, VideoMinuteSample>();
+      const seenAids = new Set<string>();
+      const invalidAids = new Set<string>();
+      const requestedBatchAids = new Set(aidBatch.map((aid) => aid.toString()));
       for (const item of data.data) {
-        const sample = toMinuteSample(item, sampledAt);
-        if (sample) {
-          samples.push(sample);
+        const itemAidKey = requestedAidKey(item);
+        if (!itemAidKey || !requestedBatchAids.has(itemAidKey)) continue;
+        if (seenAids.has(itemAidKey)) {
+          samplesFromResponse.delete(itemAidKey);
+          invalidAids.add(itemAidKey);
+          continue;
         }
+        seenAids.add(itemAidKey);
+
+        const sample = toMinuteSample(item, sampledAt);
+        if (sample && requestedAids.has(itemAidKey)) {
+          samplesFromResponse.set(itemAidKey, sample);
+        } else {
+          invalidAids.add(itemAidKey);
+        }
+      }
+
+      for (const aidKey of invalidAids) {
+        samplesFromResponse.delete(aidKey);
+      }
+      for (const [aidKey, sample] of samplesFromResponse) {
+        samplesByAid.set(aidKey, sample);
+      }
+      const missingCount =
+        aidBatch.length - samplesFromResponse.size - invalidAids.size;
+      if (missingCount > 0) {
+        logger.warn(
+          `Minute stats favorite fallback missed ${missingCount} requested aid(s)`,
+        );
+        recordFallbackResponseMiss("missing_response_item", missingCount);
+      }
+      if (invalidAids.size > 0) {
+        logger.warn(
+          `Minute stats favorite fallback returned invalid tuples for ${invalidAids.size} aid(s)`,
+        );
+        recordFallbackResponseMiss("invalid_response_item", invalidAids.size);
       }
     } finally {
       release();
     }
   }
 
-  return samples;
+  return [...samplesByAid.values()];
 }
 
 async function fetchStatsBatchWithFallback(
   aidBatch: bigint[],
+  favoriteClient: FavoriteRequestClient,
+  favoriteDirectClient: FavoriteRequestClient,
 ): Promise<BiliFavoriteResponse> {
   try {
-    return await fetchStatsBatch(aidBatch, false);
+    return await fetchStatsBatch(aidBatch, favoriteClient);
   } catch (proxyError) {
     logger.warn("Minute stats proxy request failed; trying direct request");
     logger.debug(proxyError);
   }
 
   try {
-    return await fetchStatsBatch(aidBatch, true);
+    return await fetchStatsBatch(aidBatch, favoriteDirectClient);
   } catch (directError) {
     logger.warn("Minute stats direct request failed");
     logger.debug(directError);

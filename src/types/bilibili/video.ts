@@ -192,6 +192,7 @@ export interface RecommendedVideo {
   desc: string;
   tid: number;
   tname: string;
+  pid_v2?: number | null;
 }
 
 export interface BiliVideoDetailDataForProcessing {
@@ -270,7 +271,7 @@ export interface BiliVideoDetailDataForProcessing {
     article_count?: number;
     follower?: number;
   };
-  Tags: Array<{
+  Tags?: Array<{
     tag_id?: number;
     tag_name: string;
     cover?: string;

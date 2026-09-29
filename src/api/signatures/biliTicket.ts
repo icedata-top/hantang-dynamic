@@ -20,6 +20,8 @@ interface BiliTicketResponse {
   ttl: number;
 }
 
+const BILI_TICKET_REQUEST_TIMEOUT_MS = 30_000;
+
 /**
  * Generate HMAC-SHA256 signature
  * @param key The key string to use for the HMAC-SHA256 hash
@@ -64,6 +66,7 @@ export async function generateBiliTicket(csrf: string = ""): Promise<{
     const response = await axios.post<BiliTicketResponse>(url, null, {
       params,
       headers,
+      timeout: BILI_TICKET_REQUEST_TIMEOUT_MS,
     });
 
     if (response.data.code === 0 && response.data.data.ticket) {

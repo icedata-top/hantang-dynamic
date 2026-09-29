@@ -1,5 +1,8 @@
 import type { Pool } from "pg";
-import type { VideoMinuteSample } from "../types/models/minute.js";
+import type {
+  PersistableVideoMinuteSample,
+  VideoMinuteSample,
+} from "../types/models/minute.js";
 
 const INSERT_VIDEO_MINUTE_SQL = `
   INSERT INTO video_minute (
@@ -73,4 +76,50 @@ export async function insertVideoMinuteSamples(
   );
 
   return result.rowCount ?? 0;
+}
+
+export async function getLatestVideoMinuteSamples(
+  pool: Pool,
+  aids: bigint[],
+): Promise<Map<bigint, PersistableVideoMinuteSample>> {
+  if (aids.length === 0) return new Map();
+  const result = await pool.query<{
+    aid: string;
+    time: Date;
+    coin: number | null;
+    favorite: number | null;
+    danmaku: number | null;
+    view: number;
+    reply: number | null;
+    share: number | null;
+    like: number | null;
+  }>(
+    `SELECT DISTINCT ON (aid)
+       aid, "time", coin, favorite, danmaku, "view", reply, share, "like"
+     FROM video_minute
+     WHERE aid = ANY($1::bigint[])
+       AND "view" IS NOT NULL
+     ORDER BY aid, "time" DESC`,
+    [aids.map((aid) => aid.toString())],
+  );
+
+  return new Map(
+    result.rows.map((row) => {
+      const aid = BigInt(row.aid);
+      return [
+        aid,
+        {
+          aid,
+          time: new Date(row.time),
+          coin: row.coin,
+          favorite: row.favorite,
+          danmaku: row.danmaku,
+          view: row.view,
+          reply: row.reply,
+          share: row.share,
+          like: row.like,
+        },
+      ];
+    }),
+  );
 }

@@ -1,11 +1,25 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type { VideoSnapshot } from "../types/models/database.js";
 import type { VideoData } from "../types/models/video.js";
+import {
+  type DatabaseQuery,
+  type ProcessedVideoCollectionOptions,
+  upsertCollectionStateFromProcessedVideo,
+} from "./collectionState.js";
 
 export interface BvidListQuery {
   where?: string;
   params?: unknown[];
   limit?: number;
+}
+
+export type VideoIdentity =
+  | { type: "aid"; aid: bigint }
+  | { type: "bvid"; bvid: string };
+
+export interface VideoDeletionNotes {
+  api_code?: number;
+  api_message?: string;
 }
 
 /**
@@ -65,7 +79,7 @@ export async function getAllProcessedIds(
  * Mark a video as processed
  */
 export async function markVideoProcessed(
-  pool: Pool,
+  pool: DatabaseQuery,
   video: VideoData,
   filtered: boolean,
 ): Promise<void> {
@@ -73,15 +87,19 @@ export async function markVideoProcessed(
     `
     INSERT INTO processed_videos 
       (aid, bvid, pubdate, title, description, tag, pic, type_id, user_id, is_filtered, 
-       staff, tid_v2, dynamic, tag_new, participle, ctime, is_deleted, copyright, extras, notes, updated_at)
+       staff, tid_v2, dynamic, tag_new, participle, ctime, is_deleted, copyright,
+       pid_v2, mission_id, extras, notes, updated_at)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 
-            $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW())
+            $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, NOW())
     ON CONFLICT (bvid) DO UPDATE SET
       aid = EXCLUDED.aid,
       pubdate = EXCLUDED.pubdate,
       title = EXCLUDED.title,
       description = EXCLUDED.description,
-      tag = EXCLUDED.tag,
+      tag = CASE
+        WHEN $23::boolean THEN EXCLUDED.tag
+        ELSE processed_videos.tag
+      END,
       pic = EXCLUDED.pic,
       type_id = EXCLUDED.type_id,
       user_id = EXCLUDED.user_id,
@@ -89,11 +107,16 @@ export async function markVideoProcessed(
       staff = EXCLUDED.staff,
       tid_v2 = EXCLUDED.tid_v2,
       dynamic = EXCLUDED.dynamic,
-      tag_new = EXCLUDED.tag_new,
+      tag_new = CASE
+        WHEN $23::boolean THEN EXCLUDED.tag_new
+        ELSE processed_videos.tag_new
+      END,
       participle = EXCLUDED.participle,
       ctime = EXCLUDED.ctime,
       is_deleted = EXCLUDED.is_deleted,
       copyright = EXCLUDED.copyright,
+      pid_v2 = COALESCE(EXCLUDED.pid_v2, processed_videos.pid_v2),
+      mission_id = COALESCE(EXCLUDED.mission_id, processed_videos.mission_id),
       extras = EXCLUDED.extras,
       notes = EXCLUDED.notes,
       updated_at = NOW()
@@ -117,10 +140,100 @@ export async function markVideoProcessed(
       video.ctime ?? null,
       video.is_deleted ?? false,
       video.copyright ?? null,
+      video.pid_v2 ?? null,
+      video.mission_id?.toString() ?? null,
       video.extras ? JSON.stringify(video.extras) : null,
       video.notes ? JSON.stringify(video.notes) : null,
+      video.tagSnapshot !== undefined,
     ],
   );
+
+  if (video.tagSnapshot !== undefined) {
+    const tagIds = video.tagSnapshot.map((tag) => tag.tagId.toString());
+    const tagNames = video.tagSnapshot.map((tag) => tag.tagName);
+    await pool.query(
+      `INSERT INTO tags (tag_id, tag_name, updated_at)
+       SELECT tag_id, tag_name, NOW()
+       FROM unnest($1::bigint[], $2::text[]) AS snapshot(tag_id, tag_name)
+       ON CONFLICT (tag_id) DO UPDATE SET
+         tag_name = EXCLUDED.tag_name,
+         updated_at = EXCLUDED.updated_at`,
+      [tagIds, tagNames],
+    );
+    await pool.query(
+      `DELETE FROM video_tags
+       WHERE video_aid = $1::bigint`,
+      [video.aid.toString()],
+    );
+    await pool.query(
+      `INSERT INTO video_tags (video_aid, tag_id)
+       SELECT $1::bigint, tag_id
+       FROM unnest($2::bigint[]) AS snapshot(tag_id)
+       ON CONFLICT (video_aid, tag_id) DO NOTHING`,
+      [video.aid.toString(), tagIds],
+    );
+  }
+}
+
+export async function updateProcessedVideoPidV2(
+  pool: DatabaseQuery,
+  metadata: ReadonlyArray<{ aid: bigint; pidV2: number }>,
+): Promise<number> {
+  if (metadata.length === 0) return 0;
+  const result = await pool.query(
+    `WITH metadata(aid, pid_v2) AS (
+       SELECT *
+       FROM unnest($1::bigint[], $2::integer[])
+     )
+     UPDATE processed_videos AS video
+     SET pid_v2 = metadata.pid_v2,
+         updated_at = NOW()
+     FROM metadata
+     WHERE video.aid = metadata.aid
+       AND video.aid = ANY($1::bigint[])
+       AND video.pid_v2 IS DISTINCT FROM metadata.pid_v2`,
+    [
+      metadata.map((item) => item.aid.toString()),
+      metadata.map((item) => item.pidV2),
+    ],
+  );
+  return result.rowCount ?? 0;
+}
+
+/**
+ * Persist a processed video and its collection state atomically.
+ */
+export async function markVideoProcessedWithCollectionState(
+  pool: Pool,
+  video: VideoData,
+  filtered: boolean,
+  now = new Date(),
+  options?: ProcessedVideoCollectionOptions,
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await markVideoProcessed(client, video, filtered);
+    await upsertCollectionStateFromProcessedVideo(
+      client,
+      {
+        aid: video.aid,
+        pubdate: video.pubdate,
+        ctime: video.ctime,
+        tidV2: video.tid_v2,
+        isDeleted: video.is_deleted ?? false,
+        isFiltered: filtered,
+      },
+      now,
+      options,
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /**
@@ -163,33 +276,91 @@ export async function getProcessedVideos(
     ctime: row.ctime as number | undefined,
     is_deleted: row.is_deleted as boolean | undefined,
     copyright: row.copyright as number | undefined,
+    pid_v2: row.pid_v2 as number | undefined,
+    mission_id: row.mission_id ? BigInt(row.mission_id) : undefined,
     extras: row.extras ? row.extras : undefined,
     notes: row.notes ? row.notes : undefined,
   }));
 }
 
-/**
- * Mark a video as deleted, preserving existing fields if the row already exists.
- * Sets aid to the value computed from bvid.
- * Note: if stale aid collisions exist, run `--repair --fix-aids` first.
- */
-export async function markVideoDeleted(
-  pool: Pool,
-  bvid: string,
-  notes?: { api_code?: number; api_message?: string },
-): Promise<void> {
-  const notesJson = notes ? JSON.stringify(notes) : null;
+function deletedVideoInsert(
+  client: PoolClient,
+  identity: VideoIdentity,
+  notesJson: string | null,
+) {
+  if (identity.type === "aid") {
+    return client.query<{ aid: string }>(
+      `INSERT INTO processed_videos (aid, bvid, is_filtered, is_deleted, notes)
+       VALUES ($1::bigint, av2bv($1::bigint), false, true, $2)
+       ON CONFLICT (aid) DO UPDATE SET
+         is_deleted = true,
+         notes = EXCLUDED.notes,
+         updated_at = NOW()
+       RETURNING aid`,
+      [identity.aid.toString(), notesJson],
+    );
+  }
 
-  await pool.query(
+  return client.query<{ aid: string }>(
     `INSERT INTO processed_videos (aid, bvid, is_filtered, is_deleted, notes)
      VALUES (bv2av($1), $1, false, true, $2)
      ON CONFLICT (bvid) DO UPDATE SET
        aid = bv2av(EXCLUDED.bvid),
        is_deleted = true,
        notes = EXCLUDED.notes,
-       updated_at = NOW()`,
-    [bvid, notesJson],
+       updated_at = NOW()
+     RETURNING aid`,
+    [identity.bvid, notesJson],
   );
+}
+
+/**
+ * Mark an authoritatively unavailable video as deleted and terminally disable
+ * any existing collection state in the same transaction.
+ */
+export async function markVideoDeleted(
+  pool: Pool,
+  identity: VideoIdentity,
+  notes?: VideoDeletionNotes,
+): Promise<bigint> {
+  const notesJson = notes ? JSON.stringify(notes) : null;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const existingAid =
+      identity.type === "bvid"
+        ? await client.query<{ aid: string }>(
+            `SELECT aid
+             FROM processed_videos
+             WHERE bvid = $1
+             FOR UPDATE`,
+            [identity.bvid],
+          )
+        : undefined;
+    const result = await deletedVideoInsert(client, identity, notesJson);
+    const aid = BigInt(result.rows[0].aid);
+    const terminalAids = [
+      ...new Set([
+        ...(existingAid?.rows.map((row) => row.aid) ?? []),
+        aid.toString(),
+      ]),
+    ];
+    await client.query(
+      `UPDATE video_collection_state
+       SET priority = -1,
+           next_minute_due_at = NULL,
+           updated_at = NOW()
+       WHERE aid = ANY($1::bigint[])`,
+      [terminalAids],
+    );
+    await client.query("COMMIT");
+    return aid;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /**

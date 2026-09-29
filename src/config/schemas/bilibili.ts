@@ -1,5 +1,32 @@
 import { z } from "zod";
 
+const cookieFileInputSchema = z.union([
+  z
+    .string()
+    .min(1)
+    .transform((path) => ({
+      path,
+      enableWatchLater: false,
+    })),
+  z
+    .object({
+      path: z.string().min(1),
+      enable_watch_later: z.boolean().default(false),
+    })
+    .strict()
+    .transform(({ path, enable_watch_later }) => ({
+      path,
+      enableWatchLater: enable_watch_later,
+    })),
+]);
+
+const cookieFileSchema = z
+  .object({
+    path: z.string().min(1),
+    enableWatchLater: z.boolean().default(false),
+  })
+  .strict();
+
 // Base schema without refinement for inference
 const bilibiliBaseSchema = z.object({
   uid: z.string().optional(), // Optional when cookie_file/cookie_files is used (uid extracted from DedeUserID)
@@ -8,8 +35,8 @@ const bilibiliBaseSchema = z.object({
   accessKey: z.string().optional(),
   apiProxyUrl: z.string().optional(),
   dynamicProxyUrl: z.string().optional(),
-  cookieFile: z.string().optional(), // First cookie file path (backward compat alias for cookieFiles[0])
-  cookieFiles: z.array(z.string()).default([]), // All cookie file paths (canonical)
+  cookieFile: z.string().optional(), // Single-account authentication fallback
+  cookieFiles: z.array(cookieFileSchema).default([]),
 });
 
 // Bilibili authentication and API configuration
@@ -45,10 +72,9 @@ export function createBilibiliConfig(
     "BILIBILI_COOKIE_FILES",
   );
 
-  let cookieFiles: string[] = [];
+  let cookieFiles: unknown[] = [];
   if (Array.isArray(multipleCookieFilesRaw)) {
-    // From TOML: native array
-    cookieFiles = multipleCookieFilesRaw.filter(Boolean);
+    cookieFiles = z.array(cookieFileInputSchema).parse(multipleCookieFilesRaw);
   } else if (
     typeof multipleCookieFilesRaw === "string" &&
     multipleCookieFilesRaw
@@ -57,7 +83,8 @@ export function createBilibiliConfig(
     cookieFiles = multipleCookieFilesRaw
       .split(",")
       .map((s) => s.trim())
-      .filter(Boolean);
+      .filter(Boolean)
+      .map((path) => ({ path }));
   } else {
     // Fallback to single cookie_file
     const singleCookieFile = getConfigValue(
@@ -65,11 +92,11 @@ export function createBilibiliConfig(
       "BILIBILI_COOKIE_FILE",
     );
     if (singleCookieFile) {
-      cookieFiles = [singleCookieFile];
+      cookieFiles = [{ path: singleCookieFile }];
     }
   }
 
-  return {
+  const parsed = bilibiliBaseSchema.parse({
     uid: getConfigValue(["bilibili", "uid"], "BILIBILI_UID"),
     sessdata: getConfigValue(["bilibili", "sessdata"], "SESSDATA"),
     csrfToken: getConfigValue(["bilibili", "csrf_token"], "BILI_JCT"),
@@ -82,7 +109,7 @@ export function createBilibiliConfig(
       ["bilibili", "dynamic_proxy_url"],
       "BILIBILI_DYNAMIC_PROXY_URL",
     ),
-    cookieFile: cookieFiles[0] || undefined,
     cookieFiles,
-  };
+  });
+  return { ...parsed, cookieFile: parsed.cookieFiles[0]?.path };
 }

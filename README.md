@@ -60,6 +60,19 @@ pnpm start
 `pnpm init-schema` runs database DDL. Run it during install or upgrade only.
 Normal startup and restarts do not create or alter database objects.
 
+Upgrades that add `processed_videos.mission_id` do not delay schema
+initialization by rewriting historical rows. To populate that optional metadata
+from existing `extras`, run the resumable maintenance command separately:
+
+```bash
+pnpm backfill-mission-ids
+```
+
+For a pre-built executable, run
+`./bilibili-dynamic-subscribe-linux --backfill-mission-ids`. The command updates
+10,000 rows at a time and can be interrupted and rerun; rows already populated
+are skipped.
+
 ## Configuration
 
 The application is configured via `config.toml`. See the
@@ -87,10 +100,10 @@ file (e.g., exported from browser extensions like "Cookie-Editor"):
 cookie_file = "./.cookies.txt"  # Path to Netscape cookie file
 ```
 
-The app reads the account UID from the `DedeUserID` cookie in the file. Use
-`cookie_files` for multiple accounts. Configure `uid` only when using legacy
-direct `sessdata`, or as a fallback if a cookie file does not contain
-`DedeUserID`.
+The app reads the account UID from the `DedeUserID` cookie in the file. A single
+cookie file can use the configured `uid` when that cookie is absent. Multiple
+accounts can use string paths in `cookie_files`; use object entries and set
+`enable_watch_later = true` only for accounts that should sample To View.
 
 ### Prometheus Metrics
 
@@ -121,6 +134,8 @@ Equivalent environment variables are `SERVER_ENABLED`, `SERVER_HOST`,
 The endpoint exports process metrics plus application metrics with the
 `bili_tracker_` prefix for fetch cycles, Bilibili API latency and errors, rate
 limiter depth, PostgreSQL query and pool state, adaptive minute sampling,
+Watch Later reconciliation and mutation outcomes, aggregate enabled-account
+availability, minute sample persistence outcomes and fallback misses,
 notifications, exports, and fatal exit reasons.
 
 Prometheus scrape example:

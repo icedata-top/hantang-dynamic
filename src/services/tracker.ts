@@ -16,7 +16,7 @@ import { sleep } from "../utils/datetime";
 import { exportData } from "../utils/exporter/exporter";
 import { logger } from "../utils/logger";
 import { notifyNewVideos } from "../utils/notifier/notifier";
-import { DetailsService } from "./details.service";
+import { DetailsService, type RelatedVideoWorkItem } from "./details.service";
 import { DynamicsService, KNOWN_DYNAMIC_TYPES } from "./dynamics.service";
 
 const ALL_DYNAMIC_TYPES = Object.values(KNOWN_DYNAMIC_TYPES) as number[];
@@ -197,12 +197,12 @@ export class DynamicTracker {
   }
 
   private async processPage(
-    dynamics: BiliDynamicCard[],
+    dynamics: Array<BiliDynamicCard | RelatedVideoWorkItem>,
     depth = 0,
     seenRelatedCandidates = new Set<string>(),
   ): Promise<VideoData[]> {
     const results: VideoData[] = [];
-    const relatedQueue: BiliDynamicCard[] = [];
+    const relatedQueue: RelatedVideoWorkItem[] = [];
 
     const features = config.processing?.features;
     const recordRelatedEdges = features?.enableRelatedQualitySignal ?? true;
@@ -226,9 +226,12 @@ export class DynamicTracker {
     // Process all dynamics concurrently
     const processResults = await Promise.allSettled(
       dynamics.map(async (dynamic) => {
+        const workItem =
+          "dynamic" in dynamic ? dynamic : { dynamic, pidV2: undefined };
         try {
           const { video, relatedVideos } =
-            await this.detailsService.processVideo(dynamic, {
+            await this.detailsService.processVideo(workItem.dynamic, {
+              pidV2: workItem.pidV2,
               processRecommendations: recordRelatedEdges,
               processRelated: expandRelated,
             });
@@ -246,7 +249,7 @@ export class DynamicTracker {
             throw error;
           }
           logger.error(
-            `Error processing dynamic ${dynamic.desc.dynamic_id}:`,
+            `Error processing dynamic ${workItem.dynamic.desc.dynamic_id}:`,
             error,
           );
           return null;
@@ -294,10 +297,10 @@ export class DynamicTracker {
   }
 
   private dedupeRelatedCandidates(
-    candidates: BiliDynamicCard[],
+    candidates: RelatedVideoWorkItem[],
     seenCandidates: Set<string>,
-  ): BiliDynamicCard[] {
-    const deduped: BiliDynamicCard[] = [];
+  ): RelatedVideoWorkItem[] {
+    const deduped: RelatedVideoWorkItem[] = [];
 
     for (const candidate of candidates) {
       const key = this.getRelatedCandidateKey(candidate);
@@ -312,7 +315,10 @@ export class DynamicTracker {
     return deduped;
   }
 
-  private getRelatedCandidateKey(candidate: BiliDynamicCard): string | null {
+  private getRelatedCandidateKey(
+    input: BiliDynamicCard | RelatedVideoWorkItem,
+  ): string | null {
+    const candidate = "dynamic" in input ? input.dynamic : input;
     const bvid = candidate.desc?.bvid;
     if (bvid) {
       return `bvid:${bvid}`;

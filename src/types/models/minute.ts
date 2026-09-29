@@ -10,6 +10,22 @@ export interface VideoMinuteSample {
   like?: number | null;
 }
 
+export interface PersistableVideoMinuteSample extends VideoMinuteSample {
+  view: number;
+}
+
+export interface CompleteVideoMinuteTuple {
+  aid: bigint;
+  time: Date;
+  coin: number;
+  favorite: number;
+  danmaku: number;
+  view: number;
+  reply: number;
+  share: number;
+  like: number;
+}
+
 export interface DailyCollectionCandidate {
   aid: bigint;
   latestDailyDelta: number | null;

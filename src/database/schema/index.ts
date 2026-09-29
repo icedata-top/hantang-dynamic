@@ -1,7 +1,10 @@
 import type { Pool } from "pg";
 import { logger } from "../../utils/logger.js";
 import { initCollectionQueueSchema } from "./collection_queue.js";
-import { initCollectionStateSchema } from "./collection_state.js";
+import {
+  initCollectionStateSchema,
+  repairInactiveVideoCollectionStates,
+} from "./collection_state.js";
 import { initCronUserStats } from "./cron/user_stats.js";
 import { initCronVideoDaily } from "./cron/video_daily.js";
 import { initCronVideoDailyLatest } from "./cron/video_daily_latest.js";
@@ -18,6 +21,7 @@ import { initVideoMinuteSchema } from "./video_minute.js";
 import { initVideoStaticSchema } from "./video_static.js";
 import { initVideoSubtitlesSchema } from "./video_subtitles.js";
 import { initVideosSchema } from "./videos.js";
+import { initWatchLaterSchema } from "./watchLater.js";
 
 export async function initializeSchema(
   pool: Pool,
@@ -44,6 +48,8 @@ export async function initializeSchema(
     initCollectionStateSchema(pool),
   ]);
 
+  await repairInactiveVideoCollectionStates(pool);
+
   await Promise.all([
     initCollectionQueueSchema(pool),
     initCronVideoDaily(pool, schema),
@@ -53,6 +59,7 @@ export async function initializeSchema(
   ]);
 
   await initVideoSubtitlesSchema(pool);
+  await initWatchLaterSchema(pool);
 
   logger.info("Database schema initialized");
 }

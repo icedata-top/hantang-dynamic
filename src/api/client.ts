@@ -26,6 +26,8 @@ import { generateBiliTicket } from "./signatures/biliTicket";
 import { buildSignedQuery } from "./signatures/wbiSignature";
 
 export interface RequestConfig extends InternalAxiosRequestConfig {
+  noRetry?: boolean;
+  rawApiErrors?: boolean;
   metadata?: {
     startTime: number;
     silent?: boolean;
@@ -317,10 +319,11 @@ function createClient(
           `Code: ${response.data.code}\n` +
           `baseURL: ${baseURL + response.config.url}\n` +
           `Config: ${JSON.stringify(redactSensitive(response.config))}\n` +
-          `Response: ${JSON.stringify(response.data || "No message")?.slice(
-            0,
-            1000,
-          )}`;
+          `Response: ${JSON.stringify(
+            redactSensitive(response.data || "No message"),
+          )?.slice(0, 1000)}`;
+
+        logger.error(message);
 
         if (response.data.code === ApiErrorCode.CookieExpired) {
           if (skipCookie) {
@@ -368,6 +371,15 @@ function createClient(
           );
         }
 
+        if ((response.config as RequestConfig).rawApiErrors) {
+          return Promise.reject({
+            message: `API Error: code ${response.data.code}`,
+            status: response.status,
+            code: response.data.code,
+            data: response.data,
+          });
+        }
+
         // We must await notify before rejecting, otherwise the message might not be sent
         if (!(response.config as RequestConfig).metadata?.silent) {
           await notifyWarning(message);
@@ -406,7 +418,10 @@ function createClient(
         });
       }
 
-      if (!error.response || error.response.status === 524) {
+      if (
+        !errorConfig?.noRetry &&
+        (!error.response || error.response.status === 524)
+      ) {
         recordApiRequest(baseURL, errorConfig?.url, "retry", durationMs);
         return retryDelay(
           () => client(error.config),
@@ -417,6 +432,7 @@ function createClient(
       recordApiRequest(baseURL, errorConfig?.url, "error", durationMs);
       return Promise.reject({
         message: error.message,
+        status,
         code: error.response?.status,
         data: error.response?.data,
       });
@@ -516,6 +532,20 @@ export function createAccountRelationClient(
   });
 }
 
+export function createAccountToViewClient(
+  cookieJar: CookieJar,
+  accountCookieFilePath: string,
+  stateManager: StateManager,
+  accountLabel?: string,
+): AxiosInstance {
+  return createClient("https://api.bilibili.com/x/v2/history/toview", {
+    accountLabel,
+    cookieJar,
+    cookieFilePath: accountCookieFilePath,
+    stateManager,
+  });
+}
+
 export const dynamicClient = createClient(
   "https://api.vc.bilibili.com/dynamic_svr/v1/dynamic_svr",
 );
@@ -557,6 +587,10 @@ export const favoriteDirectClient = createClient(
 
 export const relationClient = createClient(
   "https://api.bilibili.com/x/relation",
+);
+
+export const toViewClient = createClient(
+  "https://api.bilibili.com/x/v2/history/toview",
 );
 
 export const accountClient = createClient("https://account.bilibili.com/api");

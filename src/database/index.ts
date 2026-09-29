@@ -21,13 +21,17 @@ import type {
 } from "../types/models/database.js";
 import type {
   DailyCollectionCandidate,
-  ProcessedVideoCollectionInput,
+  PersistableVideoMinuteSample,
   VideoMinuteSample,
 } from "../types/models/minute.js";
 import type { VideoData } from "../types/models/video.js";
 import { logger } from "../utils/logger.js";
 
-export type { BvidListQuery } from "./videos.js";
+export type {
+  BvidListQuery,
+  VideoDeletionNotes,
+  VideoIdentity,
+} from "./videos.js";
 
 function quotePostgresIdentifier(identifier: string): string {
   return `"${identifier.replace(/"/g, '""')}"`;
@@ -65,11 +69,10 @@ function queryOperationLabel(query: unknown): string {
 // Import operation modules
 import {
   advanceFailedMinuteVideos,
-  advanceUnchangedMinuteVideos,
+  advanceSuppressedMinuteSamples,
   getNextMinuteDueAt,
   refreshVideoCollectionStateFromDaily,
   selectDueMinuteVideos,
-  upsertCollectionStateFromProcessedVideo,
 } from "./collectionState.js";
 import { getCachedForwardBvid, saveDynamic } from "./dynamics.js";
 import {
@@ -101,7 +104,10 @@ import {
   updateUserStats,
 } from "./users.js";
 import { getDailyCollectionCandidates } from "./videoDaily.js";
-import { insertVideoMinuteSamples } from "./videoMinute.js";
+import {
+  getLatestVideoMinuteSamples,
+  insertVideoMinuteSamples,
+} from "./videoMinute.js";
 import {
   type BvidListQuery,
   getAllProcessedIds,
@@ -111,8 +117,15 @@ import {
   hasProcessedVideo,
   hasProcessedVideoById,
   markVideoDeleted,
-  markVideoProcessed,
+  markVideoProcessedWithCollectionState,
+  updateProcessedVideoPidV2,
+  type VideoDeletionNotes,
+  type VideoIdentity,
 } from "./videos.js";
+import {
+  getDesiredWatchLaterSet,
+  syncWatchLaterSnapshot,
+} from "./watchLater.js";
 
 /**
  * PostgreSQL database manager - singleton pattern
@@ -138,9 +151,8 @@ export class Database {
   /**
    * Initialize the database connection pool.
    *
-   * Schema initialization is intentionally opt-in. Normal startup and restarts
-   * should not run DDL against the database; run `--init-schema` for install or
-   * upgrade steps that explicitly need it.
+   * Schema initialization is opt-in so normal startup only connects to an
+   * already initialized database.
    */
   public async init(
     url: string = config.database.url,
@@ -176,7 +188,6 @@ export class Database {
       if (options.initializeSchema === true) {
         await initializeSchema(this.pool, schema);
       }
-
       logger.info("PostgreSQL initialized successfully");
     } catch (error) {
       logger.error("Failed to initialize PostgreSQL:", error);
@@ -273,20 +284,42 @@ export class Database {
    * Optionally records the API error code and message in notes.
    */
   public async markVideoDeleted(
-    bvid: string,
-    notes?: { api_code?: number; api_message?: string },
-  ): Promise<void> {
-    return markVideoDeleted(this.ensurePool(), bvid, notes);
+    identity: VideoIdentity,
+    notes?: VideoDeletionNotes,
+  ): Promise<bigint> {
+    return markVideoDeleted(this.ensurePool(), identity, notes);
   }
 
   /**
-   * Mark a video as processed
+   * Persist a processed video and its collection state in one transaction.
    */
-  public async markVideoProcessed(
+  public async markVideoProcessedWithCollectionState(
     video: VideoData,
     filtered: boolean,
+    now?: Date,
   ): Promise<void> {
-    return markVideoProcessed(this.ensurePool(), video, filtered);
+    return markVideoProcessedWithCollectionState(
+      this.ensurePool(),
+      video,
+      filtered,
+      now,
+      {
+        bootstrapPriority: config.minute.bootstrapPriority,
+        bootstrapTtlHours: config.minute.bootstrapTtlHours,
+        bootstrapLabelContentTypes: config.minute.bootstrapLabelContentTypes,
+        bootstrapLabelOrigin: config.minute.bootstrapLabelOrigin,
+        bootstrapLabelWriters: config.minute.bootstrapLabelWriters,
+        bootstrapTidV2Allowlist: config.minute.bootstrapTidV2Allowlist,
+        processedBackfillNewVideoAgeDays:
+          config.minute.processedBackfillNewVideoAgeDays,
+      },
+    );
+  }
+
+  public async updateProcessedVideoPidV2(
+    metadata: ReadonlyArray<{ aid: bigint; pidV2: number }>,
+  ): Promise<number> {
+    return updateProcessedVideoPidV2(this.ensurePool(), metadata);
   }
 
   /**
@@ -498,27 +531,6 @@ export class Database {
     });
   }
 
-  public async upsertCollectionStateFromProcessedVideo(
-    input: ProcessedVideoCollectionInput,
-    now?: Date,
-  ): Promise<string> {
-    return upsertCollectionStateFromProcessedVideo(
-      this.ensurePool(),
-      input,
-      now,
-      {
-        bootstrapPriority: config.minute.bootstrapPriority,
-        bootstrapTtlHours: config.minute.bootstrapTtlHours,
-        bootstrapLabelContentTypes: config.minute.bootstrapLabelContentTypes,
-        bootstrapLabelOrigin: config.minute.bootstrapLabelOrigin,
-        bootstrapLabelWriters: config.minute.bootstrapLabelWriters,
-        bootstrapTidV2Allowlist: config.minute.bootstrapTidV2Allowlist,
-        processedBackfillNewVideoAgeDays:
-          config.minute.processedBackfillNewVideoAgeDays,
-      },
-    );
-  }
-
   // ===== Queue-free minute collection =====
 
   public async getNextMinuteDueAt(): Promise<Date | null> {
@@ -529,29 +541,65 @@ export class Database {
     limit?: number,
     now?: Date,
   ): Promise<
-    { aid: bigint; lastView: bigint | null; nearGate: boolean; dueAt: Date }[]
+    {
+      aid: bigint;
+      lastView: bigint | null;
+      nearGate: boolean;
+      dueAt: Date;
+      watchLaterManagedAccountIds: bigint[];
+    }[]
   > {
     return selectDueMinuteVideos(this.ensurePool(), limit, now);
   }
 
-  public async advanceUnchangedMinuteVideos(
-    aids: bigint[],
-    now?: Date,
+  public async advanceSuppressedMinuteSamples(
+    samples: Pick<PersistableVideoMinuteSample, "aid" | "time" | "view">[],
   ): Promise<number> {
-    return advanceUnchangedMinuteVideos(this.ensurePool(), aids, now);
+    return advanceSuppressedMinuteSamples(this.ensurePool(), samples);
   }
 
   public async advanceFailedMinuteVideos(
     aids: bigint[],
+    attemptStartedAt: Date,
     now?: Date,
   ): Promise<number> {
-    return advanceFailedMinuteVideos(this.ensurePool(), aids, now);
+    return advanceFailedMinuteVideos(
+      this.ensurePool(),
+      aids,
+      attemptStartedAt,
+      now,
+    );
   }
 
   public async insertVideoMinuteSamples(
     samples: VideoMinuteSample[],
   ): Promise<number> {
     return insertVideoMinuteSamples(this.ensurePool(), samples);
+  }
+
+  public async getLatestVideoMinuteSamples(
+    aids: bigint[],
+  ): Promise<Map<bigint, PersistableVideoMinuteSample>> {
+    return getLatestVideoMinuteSamples(this.ensurePool(), aids);
+  }
+
+  // ===== Watch-later Operations =====
+
+  public async getDesiredWatchLaterSet(targetCount: number): Promise<bigint[]> {
+    return getDesiredWatchLaterSet(this.ensurePool(), targetCount);
+  }
+
+  public async syncWatchLaterSnapshot(
+    accountId: bigint,
+    aids: bigint[],
+    pidV2Metadata: ReadonlyArray<{ aid: bigint; pidV2: number }>,
+  ): Promise<number> {
+    return syncWatchLaterSnapshot(
+      this.ensurePool(),
+      accountId,
+      aids,
+      pidV2Metadata,
+    );
   }
 
   // ===== Connection Management =====
