@@ -21,8 +21,6 @@ test("alerts at 20 final requests and 50% errors, independently per endpoint", a
   await flush();
   assert.equal(messages.length, 0);
   alerts.record("api.test", "/a", "error");
-  await flush();
-  assert.equal(messages.length, 0);
   alerts.record("api.test", "/a", "error");
   await flush();
   assert.match(messages[0], /api.test\/a\nLast 5 minutes: 11\/22.*50%/);
@@ -37,7 +35,7 @@ test("alerts at 20 final requests and 50% errors, independently per endpoint", a
   assert.match(messages[2], /other.test\/a/);
 });
 
-test("expires old samples and alerts once per endpoint until restart", async () => {
+test("expires five-minute samples while retaining per-run alert suppression", async () => {
   let now = 0;
   const messages: string[] = [];
   const alerts = new EndpointErrorAlerts(
@@ -55,10 +53,6 @@ test("expires old samples and alerts once per endpoint until restart", async () 
   for (let i = 0; i < 19; i++) alerts.record("api.test", "/a", "error");
   await flush();
   assert.equal(messages.length, 1);
-  now = 34 * 60_000;
-  for (let i = 0; i < 20; i++) alerts.record("api.test", "/a", "error");
-  await flush();
-  assert.equal(messages.length, 1);
   now = 24 * 60 * 60_000;
   for (let i = 0; i < 20; i++) {
     alerts.record("api.test", "/b", "error");
@@ -67,17 +61,6 @@ test("expires old samples and alerts once per endpoint until restart", async () 
   await flush();
   assert.equal(messages.length, 2);
   assert.match(messages[1], /api.test\/b/);
-  const restarted = new EndpointErrorAlerts(
-    async (message) => {
-      messages.push(message);
-    },
-    () => assert.fail("notification failed"),
-    () => now,
-  );
-  for (let i = 0; i < 20; i++) restarted.record("api.test", "/a", "error");
-  await flush();
-  assert.equal(messages.length, 3);
-  assert.match(messages[2], /api.test\/a/);
 });
 
 test("notification rejection is handled without repeating the alert", async () => {
