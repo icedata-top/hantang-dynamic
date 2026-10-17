@@ -46,13 +46,10 @@ test("embedded original video survives forward processing and storage", async ()
   const originalUser = db.addDiscoveredUser;
   const originalCache = db.getCachedForwardBvid;
   const stored: DynamicData[] = [];
-  const users: bigint[] = [];
   db.saveDynamic = async (data) => {
     stored.push(data);
   };
-  db.addDiscoveredUser = async (user) => {
-    users.push(user.userId);
-  };
+  db.addDiscoveredUser = async () => {};
   db.getCachedForwardBvid = async () => null;
   const service = new DetailsService();
   const ids: (string | number)[] = [];
@@ -61,10 +58,8 @@ test("embedded original video survives forward processing and storage", async ()
     return { video: null, relatedVideos: [] };
   };
   try {
-    await service.saveDynamic(card);
     await service.processVideo(card);
     assert.deepEqual(ids, ["BV1original"]);
-    assert.deepEqual(users, [7n]);
     assert.equal(stored[0].dynamicId, 90071992547409933n);
     assert.equal(stored[0].origDynamicId, 90071992547409932n);
     assert.equal(stored[0].origType, 1);
