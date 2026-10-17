@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { metricsRegistry } from "../metrics/registry";
 import { EndpointErrorAlerts } from "./endpointErrors";
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -22,6 +23,19 @@ test("alerts above 50% errors in the last 20 final requests, once per endpoint",
   assert.equal(messages.length, 0);
   alerts.record("api.test", "/a", "error");
   await flush();
+  const exposed = await metricsRegistry.metrics();
+  assert.match(
+    exposed,
+    /api_endpoint_recent_sample_count\{[^\n]*host="api.test",route="\/a"[^\n]*\} 20\n/,
+  );
+  assert.match(
+    exposed,
+    /api_endpoint_recent_error_ratio\{[^\n]*host="api.test",route="\/a"[^\n]*\} 0\.55\n/,
+  );
+  assert.match(
+    exposed,
+    /api_endpoint_alert_triggered\{[^\n]*host="api.test",route="\/a"[^\n]*\} 1\n/,
+  );
   assert.match(messages[0], /api.test\/a\nLast 20 requests: 11\/20.*55%/);
   for (let i = 0; i < 20; i++) {
     alerts.record("api.test", "/a", "error");
@@ -32,6 +46,22 @@ test("alerts above 50% errors in the last 20 final requests, once per endpoint",
   assert.equal(messages.length, 3);
   assert.match(messages[1], /api.test\/b/);
   assert.match(messages[2], /other.test\/a/);
+  for (let i = 0; i < 20; i++) alerts.record("api.test", "/a", "success");
+  await flush();
+  assert.equal(messages.length, 3);
+  const recovered = await metricsRegistry.metrics();
+  assert.match(
+    recovered,
+    /api_endpoint_recent_sample_count\{[^\n]*host="api.test",route="\/a"[^\n]*\} 20\n/,
+  );
+  assert.match(
+    recovered,
+    /api_endpoint_recent_error_ratio\{[^\n]*host="api.test",route="\/a"[^\n]*\} 0\n/,
+  );
+  assert.match(
+    recovered,
+    /api_endpoint_alert_triggered\{[^\n]*host="api.test",route="\/a"[^\n]*\} 1\n/,
+  );
 });
 
 test("notification rejection is handled without repeating the alert", async () => {
