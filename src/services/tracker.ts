@@ -17,13 +17,7 @@ import { exportData } from "../utils/exporter/exporter";
 import { logger } from "../utils/logger";
 import { notifyNewVideos } from "../utils/notifier/notifier";
 import { DetailsService, type RelatedVideoWorkItem } from "./details.service";
-import { DynamicsService, KNOWN_DYNAMIC_TYPES } from "./dynamics.service";
-
-const ALL_DYNAMIC_TYPES = Object.values(KNOWN_DYNAMIC_TYPES) as number[];
-const PROCESS_VIDEO_TYPES = new Set<number>([
-  KNOWN_DYNAMIC_TYPES.VIDEO,
-  KNOWN_DYNAMIC_TYPES.FORWARD,
-]);
+import { DynamicsService } from "./dynamics.service";
 
 export class DynamicTracker {
   private account: AccountContext;
@@ -127,73 +121,46 @@ export class DynamicTracker {
     const minTimestamp =
       Date.now() / 1000 - config.application.maxHistoryDays * 86400;
 
-    const minDynamicIdByType: Partial<Record<number, bigint>> = {};
-    for (const t of ALL_DYNAMIC_TYPES) {
-      minDynamicIdByType[t] = stateManager.getLastDynamicIdForType(t);
-    }
-
+    const minDynamicId = stateManager.lastFeedDynamicId;
+    let maxDynamicId = minDynamicId;
     logger.info(
-      `[uid=${this.account.uid}] Checking dynamics, watermarks: ${JSON.stringify(
-        Object.fromEntries(
-          Object.entries(minDynamicIdByType).map(([k, v]) => [
-            k,
-            v?.toString(),
-          ]),
-        ),
-      )}`,
+      `[uid=${this.account.uid}] Checking dynamics after ${minDynamicId}`,
     );
 
-    const maxIdByType = new Map<number, bigint>();
-
     const stream = this.dynamicsService.fetchDynamicsStream({
-      minDynamicIdByType,
+      minDynamicId,
       minTimestamp,
-      types: ALL_DYNAMIC_TYPES,
     });
-
-    for await (const { typeCode, cards } of stream) {
+    for await (const page of stream) {
+      const { cards } = page;
       logger.info(
-        `[uid=${this.account.uid}] Got new dynamic page: type=${typeCode}, ${cards.length} cards`,
+        `[uid=${this.account.uid}] Got new dynamic page: ${cards.length} cards`,
       );
-      dynamicsSeenTotal.inc(
-        { uid: this.account.uid || "unknown", type: String(typeCode) },
-        cards.length,
-      );
-
-      // Save all dynamics to DB immediately (decouple storage from processing)
+      for (const card of cards) {
+        dynamicsSeenTotal.inc({
+          uid: this.account.uid || "unknown",
+          type: String(card.desc.type),
+        });
+      }
       await Promise.all(
         cards.map((card) => this.detailsService.saveDynamic(card)),
       );
-
-      // Update per-type max watermark
-      for (const card of cards) {
-        const id = BigInt(card.desc.dynamic_id_str);
-        const prev = maxIdByType.get(typeCode) ?? BigInt(0);
-        if (id > prev) maxIdByType.set(typeCode, id);
+      const processedVideos = await this.processPage(
+        cards.filter((card) => card.desc.type === 8 || card.desc.type === 1),
+      );
+      if (processedVideos.length > 0) {
+        videosProcessedTotal.inc(
+          { uid: this.account.uid || "unknown" },
+          processedVideos.length,
+        );
+        await exportData(processedVideos);
+        await notifyNewVideos(processedVideos);
       }
-
-      // Only process video-relevant types (8=video, 1=forward)
-      if (PROCESS_VIDEO_TYPES.has(typeCode)) {
-        const processedVideos = await this.processPage(cards);
-
-        if (processedVideos.length > 0) {
-          videosProcessedTotal.inc(
-            { uid: this.account.uid || "unknown" },
-            processedVideos.length,
-          );
-          await exportData(processedVideos);
-          await notifyNewVideos(processedVideos);
-        }
-      }
+      if (page.maxDynamicId > maxDynamicId) maxDynamicId = page.maxDynamicId;
     }
-
-    // Persist per-type watermarks after full stream
-    for (const [type, maxId] of maxIdByType) {
-      const prev = stateManager.getLastDynamicIdForType(type);
-      if (maxId > prev) {
-        stateManager.updateLastDynamicIdForType(type, maxId);
-      }
-    }
+    // Only a completed traversal establishes a safe frontier.
+    if (maxDynamicId > minDynamicId)
+      stateManager.updateLastFeedDynamicId(maxDynamicId);
   }
 
   private async processPage(
@@ -341,30 +308,20 @@ export class DynamicTracker {
       `[uid=${this.account.uid}] Starting retrospective scan for past ${retrospectiveDays} days`,
     );
 
-    // Full rescan: all type watermarks start at 0
-    const minDynamicIdByType: Partial<Record<number, bigint>> = {};
-    for (const t of ALL_DYNAMIC_TYPES) {
-      minDynamicIdByType[t] = BigInt(0);
-    }
-
     const stream = this.dynamicsService.fetchDynamicsStream({
-      minDynamicIdByType,
+      minDynamicId: 0n,
       minTimestamp,
-      types: ALL_DYNAMIC_TYPES,
     });
-
-    for await (const { typeCode, cards } of stream) {
+    for await (const { cards } of stream) {
       logger.info(
-        `[uid=${this.account.uid}] Retrospective page: type=${typeCode}, ${cards.length} cards`,
+        `[uid=${this.account.uid}] Retrospective page: ${cards.length} cards`,
       );
-
       await Promise.all(
         cards.map((card) => this.detailsService.saveDynamic(card)),
       );
-
-      if (PROCESS_VIDEO_TYPES.has(typeCode)) {
-        await this.processPage(cards);
-      }
+      await this.processPage(
+        cards.filter((card) => card.desc.type === 8 || card.desc.type === 1),
+      );
     }
 
     logger.info(`[uid=${this.account.uid}] Retrospective scan completed`);

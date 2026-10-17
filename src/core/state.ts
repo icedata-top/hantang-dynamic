@@ -4,7 +4,7 @@ import { config } from "../config";
 import { logger } from "../utils/logger";
 
 interface State {
-  lastDynamicIdByType: Record<string, string>;
+  lastFeedDynamicId: string;
   lastUpdate: number;
   lastUA: string;
   biliTicket?: string;
@@ -26,7 +26,7 @@ export class StateManager {
 
   private getDefaultState(): State {
     return {
-      lastDynamicIdByType: {},
+      lastFeedDynamicId: "0",
       lastUpdate: Date.now(),
       lastUA: randUA(),
     };
@@ -45,17 +45,9 @@ export class StateManager {
 
       const loadedState = JSON.parse(fileContent);
 
-      // Migrate old format: lastDynamicId → lastDynamicIdByType["8"]
-      const lastDynamicIdByType: Record<string, string> =
-        loadedState.lastDynamicIdByType
-          ? { ...loadedState.lastDynamicIdByType }
-          : {};
-      if (loadedState.lastDynamicId && !lastDynamicIdByType["8"]) {
-        lastDynamicIdByType["8"] = loadedState.lastDynamicId.toString();
-      }
-
       return {
-        lastDynamicIdByType,
+        // Legacy scalar and per-type progress do not cover the mixed feed.
+        lastFeedDynamicId: loadedState.lastFeedDynamicId?.toString() ?? "0",
         lastUpdate: loadedState.lastUpdate ?? Date.now(),
         lastUA: loadedState.lastUA || randUA(),
         biliTicket: loadedState.biliTicket,
@@ -90,13 +82,12 @@ export class StateManager {
     }
   }
 
-  getLastDynamicIdForType(type: number): bigint {
-    const val = this.state.lastDynamicIdByType[String(type)];
-    return val ? BigInt(val) : BigInt(0);
+  get lastFeedDynamicId(): bigint {
+    return BigInt(this.state.lastFeedDynamicId);
   }
 
-  updateLastDynamicIdForType(type: number, id: bigint) {
-    this.state.lastDynamicIdByType[String(type)] = id.toString();
+  updateLastFeedDynamicId(id: bigint) {
+    this.state.lastFeedDynamicId = id.toString();
     this.state.lastUpdate = Date.now();
     this.saveState();
   }

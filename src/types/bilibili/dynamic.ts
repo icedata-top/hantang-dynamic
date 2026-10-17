@@ -112,3 +112,38 @@ export interface BiliDynamicCard {
   extend_json?: string;
   display?: BiliDisplay;
 }
+
+/** Fields consumed from the Polymer dynamic feed. */
+export interface BiliDynamicItem {
+  id_str: string;
+  type: string;
+  basic?: { rid_str?: string };
+  modules: {
+    module_author: {
+      mid: number | string;
+      name: string;
+      face?: string;
+      pub_ts: number | string;
+    };
+    module_dynamic?: {
+      desc?: { text: string } | null;
+      major?: {
+        archive?: { bvid: string; aid?: string; title?: string } | null;
+        opus?: {
+          title?: string;
+          summary?: { text: string };
+          pics?: Array<{ url: string; width?: number; height?: number }>;
+        } | null;
+        draw?: {
+          items: Array<{ src: string; width?: number; height?: number }>;
+        } | null;
+        article?: {
+          title: string;
+          desc?: string;
+          covers?: string[];
+        } | null;
+      } | null;
+    } | null;
+  };
+  orig?: BiliDynamicItem | null;
+}

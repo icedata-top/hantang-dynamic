@@ -71,7 +71,7 @@ export function loadCookieFileAccount(
     const accountLabel = `uid=${uid}`;
 
     const client = createAccountDynamicClient(
-      "https://api.vc.bilibili.com/dynamic_svr/v1/dynamic_svr",
+      "https://api.bilibili.com/x/polymer/web-dynamic/v1",
       jar,
       filePath,
       stateManager,
