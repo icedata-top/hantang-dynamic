@@ -1,6 +1,5 @@
 import type { AxiosInstance } from "axios";
 import { isAccountAuthError } from "../api/client";
-import { getDynamic } from "../api/dynamic";
 import { fetchVideoFullDetail } from "../api/video";
 import type { VideoIdentity } from "../database";
 import { Database } from "../database";
@@ -279,39 +278,11 @@ export class DetailsService {
       return cachedBvid;
     }
 
-    const release = await this.rateLimiter.acquire();
-    try {
-      const originalDynamicId =
-        dynamic.desc.orig_dy_id_str || dynamic.desc.origin?.dynamic_id_str;
-      if (!originalDynamicId) {
-        logger.warn(`Cannot find original dynamic ID for forward ${dynamicId}`);
-        return "";
-      }
-
-      const response = await getDynamic(originalDynamicId);
-      if (!response) {
-        logger.info(
-          `Original dynamic ${originalDynamicId} for forward ${dynamicId} is unavailable (HTTP 404), skipping`,
-        );
-        return "";
-      }
-
-      if (response.code !== 0 || !response.data.card?.desc) {
-        logger.warn(`Failed to fetch original dynamic ${originalDynamicId}`);
-        return "";
-      }
-
-      const bvid = response.data.card.desc.bvid;
-      if (bvid) {
-        // Save the full dynamic content with the resolved bvid.
-        // This also serves as the forward→bvid cache entry in the dynamics table.
-        await this.saveDynamic(dynamic, bvid);
-        return bvid;
-      }
-    } catch (error) {
-      logger.error(`Error resolving forward ${dynamicId}:`, error);
-    } finally {
-      release();
+    // Polymer embeds the original, including nested forwards, in the feed.
+    const bvid = dynamic.desc.bvid || dynamic.desc.origin?.bvid;
+    if (bvid) {
+      await this.saveDynamic(dynamic, bvid);
+      return bvid;
     }
 
     return "";
@@ -614,7 +585,7 @@ export class DetailsService {
 
   /**
    * Parse a BiliDynamicCard and save its content to the dynamics table.
-   * For type=1 (forward), pass `resolvedBvid` once it has been fetched from the API
+   * For type=1 (forward), pass `resolvedBvid` once it has been resolved from the original
    * so that the entry also acts as a forward→bvid cache.
    */
   async saveDynamic(

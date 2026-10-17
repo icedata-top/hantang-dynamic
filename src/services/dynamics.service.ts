@@ -1,143 +1,69 @@
-import { isAccountAuthError } from "../api/client";
-import { getHistoryDynamic, getNewDynamic } from "../api/dynamic";
+import { getDynamicFeed } from "../api/dynamic";
 import { config } from "../config";
 import type { AccountContext } from "../core/account";
-import type {
-  BiliDynamicCard,
-  BiliDynamicHistoryResponse,
-  BiliDynamicNewResponse,
-} from "../types";
+import type { BiliDynamicCard } from "../types";
 import { sleep } from "../utils/datetime";
-import { logger } from "../utils/logger";
-
-export const KNOWN_DYNAMIC_TYPES = {
-  FORWARD: 1,
-  IMAGE: 2,
-  TEXT: 4,
-  VIDEO: 8,
-  // SHORT_VIDEO: 16,
-  ARTICLE: 64,
-} as const;
+import { toDynamicCard } from "./dynamicCard";
 
 interface FetchDynamicsStreamOptions {
-  minDynamicIdByType: Partial<Record<number, bigint>>;
+  minDynamicId: bigint;
   minTimestamp: number;
-  types: number[];
 }
 
-/**
- * DynamicsService - 流式动态抓取服务
- *
- * 职责：
- * - 从Bilibili API获取动态数据
- * - 以流式方式返回，每获取一页立即yield
- * - 支持按时间戳和动态ID过滤
- * - 支持多种动态类型（视频、转发等）
- */
 export class DynamicsService {
-  private account: AccountContext;
+  constructor(private account: AccountContext) {}
 
-  constructor(account: AccountContext) {
-    this.account = account;
-  }
-
-  /**
-   * 流式获取动态数据
-   *
-   * @param options - 获取选项
-   * @yields 每一页的动态数据，附带类型码
-   */
-  async *fetchDynamicsStream(
-    options: FetchDynamicsStreamOptions,
-  ): AsyncGenerator<
-    { typeCode: number; cards: BiliDynamicCard[] },
-    void,
-    unknown
-  > {
-    const { minDynamicIdByType, minTimestamp, types } = options;
-    const uid = this.account.uid;
-    const client = this.account.dynamicClient;
-
-    for (const typeCode of types) {
-      logger.info(`[uid=${uid}] Fetching dynamics of type: ${typeCode}`);
-      const minDynamicId = minDynamicIdByType[typeCode] ?? BigInt(0);
-
-      let offset = BigInt(0);
-      let hasMore = true;
-      let firstRun = true;
-
-      while (hasMore) {
-        try {
-          // 获取一页数据
-          const response: BiliDynamicNewResponse | BiliDynamicHistoryResponse =
-            firstRun
-              ? await getNewDynamic(typeCode, uid, client)
-              : await getHistoryDynamic(typeCode, offset, uid, client);
-
-          // 检查响应状态
-          if (response.code !== 0 || !response.data.cards?.length) {
-            logger.error(`API Error for type ${typeCode}:`, response);
-            if (config.application.apiWaitTime > 0) {
-              await sleep(config.application.apiWaitTime);
-            }
-            break;
-          }
-
-          // 过滤有效卡片
-          const validCards = response.data.cards.filter((card) => {
-            const isTimestampValid = card.desc.timestamp > minTimestamp;
-            const isDynamicIdValid =
-              BigInt(card.desc.dynamic_id_str) > minDynamicId;
-            return isTimestampValid && isDynamicIdValid;
-          });
-
-          // API限流等待（每次请求后都等待，不论是否继续翻页）
-          if (config.application.apiWaitTime > 0) {
-            await sleep(config.application.apiWaitTime);
-          }
-
-          // 如果有有效数据，yield这一页
-          if (validCards.length > 0) {
-            yield {
-              typeCode,
-              cards: validCards.sort(
-                (a, b) => a.desc.timestamp - b.desc.timestamp,
-              ),
-            };
-          }
-
-          // 判断是否继续
-          if (
-            !validCards.length ||
-            validCards.length < response.data.cards.length
-          ) {
-            // 所有卡片都被过滤掉，或者部分被过滤，说明已经到达时间/ID边界
-            break;
-          }
-
-          // 更新分页信息
-          if (firstRun) {
-            const newResponse = response as BiliDynamicNewResponse;
-            offset = newResponse.data.history_offset;
-            firstRun = false;
-          } else {
-            const historyResponse = response as BiliDynamicHistoryResponse;
-            hasMore = historyResponse.data.has_more === 1;
-            offset = historyResponse.data.next_offset;
-          }
-        } catch (error) {
-          if (isAccountAuthError(error)) {
-            throw error;
-          }
-          logger.error(`Error fetching type ${typeCode} dynamics:`, error);
-          // 遇到错误时停止当前类型的抓取
-          break;
-        }
+  async *fetchDynamicsStream({
+    minDynamicId,
+    minTimestamp,
+  }: FetchDynamicsStreamOptions): AsyncGenerator<{
+    cards: BiliDynamicCard[];
+    maxDynamicId: bigint;
+  }> {
+    let offset: string | undefined;
+    const seenOffsets = new Set<string>();
+    while (true) {
+      const response = await getDynamicFeed(offset, this.account.dynamicClient);
+      if (response.code !== 0) {
+        throw new Error(`Dynamic feed API error: ${response.code}`);
       }
+      const items = response.data.items ?? [];
+      if (config.application.apiWaitTime > 0) {
+        await sleep(config.application.apiWaitTime);
+      }
+      const cards: BiliDynamicCard[] = [];
+      let maxDynamicId = minDynamicId;
+      for (const item of items) {
+        const id = BigInt(item.id_str);
+        if (id > maxDynamicId) maxDynamicId = id;
+        if (
+          id <= minDynamicId ||
+          Number(item.modules.module_author.pub_ts) <= minTimestamp
+        )
+          continue;
+        const card = toDynamicCard(item);
+        if (card) cards.push(card);
+      }
+      yield {
+        cards: cards.sort((a, b) => a.desc.timestamp - b.desc.timestamp),
+        maxDynamicId,
+      };
 
-      logger.info(
-        `[uid=${uid}] Completed fetching dynamics of type: ${typeCode}`,
-      );
+      if (
+        !response.data.has_more ||
+        (items.length > 0 &&
+          (items.every(
+            (item) => Number(item.modules.module_author.pub_ts) <= minTimestamp,
+          ) ||
+            items.every((item) => BigInt(item.id_str) <= minDynamicId)))
+      )
+        return;
+      const nextOffset = response.data.offset;
+      if (!nextOffset || seenOffsets.has(nextOffset)) {
+        throw new Error("Dynamic feed returned a missing or repeated cursor");
+      }
+      seenOffsets.add(nextOffset);
+      offset = nextOffset;
     }
   }
 }

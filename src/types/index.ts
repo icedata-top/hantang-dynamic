@@ -1,11 +1,7 @@
 // Core models
 
 // API response types - Dynamic
-export type {
-  BiliDynamicDetailResponse,
-  BiliDynamicHistoryResponse,
-  BiliDynamicNewResponse,
-} from "./api/dynamic";
+export type { BiliDynamicFeedResponse } from "./api/dynamic";
 // API response types - Video
 export type { BiliVideoDetailResponse, VideoTagResponse } from "./api/video";
 // Bilibili dynamic types

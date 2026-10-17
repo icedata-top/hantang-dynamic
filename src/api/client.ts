@@ -559,14 +559,7 @@ export function createAccountToViewClient(
 }
 
 export const dynamicClient = createClient(
-  "https://api.vc.bilibili.com/dynamic_svr/v1/dynamic_svr",
-);
-
-export const dynamicDetailClient = createClient(
-  config.bilibili.dynamicProxyUrl
-    ? `${config.bilibili.dynamicProxyUrl}/dynamic_svr/v1/dynamic_svr`
-    : "https://api.vc.bilibili.com/dynamic_svr/v1/dynamic_svr",
-  !!config.bilibili.dynamicProxyUrl,
+  "https://api.bilibili.com/x/polymer/web-dynamic/v1",
 );
 
 export const webInterfaceClient = createClient(
