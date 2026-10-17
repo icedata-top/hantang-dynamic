@@ -4,7 +4,7 @@ import { EndpointErrorAlerts } from "./endpointErrors";
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-test("alerts at 20 final requests and 50% errors, independently per endpoint", async () => {
+test("alerts above 50% errors in the last 20 final requests, once per endpoint", async () => {
   const messages: string[] = [];
   const alerts = new EndpointErrorAlerts(
     async (message) => {
@@ -13,17 +13,16 @@ test("alerts at 20 final requests and 50% errors, independently per endpoint", a
     () => assert.fail("notification failed"),
   );
   for (let i = 0; i < 30; i++) alerts.record("api.test", "/a", "retry");
-  for (let i = 0; i < 9; i++) alerts.record("api.test", "/a", "error");
   for (let i = 0; i < 10; i++) alerts.record("api.test", "/a", "success");
-  await flush();
-  assert.equal(messages.length, 0);
-  alerts.record("api.test", "/a", "success");
+  for (let i = 0; i < 9; i++) alerts.record("api.test", "/a", "error");
   await flush();
   assert.equal(messages.length, 0);
   alerts.record("api.test", "/a", "error");
+  await flush();
+  assert.equal(messages.length, 0);
   alerts.record("api.test", "/a", "error");
   await flush();
-  assert.match(messages[0], /api.test\/a\nLast 5 minutes: 11\/22.*50%/);
+  assert.match(messages[0], /api.test\/a\nLast 20 requests: 11\/20.*55%/);
   for (let i = 0; i < 20; i++) {
     alerts.record("api.test", "/a", "error");
     alerts.record("api.test", "/b", "error");
@@ -33,34 +32,6 @@ test("alerts at 20 final requests and 50% errors, independently per endpoint", a
   assert.equal(messages.length, 3);
   assert.match(messages[1], /api.test\/b/);
   assert.match(messages[2], /other.test\/a/);
-});
-
-test("expires five-minute samples while retaining per-run alert suppression", async () => {
-  let now = 0;
-  const messages: string[] = [];
-  const alerts = new EndpointErrorAlerts(
-    async (message) => {
-      messages.push(message);
-    },
-    () => assert.fail("notification failed"),
-    () => now,
-  );
-  for (let i = 0; i < 19; i++) alerts.record("api.test", "/a", "error");
-  now = 5 * 60_000;
-  alerts.record("api.test", "/a", "error");
-  await flush();
-  assert.equal(messages.length, 0);
-  for (let i = 0; i < 19; i++) alerts.record("api.test", "/a", "error");
-  await flush();
-  assert.equal(messages.length, 1);
-  now = 24 * 60 * 60_000;
-  for (let i = 0; i < 20; i++) {
-    alerts.record("api.test", "/b", "error");
-    alerts.record("api.test", "/a", "error");
-  }
-  await flush();
-  assert.equal(messages.length, 2);
-  assert.match(messages[1], /api.test\/b/);
 });
 
 test("notification rejection is handled without repeating the alert", async () => {
