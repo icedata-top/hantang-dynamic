@@ -1,5 +1,20 @@
 # Changelog
 
+## 5.7.0
+
+Restores dynamic collection through Bilibili's Polymer feed and adds endpoint
+error-rate notifications.
+
+- Fetches one mixed dynamic stream with opaque pagination cursors and resolves
+  forwarded videos from embedded originals.
+- Uses a single completed-feed frontier per account. Existing progress starts
+  one scan within the configured history window; interrupted pagination does
+  not advance the frontier.
+- Warns once per endpoint per process run when more than half of its latest
+  20 completed requests fail, excluding intermediate retries.
+- Continues sampling after alerts and exposes recent sample counts, error
+  ratios, and triggered status through Prometheus.
+
 ## 5.6.0
 
 Recommendation-derived video admission and metadata refresh continue while
