@@ -37,7 +37,7 @@ test("alerts at 20 final requests and 50% errors, independently per endpoint", a
   assert.match(messages[2], /other.test\/a/);
 });
 
-test("expires old samples and preserves cooldown after idle periods", async () => {
+test("expires old samples and alerts once per endpoint until restart", async () => {
   let now = 0;
   const messages: string[] = [];
   const alerts = new EndpointErrorAlerts(
@@ -59,13 +59,28 @@ test("expires old samples and preserves cooldown after idle periods", async () =
   for (let i = 0; i < 20; i++) alerts.record("api.test", "/a", "error");
   await flush();
   assert.equal(messages.length, 1);
-  now = 35 * 60_000;
-  alerts.record("api.test", "/a", "error");
+  now = 24 * 60 * 60_000;
+  for (let i = 0; i < 20; i++) {
+    alerts.record("api.test", "/b", "error");
+    alerts.record("api.test", "/a", "error");
+  }
   await flush();
   assert.equal(messages.length, 2);
+  assert.match(messages[1], /api.test\/b/);
+  const restarted = new EndpointErrorAlerts(
+    async (message) => {
+      messages.push(message);
+    },
+    () => assert.fail("notification failed"),
+    () => now,
+  );
+  for (let i = 0; i < 20; i++) restarted.record("api.test", "/a", "error");
+  await flush();
+  assert.equal(messages.length, 3);
+  assert.match(messages[2], /api.test\/a/);
 });
 
-test("notification rejection is handled and still respects cooldown", async () => {
+test("notification rejection is handled without repeating the alert", async () => {
   let attempts = 0;
   let failures = 0;
   const alerts = new EndpointErrorAlerts(
