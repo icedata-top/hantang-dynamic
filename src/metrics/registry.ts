@@ -70,6 +70,27 @@ export const apiRequestsTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+export const apiEndpointRecentSampleCount = new Gauge({
+  name: `${PREFIX}api_endpoint_recent_sample_count`,
+  help: "Number of final requests in the endpoint error-rate window (up to 20).",
+  labelNames: ["host", "route"] as const,
+  registers: [metricsRegistry],
+});
+
+export const apiEndpointRecentErrorRatio = new Gauge({
+  name: `${PREFIX}api_endpoint_recent_error_ratio`,
+  help: "Error ratio in the endpoint's latest 20 final requests (0 to 1).",
+  labelNames: ["host", "route"] as const,
+  registers: [metricsRegistry],
+});
+
+export const apiEndpointAlertTriggered = new Gauge({
+  name: `${PREFIX}api_endpoint_alert_triggered`,
+  help: "Whether the endpoint error-rate alert has triggered during this process run.",
+  labelNames: ["host", "route"] as const,
+  registers: [metricsRegistry],
+});
+
 export const apiRequestDurationSeconds = new Histogram({
   name: `${PREFIX}api_request_duration_seconds`,
   help: "Bilibili API request duration in seconds.",

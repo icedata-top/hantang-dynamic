@@ -22,6 +22,7 @@ import { getRandomDelay, retryDelay, sleep } from "../utils/datetime";
 import { logger } from "../utils/logger";
 import { notifyWarning } from "../utils/notifier/notifier";
 import { redactSensitive } from "../utils/redact";
+import { EndpointErrorAlerts } from "./endpointErrors";
 import { generateBiliTicket } from "./signatures/biliTicket";
 import { buildSignedQuery } from "./signatures/wbiSignature";
 
@@ -45,6 +46,9 @@ enum ApiErrorResponseCode {
   IpBanned = 416, // IP has been banned
 }
 
+const endpointErrorAlerts = new EndpointErrorAlerts(notifyWarning, () => {
+  logger.warn("Failed to deliver API endpoint error-rate notification");
+});
 const state = new StateManager();
 const notifiedAccountAuthFailures = new Set<string>();
 
@@ -118,6 +122,7 @@ function recordApiRequest(
   };
 
   apiRequestsTotal.inc({ ...labels, result });
+  endpointErrorAlerts.record(labels.host, labels.route, result);
   if (durationMs !== undefined && durationMs >= 0) {
     apiRequestDurationSeconds.observe(labels, durationMs / 1000);
   }
