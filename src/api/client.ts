@@ -40,6 +40,7 @@ export interface RequestConfig extends InternalAxiosRequestConfig {
 
 enum ApiErrorCode {
   Success = 0,
+  NotLoggedIn = -101, // 账号未登录
   CookieExpired = 4100000, // Cookie/authentication expired
   RiskControlFailed = -352, // 风控失败
 }
@@ -406,6 +407,29 @@ function createClient(
           )}`;
 
         logger.error(message);
+
+        if (response.data.code === ApiErrorCode.NotLoggedIn) {
+          if (skipCookie) {
+            return Promise.reject(
+              new Error(`API Error: code ${response.data.code}`),
+            );
+          }
+          logger.error(
+            `[account=${accountLabel}] Account is not logged in; disabling this authenticated account.\n` +
+              `[account=${accountLabel}] 账号未登录，将停用该账号的鉴权任务。`,
+          );
+          await notifyAccountAuthFailureOnce(
+            accountLabel,
+            response.data.code,
+            `[account=${accountLabel}] Account is not logged in; authenticated account tasks will be disabled.\n` +
+              `[account=${accountLabel}] 账号未登录，将停用该账号的鉴权任务。`,
+          );
+          throw new AccountAuthError(
+            response.data.code,
+            accountLabel,
+            `Account not logged in for account ${accountLabel}`,
+          );
+        }
 
         if (response.data.code === ApiErrorCode.CookieExpired) {
           if (skipCookie) {

@@ -88,7 +88,7 @@ test("raw API mode preserves account authentication and risk-control errors", as
     "auth-account",
   );
   try {
-    for (const code of [4100000, -352]) {
+    for (const code of [4100000, -352, -101]) {
       const adapter: AxiosAdapter = async (request) => ({
         config: request,
         data: { code, message: "authentication unavailable" },
