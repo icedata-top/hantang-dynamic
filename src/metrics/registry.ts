@@ -4,7 +4,7 @@ import {
   Gauge,
   Histogram,
   Registry,
-} from "prom-client";
+} from "@prometheus-io/client";
 import { config } from "../config";
 import { sharedApiRateLimiter } from "../utils/apiRateLimiter";
 
