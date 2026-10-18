@@ -64,6 +64,39 @@ test("alerts above 50% errors in the last 20 final requests, once per endpoint",
   );
 });
 
+test("alert includes the failure reasons in full", async () => {
+  const messages: string[] = [];
+  const alerts = new EndpointErrorAlerts(
+    async (message) => {
+      messages.push(message);
+    },
+    () => assert.fail("notification failed"),
+  );
+  // Long provider messages are kept verbatim; Telegram sends them as a file.
+  const longTail = "x".repeat(300);
+  for (let i = 0; i < 10; i++) {
+    alerts.record("api.test", "/a", "error", "code=-352 page=2 风控校验失败");
+  }
+  for (let i = 0; i < 10; i++) {
+    alerts.record(
+      "api.test",
+      "/a",
+      "error",
+      `HTTP 502: SESSDATA=secret ${longTail}`,
+    );
+  }
+  await flush();
+  assert.equal(messages.length, 1);
+  assert.match(
+    messages[0],
+    /Last 20 requests: 20\/20 failed \(100%\)\.\n\nFailures by reason:\n- code=-352 page=2 风控校验失败: 10/,
+  );
+  assert.ok(
+    messages[0].includes(`- HTTP 502: SESSDATA=[redacted] ${longTail}: 10`),
+  );
+  assert.doesNotMatch(messages[0], /secret/);
+});
+
 test("notification rejection is handled without repeating the alert", async () => {
   let attempts = 0;
   let failures = 0;

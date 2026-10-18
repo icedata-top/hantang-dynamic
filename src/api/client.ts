@@ -153,6 +153,7 @@ function recordApiRequest(
   url: string | undefined,
   result: "success" | "error" | "retry",
   durationMs?: number,
+  reason?: string,
 ): void {
   const labels = {
     host: hostLabel(baseURL),
@@ -160,7 +161,7 @@ function recordApiRequest(
   };
 
   apiRequestsTotal.inc({ ...labels, result });
-  endpointErrorAlerts.record(labels.host, labels.route, result);
+  endpointErrorAlerts.record(labels.host, labels.route, result, reason);
   if (durationMs !== undefined && durationMs >= 0) {
     apiRequestDurationSeconds.observe(labels, durationMs / 1000);
   }
@@ -345,7 +346,13 @@ function createClient(
       );
 
       if (response.status === ApiErrorResponseCode.IpBanned) {
-        recordApiRequest(baseURL, response.config.url, "error", timeUsed);
+        recordApiRequest(
+          baseURL,
+          response.config.url,
+          "error",
+          timeUsed,
+          "HTTP 416",
+        );
         apiErrorsByCodeTotal.inc({ code: String(response.status) });
         logger.warn(
           `HTTP 416 from ${baseURL}${response.config.url}; request failed without stopping the process.`,
@@ -378,8 +385,16 @@ function createClient(
         response.data.code !== 62002 &&
         response.data.code !== 62004
       ) {
-        recordApiRequest(baseURL, response.config.url, "error", timeUsed);
         const feedPage = requestConfig.metadata?.feedPage;
+        recordApiRequest(
+          baseURL,
+          response.config.url,
+          "error",
+          timeUsed,
+          `code=${response.data.code}` +
+            (feedPage === undefined ? "" : ` page=${feedPage}`) +
+            (response.data.message ? ` ${response.data.message}` : ""),
+        );
         const message =
           `API Error:\n` +
           `Code: ${response.data.code}\n` +
@@ -473,7 +488,13 @@ function createClient(
       const status = error.response?.status;
 
       if (status === ApiErrorResponseCode.IpBanned) {
-        recordApiRequest(baseURL, errorConfig?.url, "error", durationMs);
+        recordApiRequest(
+          baseURL,
+          errorConfig?.url,
+          "error",
+          durationMs,
+          "HTTP 416",
+        );
         apiErrorsByCodeTotal.inc({ code: String(status) });
         logger.warn(
           `HTTP 416 from ${baseURL}${errorConfig?.url ?? ""}; request failed without stopping the process.`,
@@ -496,7 +517,15 @@ function createClient(
           config.application.apiWaitTime,
         );
       }
-      recordApiRequest(baseURL, errorConfig?.url, "error", durationMs);
+      recordApiRequest(
+        baseURL,
+        errorConfig?.url,
+        "error",
+        durationMs,
+        status === undefined
+          ? `${error.code ?? "network error"}: ${error.message}`
+          : `HTTP ${status}: ${error.message}`,
+      );
       return Promise.reject({
         message: error.message,
         status,
