@@ -30,9 +30,11 @@ export interface RequestConfig extends InternalAxiosRequestConfig {
   noRetry?: boolean;
   rawApiErrors?: boolean;
   metadata?: {
-    startTime: number;
+    startTime?: number;
     silent?: boolean;
     proxyDetailLoginFallback?: boolean;
+    /** 1-based page number when paging through the dynamic feed. */
+    feedPage?: number;
   };
 }
 
@@ -331,14 +333,16 @@ function createClient(
         response.data.code !== 62004
       ) {
         recordApiRequest(baseURL, response.config.url, "error", timeUsed);
+        const feedPage = requestConfig.metadata?.feedPage;
         const message =
           `API Error:\n` +
           `Code: ${response.data.code}\n` +
+          (feedPage === undefined ? "" : `Feed page: ${feedPage}\n`) +
           `baseURL: ${baseURL + response.config.url}\n` +
           `Config: ${JSON.stringify(redactSensitive(response.config))}\n` +
           `Response: ${JSON.stringify(
             redactSensitive(response.data || "No message"),
-          )?.slice(0, 1000)}`;
+          )}`;
 
         logger.error(message);
 

@@ -1,17 +1,31 @@
 import type { AxiosInstance } from "axios";
 import type { BiliDynamicFeedResponse } from "../types";
-import { dynamicClient } from "./client";
+import { dynamicClient, type RequestConfig } from "./client";
+
+export interface DynamicFeedRequestOptions {
+  /** 1-based page number within the current scan, used for diagnostics. */
+  page?: number;
+}
 
 export async function getDynamicFeed(
   offset?: string,
   client: AxiosInstance = dynamicClient,
+  options: DynamicFeedRequestOptions = {},
 ): Promise<BiliDynamicFeedResponse> {
-  const response = await client.get<BiliDynamicFeedResponse>("/feed/all", {
+  const requestConfig = {
     params: {
       type: "all",
       platform: "web",
       ...(offset ? { offset } : {}),
     },
-  });
+  } as RequestConfig;
+  if (options.page !== undefined) {
+    requestConfig.metadata = { feedPage: options.page };
+  }
+
+  const response = await client.get<BiliDynamicFeedResponse>(
+    "/feed/all",
+    requestConfig,
+  );
   return response.data;
 }
