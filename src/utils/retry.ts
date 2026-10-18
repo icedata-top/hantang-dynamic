@@ -23,22 +23,27 @@ export function isTransientError(error: unknown): boolean {
   return candidate.cause !== undefined && isTransientError(candidate.cause);
 }
 
-/** Retry an operation only when it fails with a transient connection error. */
+/**
+ * Retry an operation only when it fails with a transient connection error.
+ *
+ * `maxAttempts` counts total attempts, including the first one, unlike
+ * `retryDelay` where the count is retries after the initial call.
+ */
 export async function retryTransient<T>(
   operation: () => Promise<T>,
-  attempts: number,
+  maxAttempts: number,
   delayMs: number,
   label: string,
 ): Promise<T> {
-  const maxAttempts = Math.max(1, attempts);
+  const limit = Math.max(1, maxAttempts);
   for (let attempt = 1; ; attempt++) {
     try {
       return await operation();
     } catch (error) {
-      if (attempt >= maxAttempts || !isTransientError(error)) throw error;
+      if (attempt >= limit || !isTransientError(error)) throw error;
       const message = error instanceof Error ? error.message : String(error);
       logger.warn(
-        `${label} failed transiently (attempt ${attempt}/${maxAttempts}), retrying in ${delayMs}ms: ${message}`,
+        `${label} failed transiently (attempt ${attempt}/${limit}), retrying in ${delayMs}ms: ${message}`,
       );
       await sleep(delayMs);
     }
