@@ -25,6 +25,7 @@ import type {
 } from "../types/models/minute.js";
 import type { VideoData } from "../types/models/video.js";
 import { logger } from "../utils/logger.js";
+import { retryTransient } from "../utils/retry.js";
 
 export type { PidV2Name } from "./pidV2Names.js";
 export type {
@@ -275,7 +276,12 @@ export class Database {
    * Check if a video has been processed
    */
   public async hasProcessedVideo(bvid: string): Promise<boolean> {
-    return hasProcessedVideo(this.ensurePool(), bvid);
+    return retryTransient(
+      () => hasProcessedVideo(this.ensurePool(), bvid),
+      config.application.apiRetryTimes,
+      config.application.apiWaitTime,
+      `hasProcessedVideo ${bvid}`,
+    );
   }
 
   /**
@@ -284,7 +290,12 @@ export class Database {
   public async hasProcessedVideoById(
     id: string | number | bigint,
   ): Promise<boolean> {
-    return hasProcessedVideoById(this.ensurePool(), id);
+    return retryTransient(
+      () => hasProcessedVideoById(this.ensurePool(), id),
+      config.application.apiRetryTimes,
+      config.application.apiWaitTime,
+      `hasProcessedVideoById ${id}`,
+    );
   }
 
   /**

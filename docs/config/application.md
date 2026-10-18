@@ -21,8 +21,8 @@ retrospective_days = 30
 | --- | --- | --- | --- |
 | `log_level` | `LOGLEVEL` | `info` | One of `debug`, `info`, `warn`, `error`. |
 | `fetch_interval` | `FETCH_INTERVAL` | `900000` | Main fetch interval in milliseconds. |
-| `api_retry_times` | `API_RETRY_TIMES` | `3` | API retry count. |
-| `api_wait_time` | `API_WAIT_TIME` | `2000` | Wait between API calls in milliseconds. |
+| `api_retry_times` | `API_RETRY_TIMES` | `3` | Total attempts for API requests and for transient database and video-processing retries. |
+| `api_wait_time` | `API_WAIT_TIME` | `2000` | Wait between retries in milliseconds. |
 | `max_history_days` | `MAX_HISTORY_DAYS` | `7` | Maximum historical days to fetch. |
 | `max_item` | `MAX_ITEM` | `0` | Maximum feed items to fetch; `0` means unlimited. |
 | `concurrency_limit` | `CONCURRENCY_LIMIT` | `1` | Concurrent API request limit. |

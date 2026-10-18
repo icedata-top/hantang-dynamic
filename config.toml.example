@@ -35,8 +35,8 @@ dynamic_proxy_url = ""         # Dynamic API proxy URL
 # Application behavior settings
 log_level = "info"             # Log level: debug, info, warn, error
 fetch_interval = 900000        # Fetch interval in milliseconds (default: 15 minutes)
-api_retry_times = 3            # Number of API retry attempts
-api_wait_time = 2000           # Wait time between API calls in milliseconds
+api_retry_times = 3            # Total attempts for API and transient DB retries
+api_wait_time = 2000           # Wait between retries in milliseconds
 max_history_days = 7           # Maximum days of history to fetch
 max_item = 0                   # Maximum number of items to fetch (0 for unlimited)
 concurrency_limit = 1          # Max concurrent API requests (default: 1, or 20 if proxy is set)
