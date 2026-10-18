@@ -205,6 +205,24 @@ export class DynamicTracker {
     const workItems = dynamics.map((dynamic) =>
       "dynamic" in dynamic ? dynamic : { dynamic, pidV2: undefined },
     );
+    const prefetchedKeys = new Set<string>();
+    const ids: Array<string | number | bigint> = [];
+    for (const item of workItems) {
+      if (item.dynamic.desc.type === 1) continue;
+      const key = this.getRelatedCandidateKey(item);
+      if (!key) continue;
+      prefetchedKeys.add(key);
+      ids.push(key.startsWith("bvid:") ? key.slice(5) : key.slice(4));
+    }
+    let processed = new Set<string>();
+    try {
+      processed = await this.db.getProcessedVideoIds(ids);
+    } catch (error) {
+      if (isAccountAuthError(error)) throw error;
+      prefetchedKeys.clear();
+      logger.warn("Batch processed-video check failed:", error);
+    }
+
     const concurrency = Math.min(
       Math.max(1, config.application.concurrencyLimit),
       32,
@@ -215,6 +233,10 @@ export class DynamicTracker {
       const batch = workItems.slice(index, index + concurrency);
       const processResults = await Promise.allSettled(
         batch.map(async (workItem) => {
+          const key = this.getRelatedCandidateKey(workItem);
+          if (key && prefetchedKeys.has(key) && processed.has(key)) {
+            return null;
+          }
           try {
             const result = await this.detailsService.processVideo(
               workItem.dynamic,
@@ -222,6 +244,7 @@ export class DynamicTracker {
                 pidV2: workItem.pidV2,
                 cover43: workItem.cover43,
                 processRelated: expandRelated,
+                skipCacheCheck: key !== null && prefetchedKeys.has(key),
               },
             );
             return { workItem, ...result };
@@ -252,6 +275,7 @@ export class DynamicTracker {
           continue;
         }
 
+        if (!result.value) continue;
         const { workItem, video, relatedVideos, failed } = result.value;
         if (failed) {
           this.enqueueRetry(

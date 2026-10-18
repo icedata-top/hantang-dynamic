@@ -7,6 +7,7 @@ import { backfillMissionIds } from "./schema/videos";
 import {
   getProcessedVideoAids,
   getProcessedVideoAidsMissingPidV2,
+  getProcessedVideoIds,
   getProcessedVideoMetadataCandidates,
   markVideoDeleted,
   markVideoProcessedWithCollectionState,
@@ -193,6 +194,43 @@ test("processed AID lookup uses one bounded set query", async () => {
   assert.equal(calls.length, 1);
   assert.match(calls[0]?.sql ?? "", /WHERE aid = ANY\(\$1::bigint\[\]\)/);
   assert.deepEqual(calls[0]?.values, [["1", "2", "3"]]);
+});
+
+test("mixed BVID/AID processed lookup uses one query and both key forms", async () => {
+  const calls: QueryCall[] = [];
+  const pool = {
+    async query(sql: string, values?: unknown[]) {
+      calls.push({ sql, values });
+      return {
+        rows: [
+          { aid: "2", bvid: "BV1two" },
+          { aid: "3", bvid: null },
+        ],
+        rowCount: 2,
+      };
+    },
+  } as unknown as Pool;
+
+  const existing = await getProcessedVideoIds(pool, ["BV1two", 3, "9"]);
+
+  assert.deepEqual(existing, new Set(["aid:2", "bvid:BV1two", "aid:3"]));
+  assert.equal(calls.length, 1);
+  assert.match(calls[0]?.sql ?? "", /bvid = ANY\(\$1::varchar\[\]\)/);
+  assert.match(calls[0]?.sql ?? "", /aid = ANY\(\$2::bigint\[\]\)/);
+  assert.deepEqual(calls[0]?.values, [["BV1two"], ["3", "9"]]);
+});
+
+test("mixed processed lookup skips the query for empty input", async () => {
+  const calls: QueryCall[] = [];
+  const pool = {
+    async query(sql: string, values?: unknown[]) {
+      calls.push({ sql, values });
+      return { rows: [], rowCount: 0 };
+    },
+  } as unknown as Pool;
+
+  assert.deepEqual(await getProcessedVideoIds(pool, []), new Set());
+  assert.equal(calls.length, 0);
 });
 
 test("missing pid lookup queries only a bounded AID set", async () => {
