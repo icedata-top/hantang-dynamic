@@ -1,5 +1,14 @@
 # Changelog
 
+## 5.9.1
+
+Upgrades to TypeScript 7 while keeping the bundled output unchanged.
+
+- Compiles sources with `tsc` before running ncc. TypeScript 7.0 does not ship
+  the compiler API ncc needs, so ncc now bundles the emitted JavaScript; this
+  can be reverted to a single-step build once TypeScript 7.1 exposes the API.
+- Moves intermediate compiler output to `.build` and adds a `typecheck` script.
+
 ## 5.9.0
 
 Hardens dynamic feed traversal and notification delivery, refreshes the
