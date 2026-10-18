@@ -47,6 +47,7 @@ retrospective_days = 30        # Days to look back during retrospective scan (de
 # Database settings (PostgreSQL)
 url = "postgresql://localhost:5432/hantang"  # PostgreSQL connection URL
 schema = "public"                            # PostgreSQL schema name (default: public)
+pool_size = 20                              # Max pooled PG connections (keep below server max_connections)
 
 [server]
 # Shared HTTP listener for metrics and control APIs (disabled by default)
