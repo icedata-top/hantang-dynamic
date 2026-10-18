@@ -17,6 +17,12 @@ pool_size = 20
 | `schema` | `DATABASE_SCHEMA` | `public` | PostgreSQL schema used as `search_path`. |
 | `pool_size` | `DATABASE_POOL_SIZE` | `20` | Maximum pooled PostgreSQL connections. Keep it at or below the server's `max_connections` budget, leaving headroom for other clients. |
 
+The pool belongs to one process and is shared by every tracked account, so the
+budget is per process rather than per account. Size it for the busiest account
+count you run (`pool_size` should be at least the number of accounts multiplied
+by their effective page concurrency) and leave the server's `max_connections`
+budget room for other clients.
+
 ## Schema initialization
 
 Normal startup does not create or alter database objects. Run schema
