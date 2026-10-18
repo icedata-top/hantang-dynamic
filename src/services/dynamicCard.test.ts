@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { dynamicDetailClient } from "../api/client";
+import { StateManager } from "../core/state";
 import { Database } from "../database";
 import type { BiliDynamicItem } from "../types/bilibili/dynamic";
 import type { DynamicData } from "../types/models/database";
@@ -69,6 +71,61 @@ test("embedded original video survives forward processing and storage", async ()
     db.saveDynamic = originalSave;
     db.addDiscoveredUser = originalUser;
     db.getCachedForwardBvid = originalCache;
+  }
+});
+
+test("missing forward original is recovered from Polymer detail and persisted", async (t) => {
+  t.mock.method(StateManager.prototype, "isTicketValid", () => true);
+  t.mock.method(StateManager.prototype, "isWbiKeysValid", () => true);
+  t.mock.getter(StateManager.prototype, "imgKey", () => "0".repeat(32));
+  t.mock.getter(StateManager.prototype, "subKey", () => "1".repeat(32));
+  const forward = item("90071992547409933", "DYNAMIC_TYPE_FORWARD");
+  forward.orig = item("90071992547409932", "DYNAMIC_TYPE_AV");
+  forward.modules.module_dynamic = { desc: { text: "forward caption" } };
+  const card = toDynamicCard(forward);
+  assert.ok(card);
+  const original = item("90071992547409932", "DYNAMIC_TYPE_AV");
+  original.modules.module_dynamic = {
+    major: { archive: { bvid: "BV1recovered" } },
+  };
+  const originalAdapter = dynamicDetailClient.defaults.adapter;
+  let requests = 0;
+  dynamicDetailClient.defaults.adapter = async (request) => {
+    requests++;
+    assert.equal(request.url, "/detail");
+    assert.deepEqual(request.params, { id: "90071992547409932" });
+    return {
+      config: request,
+      data: { code: 0, data: { item: original } },
+      headers: {},
+      status: 200,
+      statusText: "OK",
+    };
+  };
+  const db = Database.getInstance();
+  const stored: DynamicData[] = [];
+  t.mock.method(db, "getCachedForwardBvid", async () => null);
+  t.mock.method(db, "addDiscoveredUser", async () => {});
+  t.mock.method(db, "saveDynamic", async (data: DynamicData) => {
+    stored.push(data);
+  });
+  const service = new DetailsService();
+  const ids: (string | number)[] = [];
+  t.mock.method(service, "processVideoById", async (id: string | number) => {
+    ids.push(id);
+    return { video: null, relatedVideos: [] };
+  });
+  try {
+    await service.processVideo(card);
+    assert.equal(requests, 1);
+    assert.deepEqual(ids, ["BV1recovered"]);
+    assert.equal(stored[0].dynamicId, 90071992547409933n);
+    assert.equal(stored[0].origDynamicId, 90071992547409932n);
+    assert.equal(stored[0].origType, 8);
+    assert.equal(stored[0].forwardText, "forward caption");
+    assert.equal(stored[0].bvid, "BV1recovered");
+  } finally {
+    dynamicDetailClient.defaults.adapter = originalAdapter;
   }
 });
 

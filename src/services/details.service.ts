@@ -1,5 +1,5 @@
 import type { AxiosInstance } from "axios";
-import { isAccountAuthError } from "../api/client";
+import { dynamicDetailClient, isAccountAuthError } from "../api/client";
 import { fetchVideoFullDetail } from "../api/video";
 import type { VideoIdentity } from "../database";
 import { Database } from "../database";
@@ -9,11 +9,13 @@ import type {
   RecommendedVideo,
   VideoData,
 } from "../types";
+import type { BiliDynamicItem } from "../types/bilibili/dynamic";
 import type { DynamicData } from "../types/models/database";
 import { sharedApiRateLimiter } from "../utils/apiRateLimiter";
 import { filterVideo } from "../utils/filter";
 import { logger } from "../utils/logger";
 import type { RateLimiter } from "../utils/rateLimiter";
+import { toDynamicCard } from "./dynamicCard";
 
 interface VideoProcessingOptions {
   pidV2?: number;
@@ -279,7 +281,27 @@ export class DetailsService {
     }
 
     // Polymer embeds the original, including nested forwards, in the feed.
-    const bvid = dynamic.desc.bvid || dynamic.desc.origin?.bvid;
+    let bvid = dynamic.desc.bvid || dynamic.desc.origin?.bvid;
+    if (!bvid) {
+      const originalType = Number(
+        dynamic.desc.orig_type || dynamic.desc.origin?.type || 0,
+      );
+      if (originalType && originalType !== 1 && originalType !== 8) return "";
+
+      const originalId =
+        dynamic.desc.orig_dy_id_str || dynamic.desc.origin?.dynamic_id_str;
+      const response = await dynamicDetailClient.get<{
+        code: number;
+        data?: { item?: BiliDynamicItem };
+      }>("/detail", {
+        params: {
+          id: originalId && originalId !== "0" ? originalId : dynamicId,
+        },
+      });
+      const item =
+        response.data.code === 0 ? response.data.data?.item : undefined;
+      bvid = item ? toDynamicCard(item)?.desc.bvid : undefined;
+    }
     if (bvid) {
       await this.saveDynamic(dynamic, bvid);
       return bvid;
