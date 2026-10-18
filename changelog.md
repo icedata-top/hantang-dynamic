@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.7.1
+
+Recovers forwarded videos when the feed omits the original video ID by querying
+the Polymer detail endpoint with only `id`. Uses the configured dynamic proxy
+when present and preserves forward metadata. Cached and embedded video IDs
+continue to avoid extra requests.
+
 ## 5.7.0
 
 Restores dynamic collection through Bilibili's Polymer feed and adds endpoint
