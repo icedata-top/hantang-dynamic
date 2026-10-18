@@ -19,11 +19,21 @@ import { notifyNewVideos } from "../utils/notifier/notifier";
 import { DetailsService, type RelatedVideoWorkItem } from "./details.service";
 import { DynamicsService } from "./dynamics.service";
 
+interface PendingRetry {
+  workItem: RelatedVideoWorkItem;
+  depth: number;
+  processRelated: boolean;
+  key: string;
+  attempts: number;
+  nextAt: number;
+}
+
 export class DynamicTracker {
   private account: AccountContext;
   private isRunning = false;
   private dynamicsService: DynamicsService;
   private detailsService: DetailsService;
+  private pendingRetries = new Map<string, PendingRetry>();
   private db = Database.getInstance();
   private retrospectiveTimer: ReturnType<typeof setInterval> | null = null;
   private followingStartupTimer: ReturnType<typeof setTimeout> | null = null;
@@ -156,8 +166,10 @@ export class DynamicTracker {
         await exportData(processedVideos);
         await notifyNewVideos(processedVideos);
       }
+      await this.drainRetries();
       if (page.maxDynamicId > maxDynamicId) maxDynamicId = page.maxDynamicId;
     }
+    await this.flushRetries();
     // Only a completed traversal establishes a safe frontier.
     if (maxDynamicId > minDynamicId)
       stateManager.updateLastFeedDynamicId(maxDynamicId);
@@ -189,58 +201,70 @@ export class DynamicTracker {
       }
     }
 
-    // Process all dynamics concurrently
-    const processResults = await Promise.allSettled(
-      dynamics.map(async (dynamic) => {
-        const workItem =
-          "dynamic" in dynamic ? dynamic : { dynamic, pidV2: undefined };
-        try {
-          const { video, relatedVideos } =
-            await this.detailsService.processVideo(workItem.dynamic, {
-              pidV2: workItem.pidV2,
-              cover43: workItem.cover43,
-              processRelated: expandRelated,
-            });
-
-          if (video) {
-            return {
-              video,
-              relatedVideos:
-                expandRelated && relatedVideos.length > 0 ? relatedVideos : [],
-            };
-          }
-          return null;
-        } catch (error) {
-          if (isAccountAuthError(error)) {
-            throw error;
-          }
-          logger.error(
-            `Error processing dynamic ${workItem.dynamic.desc.dynamic_id}:`,
-            error,
-          );
-          return null;
-        }
-      }),
+    const workItems = dynamics.map((dynamic) =>
+      "dynamic" in dynamic ? dynamic : { dynamic, pidV2: undefined },
+    );
+    const concurrency = Math.min(
+      Math.max(1, config.application.concurrencyLimit),
+      32,
     );
 
-    // Collect results
-    for (const result of processResults) {
-      if (result.status === "rejected") {
-        if (isAccountAuthError(result.reason)) {
-          throw result.reason;
-        }
-        logger.error("Error processing dynamic:", result.reason);
-        continue;
-      }
+    // Process in bounded batches instead of spawning hundreds of tasks.
+    for (let index = 0; index < workItems.length; index += concurrency) {
+      const batch = workItems.slice(index, index + concurrency);
+      const processResults = await Promise.allSettled(
+        batch.map(async (workItem) => {
+          try {
+            const result = await this.detailsService.processVideo(
+              workItem.dynamic,
+              {
+                pidV2: workItem.pidV2,
+                cover43: workItem.cover43,
+                processRelated: expandRelated,
+              },
+            );
+            return { workItem, ...result };
+          } catch (error) {
+            if (isAccountAuthError(error)) {
+              throw error;
+            }
+            logger.error(
+              `Error processing video ${this.getRelatedCandidateKey(workItem) ?? "unknown"}:`,
+              error,
+            );
+            return {
+              workItem,
+              video: null,
+              relatedVideos: [],
+              failed: true,
+            };
+          }
+        }),
+      );
 
-      if (result.value) {
-        results.push(result.value.video);
-        relatedQueue.push(
-          ...this.dedupeRelatedCandidates(
-            result.value.relatedVideos,
-            seenRelatedCandidates,
-          ),
-        );
+      for (const result of processResults) {
+        if (result.status === "rejected") {
+          if (isAccountAuthError(result.reason)) {
+            throw result.reason;
+          }
+          logger.error("Error processing dynamic:", result.reason);
+          continue;
+        }
+
+        const { workItem, video, relatedVideos, failed } = result.value;
+        if (failed) {
+          this.enqueueRetry(workItem, depth, expandRelated);
+          continue;
+        }
+        if (video) {
+          results.push(video);
+          relatedQueue.push(
+            ...this.dedupeRelatedCandidates(
+              relatedVideos,
+              seenRelatedCandidates,
+            ),
+          );
+        }
       }
     }
 
@@ -260,6 +284,88 @@ export class DynamicTracker {
     );
 
     return results;
+  }
+
+  private enqueueRetry(
+    workItem: RelatedVideoWorkItem,
+    depth: number,
+    processRelated: boolean,
+  ): void {
+    const key = this.getRelatedCandidateKey(workItem);
+    if (!key || this.pendingRetries.has(key)) return;
+    this.pendingRetries.set(key, {
+      workItem,
+      depth,
+      processRelated,
+      key,
+      attempts: 0,
+      nextAt: Date.now() + config.application.apiWaitTime,
+    });
+    logger.warn(`[uid=${this.account.uid}] Queued ${key} for retry`);
+  }
+
+  private async drainRetries(): Promise<void> {
+    const due = [...this.pendingRetries.values()].filter(
+      (item) => item.nextAt <= Date.now(),
+    );
+    const recovered: VideoData[] = [];
+    for (const item of due) {
+      this.pendingRetries.delete(item.key);
+      const { video, relatedVideos, failed } =
+        await this.detailsService.processVideo(item.workItem.dynamic, {
+          pidV2: item.workItem.pidV2,
+          cover43: item.workItem.cover43,
+          processRelated: item.processRelated,
+        });
+      if (failed) {
+        const attempts = item.attempts + 1;
+        if (attempts >= config.application.apiRetryTimes) {
+          logger.error(
+            `[uid=${this.account.uid}] Dropping ${item.key} after ${attempts} retries`,
+          );
+        } else {
+          this.pendingRetries.set(item.key, {
+            ...item,
+            attempts,
+            nextAt: Date.now() + config.application.apiWaitTime,
+          });
+        }
+        continue;
+      }
+      if (!video) continue;
+      recovered.push(video);
+      if (item.processRelated && relatedVideos.length > 0) {
+        recovered.push(
+          ...(await this.processPage(
+            relatedVideos,
+            item.depth + 1,
+            new Set([item.key]),
+          )),
+        );
+      }
+    }
+
+    if (recovered.length > 0) {
+      videosProcessedTotal.inc(
+        { uid: this.account.uid || "unknown" },
+        recovered.length,
+      );
+      await exportData(recovered);
+      await notifyNewVideos(recovered);
+    }
+  }
+
+  private async flushRetries(): Promise<void> {
+    for (
+      let pass = 0;
+      pass < config.application.apiRetryTimes && this.pendingRetries.size > 0;
+      pass++
+    ) {
+      await this.drainRetries();
+      if (this.pendingRetries.size > 0) {
+        await sleep(config.application.apiWaitTime);
+      }
+    }
   }
 
   private dedupeRelatedCandidates(
@@ -324,6 +430,7 @@ export class DynamicTracker {
       );
     }
 
+    await this.flushRetries();
     logger.info(`[uid=${this.account.uid}] Retrospective scan completed`);
   }
 
