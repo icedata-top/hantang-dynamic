@@ -18,6 +18,9 @@ export async function getDynamicFeed(
       platform: "web",
       ...(offset ? { offset } : {}),
     },
+    // Business codes are handled by the feed pagination loop; do not notify
+    // on every unreachable deep page.
+    rawApiErrors: true,
   } as RequestConfig;
   if (options.page !== undefined) {
     requestConfig.metadata = { feedPage: options.page };

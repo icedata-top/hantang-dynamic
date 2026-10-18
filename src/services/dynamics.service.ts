@@ -1,3 +1,4 @@
+import { isAccountAuthError } from "../api/client";
 import { getDynamicFeed } from "../api/dynamic";
 import { config } from "../config";
 import type { AccountContext } from "../core/account";
@@ -9,6 +10,29 @@ import { toDynamicCard } from "./dynamicCard";
 interface FetchDynamicsStreamOptions {
   minDynamicId: bigint;
   minTimestamp: number;
+}
+
+/**
+ * Business code returned when the feed cursor can no longer be served. It
+ * shows up at a stable depth near the end of the reachable feed, so it is
+ * treated as the end of the traversal instead of a hard failure.
+ */
+const FEED_END_CODE = 4101133;
+
+function errorCode(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return undefined;
+  }
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "number" ? code : undefined;
+}
+
+function errorReason(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error !== null && "message" in error) {
+    return String((error as { message?: unknown }).message);
+  }
+  return String(error);
 }
 
 export class DynamicsService {
@@ -25,32 +49,62 @@ export class DynamicsService {
     let offset: string | undefined;
     let page = 0;
     const seenOffsets = new Set<string>();
+    const requestPage = async (
+      cursor: string | undefined,
+      pageNumber: number,
+    ): Promise<BiliDynamicFeedResponse> => {
+      const response = await getDynamicFeed(
+        cursor,
+        this.account.dynamicClient,
+        { page: pageNumber },
+      );
+      if (response.code !== 0) {
+        // Clients without the shared interceptors return business error codes
+        // instead of rejecting; normalize both shapes for the caller.
+        throw Object.assign(
+          new Error(`API Error: code ${response.code} ${response.message}`),
+          { code: response.code, data: response },
+        );
+      }
+      return response;
+    };
+
     while (true) {
       page += 1;
       const cursor = offset ?? "<start>";
       let response: BiliDynamicFeedResponse;
-      try {
-        response = await getDynamicFeed(offset, this.account.dynamicClient, {
-          page,
-        });
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        logger.error(
-          `[uid=${uid}] Dynamic feed request failed on page ${page} (offset=${cursor}): ${reason}`,
-        );
-        throw new Error(
-          `Dynamic feed request failed on page ${page} (offset=${cursor}): ${reason}`,
-        );
-      }
-      if (response.code !== 0) {
-        logger.error(
-          `[uid=${uid}] Dynamic feed API error on page ${page} (offset=${cursor}): ` +
-            `code=${response.code} message=${response.message}`,
-        );
-        throw new Error(
-          `Dynamic feed API error on page ${page} (offset=${cursor}): ` +
-            `${response.code} ${response.message}`,
-        );
+      let retriedFeedEnd = false;
+      while (true) {
+        try {
+          response = await requestPage(offset, page);
+          break;
+        } catch (error) {
+          if (isAccountAuthError(error)) throw error;
+          if (errorCode(error) === FEED_END_CODE) {
+            if (!retriedFeedEnd) {
+              retriedFeedEnd = true;
+              logger.warn(
+                `[uid=${uid}] Feed page ${page} returned ${FEED_END_CODE}; retrying once (offset=${cursor})`,
+              );
+              if (config.application.apiWaitTime > 0) {
+                await sleep(config.application.apiWaitTime);
+              }
+              continue;
+            }
+            logger.warn(
+              `[uid=${uid}] Feed ended after ${page - 1} page(s): page ${page} still returns ` +
+                `${FEED_END_CODE} (offset=${cursor}); treating it as the end of the reachable feed.`,
+            );
+            return;
+          }
+          const reason = errorReason(error);
+          logger.error(
+            `[uid=${uid}] Dynamic feed request failed on page ${page} (offset=${cursor}): ${reason}`,
+          );
+          throw new Error(
+            `Dynamic feed request failed on page ${page} (offset=${cursor}): ${reason}`,
+          );
+        }
       }
       const items = response.data.items ?? [];
       logger.info(

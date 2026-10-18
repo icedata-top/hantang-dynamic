@@ -126,3 +126,121 @@ test("a repeated feed cursor fails the traversal", async () => {
     config.application.apiWaitTime = originalWait;
   }
 });
+
+function feedClient(
+  handler: (request: {
+    params: Record<string, unknown>;
+  }) => { code: number; message?: string; data?: unknown } | undefined,
+) {
+  return axios.create({
+    adapter: async (request) => {
+      const body = handler({ params: request.params ?? {} }) ?? {
+        code: 0,
+        data: { items: [], offset: "", has_more: false },
+      };
+      return {
+        data: body,
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config: request,
+      };
+    },
+  });
+}
+
+test("a twice-repeated 4101133 ends the traversal without failing", async () => {
+  const offsets: unknown[] = [];
+  const client = feedClient(({ params }) => {
+    offsets.push(params.offset);
+    if (params.offset === undefined) {
+      return {
+        code: 0,
+        data: {
+          items: [item("900", "DYNAMIC_TYPE_AV")],
+          offset: "end-ish",
+          has_more: true,
+        },
+      };
+    }
+    return { code: 4101133, message: "请求数据发生错误，请刷新或稍后重试" };
+  });
+  // Mirror the shared client: business codes reject instead of returning.
+  client.interceptors.response.use((response) => {
+    if (response.data.code !== 0) {
+      return Promise.reject({
+        message: `API Error: code ${response.data.code}`,
+        status: response.status,
+        code: response.data.code,
+        data: response.data,
+      });
+    }
+    return response;
+  });
+
+  const originalWait = config.application.apiWaitTime;
+  config.application.apiWaitTime = 0;
+  try {
+    const pages = [];
+    for await (const page of new DynamicsService({
+      uid: "7",
+      dynamicClient: client,
+    } as AccountContext).fetchDynamicsStream({
+      minTimestamp: 100,
+      minDynamicId: 0n,
+    })) {
+      pages.push(page.maxDynamicId);
+    }
+    assert.deepEqual(pages, [900n]);
+    assert.deepEqual(offsets, [undefined, "end-ish", "end-ish"]);
+  } finally {
+    config.application.apiWaitTime = originalWait;
+  }
+});
+
+test("a transient 4101133 is retried once and pagination continues", async () => {
+  const offsets: unknown[] = [];
+  const client = feedClient(({ params }) => {
+    offsets.push(params.offset);
+    if (params.offset === undefined) {
+      return {
+        code: 0,
+        data: {
+          items: [item("900", "DYNAMIC_TYPE_AV")],
+          offset: "next",
+          has_more: true,
+        },
+      };
+    }
+    if (offsets.length === 2) {
+      return { code: 4101133, message: "请求数据发生错误，请刷新或稍后重试" };
+    }
+    return {
+      code: 0,
+      data: {
+        items: [item("800", "DYNAMIC_TYPE_AV")],
+        offset: "",
+        has_more: false,
+      },
+    };
+  });
+
+  const originalWait = config.application.apiWaitTime;
+  config.application.apiWaitTime = 0;
+  try {
+    const pages = [];
+    for await (const page of new DynamicsService({
+      uid: "7",
+      dynamicClient: client,
+    } as AccountContext).fetchDynamicsStream({
+      minTimestamp: 100,
+      minDynamicId: 0n,
+    })) {
+      pages.push(page.maxDynamicId);
+    }
+    assert.deepEqual(pages, [900n, 800n]);
+    assert.deepEqual(offsets, [undefined, "next", "next"]);
+  } finally {
+    config.application.apiWaitTime = originalWait;
+  }
+});
