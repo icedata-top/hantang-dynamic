@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { config } from "../config";
 import { Database } from "../database";
+import type { BiliDynamicCard } from "../types";
 import type {
   BiliVideoDetailDataForProcessing,
   RecommendedVideo,
@@ -425,4 +427,30 @@ test("an empty detail TAG array is an authoritative empty snapshot", async () =>
   assert.equal(videoData.tag, "");
   assert.deepEqual(videoData.tag_new, []);
   assert.deepEqual(videoData.tagSnapshot, []);
+});
+
+test("processVideo retries a transient failure across the whole pipeline", async () => {
+  const service = new DetailsService();
+  let attempts = 0;
+  Reflect.set(service, "processVideoById", async () => {
+    attempts++;
+    if (attempts === 1) {
+      throw new Error("timeout exceeded when trying to connect");
+    }
+    return { video, relatedVideos: [] };
+  });
+  const dynamic = {
+    desc: { type: 8, bvid: "BV1test", dynamic_id: 1, dynamic_id_str: "1" },
+  } as unknown as BiliDynamicCard;
+  const originalWait = config.application.apiWaitTime;
+  config.application.apiWaitTime = 0;
+
+  try {
+    const result = await service.processVideo(dynamic);
+
+    assert.equal(attempts, 2);
+    assert.equal(result.video, video);
+  } finally {
+    config.application.apiWaitTime = originalWait;
+  }
 });
