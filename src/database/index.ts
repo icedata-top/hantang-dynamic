@@ -186,7 +186,7 @@ export class Database {
       // Create connection pool
       this.pool = new Pool({
         connectionString: url,
-        max: config.application.concurrencyLimit || 20,
+        max: config.database.poolSize,
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 10000,
         // Startup options run before pg exposes the client to pool queries.

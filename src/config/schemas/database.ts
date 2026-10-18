@@ -4,6 +4,7 @@ import { z } from "zod";
 export const databaseSchema = z.object({
   url: z.string(),
   schema: z.string().default("public"),
+  poolSize: z.coerce.number().int().min(1).default(20),
 });
 
 export type DatabaseConfig = z.infer<typeof databaseSchema>;
@@ -25,5 +26,10 @@ export function createDatabaseConfig(
       "postgresql://localhost:5432/hantang",
     ),
     schema: getConfigValue(["database", "schema"], "DATABASE_SCHEMA", "public"),
+    poolSize: getConfigValue(
+      ["database", "pool_size"],
+      "DATABASE_POOL_SIZE",
+      20,
+    ),
   };
 }

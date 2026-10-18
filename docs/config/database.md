@@ -6,6 +6,7 @@
 [database]
 url = "postgresql://localhost:5432/hantang"
 schema = "public"
+pool_size = 20
 ```
 
 ## Fields
@@ -14,6 +15,7 @@ schema = "public"
 | --- | --- | --- | --- |
 | `url` | `DATABASE_URL` | `postgresql://localhost:5432/hantang` | PostgreSQL connection URL. |
 | `schema` | `DATABASE_SCHEMA` | `public` | PostgreSQL schema used as `search_path`. |
+| `pool_size` | `DATABASE_POOL_SIZE` | `20` | Maximum pooled PostgreSQL connections. Keep it at or below the server's `max_connections` budget, leaving headroom for other clients. |
 
 ## Schema initialization
 
