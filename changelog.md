@@ -1,5 +1,24 @@
 # Changelog
 
+## 5.8.0
+
+Makes PostgreSQL connection sizing configurable and retries transient failures
+across the tracking pipeline.
+
+- Sizes the connection pool from `database.pool_size` (`DATABASE_POOL_SIZE`,
+  default 20) instead of the Bilibili API concurrency limit, so proxy setups no
+  longer open hundreds of connections. The pool is per process and shared by
+  every tracked account.
+- Retries transient PostgreSQL failures, such as dropped connections and
+  failovers, and retries the whole video-processing pipeline for them. Attempts
+  come from `application.api_retry_times`.
+- Processes each dynamic page in bounded batches, logs the actual video identity
+  for failures, and retries failed work items, including related-video
+  expansion, before the run ends.
+- Checks processed videos once per page with a single batched query and falls
+  back to per-video checks if that query fails.
+- Runs the unit test suite in CI.
+
 ## 5.7.1
 
 Recovers forwarded videos when the feed omits the original video ID by querying
