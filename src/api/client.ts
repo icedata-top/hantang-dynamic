@@ -48,6 +48,9 @@ enum ApiErrorResponseCode {
   IpBanned = 416, // IP has been banned
 }
 
+/** Guard against requests that never receive a response (axios defaults to none). */
+const REQUEST_TIMEOUT_MS = 30_000;
+
 const endpointErrorAlerts = new EndpointErrorAlerts(notifyWarning, () => {
   logger.warn("Failed to deliver API endpoint error-rate notification");
 });
@@ -237,7 +240,9 @@ function createClient(
   };
 
   // If cookie jar is available, use axios-cookiejar-support
-  const axiosInstance = jar ? wrapper(axios.create()) : axios.create();
+  const axiosInstance = jar
+    ? wrapper(axios.create({ timeout: REQUEST_TIMEOUT_MS }))
+    : axios.create({ timeout: REQUEST_TIMEOUT_MS });
   const client = axiosInstance;
 
   client.defaults.baseURL = baseURL;

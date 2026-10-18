@@ -39,6 +39,7 @@ export class DynamicTracker {
   private retrospectiveTimer: ReturnType<typeof setInterval> | null = null;
   private followingStartupTimer: ReturnType<typeof setTimeout> | null = null;
   private followingTimer: ReturnType<typeof setInterval> | null = null;
+  private pageWatchdog: ReturnType<typeof setInterval> | null = null;
 
   constructor(account: AccountContext) {
     this.account = account;
@@ -127,6 +128,22 @@ export class DynamicTracker {
     }
   }
 
+  private startPageWatchdog(page: number, cards: number) {
+    this.stopPageWatchdog();
+    const startedAt = Date.now();
+    this.pageWatchdog = setInterval(() => {
+      logger.warn(
+        `[uid=${this.account.uid}] Page ${page} still processing after ` +
+          `${Math.round((Date.now() - startedAt) / 1000)}s (${cards} cards)`,
+      );
+    }, 60_000);
+  }
+
+  private stopPageWatchdog() {
+    if (this.pageWatchdog) clearInterval(this.pageWatchdog);
+    this.pageWatchdog = null;
+  }
+
   private async checkDynamics() {
     const stateManager = this.account.stateManager;
     const minTimestamp =
@@ -134,6 +151,7 @@ export class DynamicTracker {
 
     const minDynamicId = stateManager.lastFeedDynamicId;
     let maxDynamicId = minDynamicId;
+    let pageNumber = 0;
     logger.info(
       `[uid=${this.account.uid}] Checking dynamics after ${minDynamicId}`,
     );
@@ -144,6 +162,7 @@ export class DynamicTracker {
     });
     for await (const page of stream) {
       const { cards } = page;
+      this.startPageWatchdog(++pageNumber, cards.length);
       logger.info(
         `[uid=${this.account.uid}] Got new dynamic page: ${cards.length} cards`,
       );
@@ -171,6 +190,7 @@ export class DynamicTracker {
       if (page.maxDynamicId > maxDynamicId) maxDynamicId = page.maxDynamicId;
     }
     await this.flushRetries();
+    this.stopPageWatchdog();
     // Only a completed traversal establishes a safe frontier.
     if (maxDynamicId > minDynamicId)
       stateManager.updateLastFeedDynamicId(maxDynamicId);
@@ -446,10 +466,12 @@ export class DynamicTracker {
       minDynamicId: 0n,
       minTimestamp,
     });
+    let pageNumber = 0;
     for await (const { cards } of stream) {
       logger.info(
         `[uid=${this.account.uid}] Retrospective page: ${cards.length} cards`,
       );
+      this.startPageWatchdog(++pageNumber, cards.length);
       await Promise.all(
         cards.map((card) => this.detailsService.saveDynamic(card)),
       );
@@ -459,6 +481,7 @@ export class DynamicTracker {
     }
 
     await this.flushRetries();
+    this.stopPageWatchdog();
     logger.info(`[uid=${this.account.uid}] Retrospective scan completed`);
   }
 
