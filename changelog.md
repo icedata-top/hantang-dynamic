@@ -1,5 +1,29 @@
 # Changelog
 
+## 5.9.0
+
+Hardens dynamic feed traversal and notification delivery, refreshes the
+dependency stack, and moves packaged executables to Node 24.
+
+- Logs the 1-based page and cursor while scanning the dynamic feed and includes
+  the failing page in API error notifications.
+- Retries a feed page that returns `4101133` once, then ends the traversal
+  without error so the frontier advances to the newest processed dynamic.
+- Bounds every Bilibili request with a 30-second timeout and warns every 60
+  seconds while a feed page is still processing.
+- Sends Telegram messages longer than the text limit as a full `.txt` attachment,
+  falling back to split messages instead of truncating diagnostics.
+- Upgrades axios, csv-parse, nodemailer, pg, smol-toml, zod, Biome, ncc, pkg, and
+  tsx. TypeScript stays on 6.x because ncc's bundled loader does not support the
+  TypeScript 7 API yet.
+- Replaces the deprecated `prom-client` with its successor
+  `@prometheus-io/client`.
+- Packages executables with Node 24 base binaries. pkg no longer publishes Node
+  20 builds, and the updated dependencies require Node 22 or newer.
+- Normalizes parsed TOML back to plain objects so config handling and
+  deep-equality checks stay stable across the smol-toml upgrade.
+- Adds a read-only SQL report for `video_minute` compression.
+
 ## 5.8.0
 
 Makes PostgreSQL connection sizing configurable and retries transient failures
