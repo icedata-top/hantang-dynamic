@@ -1,6 +1,7 @@
 import type { AxiosInstance } from "axios";
 import { dynamicDetailClient, isAccountAuthError } from "../api/client";
 import { fetchVideoFullDetail } from "../api/video";
+import { config } from "../config";
 import type { VideoIdentity } from "../database";
 import { Database } from "../database";
 import type {
@@ -15,6 +16,7 @@ import { sharedApiRateLimiter } from "../utils/apiRateLimiter";
 import { filterVideo } from "../utils/filter";
 import { logger } from "../utils/logger";
 import type { RateLimiter } from "../utils/rateLimiter";
+import { retryTransient } from "../utils/retry";
 import { toDynamicCard } from "./dynamicCard";
 
 interface VideoProcessingOptions {
@@ -128,21 +130,30 @@ export class DetailsService {
   }> {
     const processingOptions =
       typeof options === "boolean" ? { processRelated: options } : options;
-    let bvid = dynamic.desc.bvid;
     try {
-      if (dynamic.desc.type === 1) {
-        // Forward type: save the forwarder, then process the original video.
-        // Dynamic content is saved inside resolveForward once the bvid is known.
-        await this.storeForwarder(dynamic);
-        bvid = await this.resolveForward(dynamic);
-        if (!bvid) {
-          return { video: null, relatedVideos: [] };
-        }
-      }
+      return await retryTransient(
+        async () => {
+          let bvid = dynamic.desc.bvid;
+          if (dynamic.desc.type === 1) {
+            // Forward type: save the forwarder, then process the original video.
+            // Dynamic content is saved inside resolveForward once the bvid is known.
+            await this.storeForwarder(dynamic);
+            bvid = await this.resolveForward(dynamic);
+            if (!bvid) {
+              return { video: null, relatedVideos: [] };
+            }
+          }
 
-      return await this.processVideoById(bvid, {
-        ...processingOptions,
-      });
+          return await this.processVideoById(bvid, {
+            ...processingOptions,
+            // The retry loop below already covers this attempt.
+            retryOnTransient: false,
+          });
+        },
+        config.application.apiRetryTimes,
+        config.application.apiWaitTime,
+        `dynamic ${dynamic.desc.bvid || dynamic.desc.dynamic_id}`,
+      );
     } catch (error) {
       if (isAccountAuthError(error)) {
         throw error;
@@ -171,6 +182,8 @@ export class DetailsService {
       pidV2?: number;
       cover43?: string;
       enrichRelatedMetadata?: boolean;
+      /** Disable the outer retry loop when the caller already retries. */
+      retryOnTransient?: boolean;
     } = {},
   ): Promise<{
     video: VideoData | null;
@@ -183,76 +196,94 @@ export class DetailsService {
       pidV2,
       cover43,
       skipCacheCheck = false,
+      retryOnTransient = true,
     } = options;
 
     const identity = this.toVideoIdentity(id);
-    try {
-      let bvid: string | undefined;
-      let aid: number | undefined;
+    let bvid: string | undefined;
+    let aid: number | undefined;
 
-      // Determine ID type
-      if (typeof id === "number" || typeof id === "bigint") {
-        aid = Number(id);
-      } else if (id.startsWith("BV")) {
-        bvid = id;
-      } else if (id.toLowerCase().startsWith("av")) {
-        aid = parseInt(id.substring(2), 10);
-      } else if (!Number.isNaN(Number(id))) {
-        aid = Number(id);
-      } else {
-        bvid = id;
-      }
-
-      // 2. Check cache (using BVID or AID) - skip if in repair mode
-      const checkId = bvid || aid;
-      if (!skipCacheCheck && checkId) {
-        const exists = await this.db.hasProcessedVideoById(checkId);
-        if (exists) {
-          logger.debug(`Video ${checkId} already processed, skipping.`);
-          return { video: null, relatedVideos: [] };
-        }
-      }
-
-      // 3. Fetch details (with concurrency limiting)
-      const release = await this.rateLimiter.acquire();
-      let detailData: BiliVideoDetailDataForProcessing;
-      try {
-        detailData = await this.fetchVideoDetails(bvid || aid || 0);
-      } finally {
-        release();
-      }
-
-      const { videoData, relatedVideos } =
-        await this.processVideoDetailResponse(detailData, { storeOwner });
-
-      if (validPidV2(pidV2)) {
-        videoData.pid_v2 = pidV2;
-      }
-      if (typeof cover43 === "string" && cover43.length > 0) {
-        videoData.cover43 = cover43;
-      }
-
-      // Re-check cache using the true BVID from response (useful if we started with AID)
-      if (!bvid && videoData.bvid) {
-        const exists = await this.db.hasProcessedVideo(videoData.bvid);
-        if (exists) {
-          logger.debug(
-            `Video ${videoData.bvid} (from aid ${aid}) already processed, skipping.`,
-          );
-          return { video: null, relatedVideos: [] };
-        }
-      }
-
-      return await this.processResolvedVideoData(videoData, relatedVideos, {
-        enrichRelatedMetadata,
-        processRelated,
-      });
-    } catch (error) {
-      if (isAccountAuthError(error)) {
-        throw error;
-      }
-      return await this.handleVideoProcessingError(identity, error);
+    // Determine ID type
+    if (typeof id === "number" || typeof id === "bigint") {
+      aid = Number(id);
+    } else if (id.startsWith("BV")) {
+      bvid = id;
+    } else if (id.toLowerCase().startsWith("av")) {
+      aid = parseInt(id.substring(2), 10);
+    } else if (!Number.isNaN(Number(id))) {
+      aid = Number(id);
+    } else {
+      bvid = id;
     }
+
+    // 2. Check cache (using BVID or AID) - skip if in repair mode.
+    // Runs once rather than per attempt: a retried pipeline must not mistake the
+    // video it just persisted for one that was processed before this call.
+    const checkId = bvid || aid;
+    if (!skipCacheCheck && checkId) {
+      const exists = await this.db.hasProcessedVideoById(checkId);
+      if (exists) {
+        logger.debug(`Video ${checkId} already processed, skipping.`);
+        return { video: null, relatedVideos: [] };
+      }
+    }
+
+    let attemptNumber = 0;
+    const attempt = async (): Promise<{
+      video: VideoData | null;
+      relatedVideos: RelatedVideoWorkItem[];
+    }> => {
+      attemptNumber++;
+      try {
+        // 3. Fetch details (with concurrency limiting)
+        const release = await this.rateLimiter.acquire();
+        let detailData: BiliVideoDetailDataForProcessing;
+        try {
+          detailData = await this.fetchVideoDetails(bvid || aid || 0);
+        } finally {
+          release();
+        }
+
+        const { videoData, relatedVideos } =
+          await this.processVideoDetailResponse(detailData, { storeOwner });
+
+        if (validPidV2(pidV2)) {
+          videoData.pid_v2 = pidV2;
+        }
+        if (typeof cover43 === "string" && cover43.length > 0) {
+          videoData.cover43 = cover43;
+        }
+
+        // Re-check cache using the true BVID from response (useful if we started with AID)
+        if (attemptNumber === 1 && !bvid && videoData.bvid) {
+          const exists = await this.db.hasProcessedVideo(videoData.bvid);
+          if (exists) {
+            logger.debug(
+              `Video ${videoData.bvid} (from aid ${aid}) already processed, skipping.`,
+            );
+            return { video: null, relatedVideos: [] };
+          }
+        }
+
+        return await this.processResolvedVideoData(videoData, relatedVideos, {
+          enrichRelatedMetadata,
+          processRelated,
+        });
+      } catch (error) {
+        if (isAccountAuthError(error)) {
+          throw error;
+        }
+        return await this.handleVideoProcessingError(identity, error);
+      }
+    };
+
+    if (!retryOnTransient) return attempt();
+    return retryTransient(
+      attempt,
+      config.application.apiRetryTimes,
+      config.application.apiWaitTime,
+      `video ${this.videoIdentityLabel(identity)}`,
+    );
   }
 
   /**
