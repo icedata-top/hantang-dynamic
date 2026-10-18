@@ -127,6 +127,7 @@ export class DetailsService {
   ): Promise<{
     video: VideoData | null;
     relatedVideos: RelatedVideoWorkItem[];
+    failed?: boolean;
   }> {
     const processingOptions =
       typeof options === "boolean" ? { processRelated: options } : options;
@@ -158,11 +159,11 @@ export class DetailsService {
       if (isAccountAuthError(error)) {
         throw error;
       }
-      logger.error(
-        `Error processing dynamic ${dynamic.desc.dynamic_id}:`,
-        error,
-      );
-      return { video: null, relatedVideos: [] };
+      const label =
+        dynamic.desc.bvid ||
+        String(dynamic.desc.rid ?? dynamic.desc.dynamic_id);
+      logger.error(`Error processing video ${label}:`, error);
+      return { video: null, relatedVideos: [], failed: true };
     }
   }
 

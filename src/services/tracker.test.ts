@@ -7,7 +7,8 @@ import axios from "axios";
 import { config } from "../config";
 import type { AccountContext } from "../core/account";
 import { StateManager } from "../core/state";
-import type { BiliDynamicCard } from "../types";
+import type { BiliDynamicCard, VideoData } from "../types";
+import type { RelatedVideoWorkItem } from "./details.service";
 import { DynamicTracker } from "./tracker";
 
 test("only a completed mixed scan persists an account's frontier", async () => {
@@ -87,6 +88,116 @@ test("only a completed mixed scan persists an account's frontier", async () => {
     assert.equal(new StateManager(path).lastFeedDynamicId, 900n);
   } finally {
     config.application.apiWaitTime = originalWait;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+const retryVideo = {
+  aid: 42n,
+  bvid: "BV1retry",
+  user_id: 7n,
+  type_id: 3,
+  title: "retried video",
+  description: "",
+  pic: "",
+  tag: "",
+  pubdate: 1_700_000_000,
+  ctime: 1_700_000_000,
+} as VideoData;
+
+function retryTracker(detailsService: object) {
+  const directory = mkdtempSync(join(tmpdir(), "hantang-retry-"));
+  const tracker = new DynamicTracker({
+    uid: "7",
+    stateManager: new StateManager(join(directory, "state_7.json")),
+  } as AccountContext);
+  Reflect.set(tracker, "detailsService", detailsService);
+  return { tracker, directory };
+}
+
+const retryCandidate = {
+  dynamic: {
+    desc: { type: 8, bvid: "BV1retry", rid: 42 },
+  },
+} as unknown as RelatedVideoWorkItem;
+
+test("failed work items exhaust their attempt budget inside the run", async () => {
+  let attempts = 0;
+  const { tracker, directory } = retryTracker({
+    processVideo: async () => {
+      attempts++;
+      return { video: null, relatedVideos: [], failed: true };
+    },
+  });
+
+  const originalWait = config.application.apiWaitTime;
+  const originalRetries = config.application.apiRetryTimes;
+  config.application.apiWaitTime = 50;
+  config.application.apiRetryTimes = 3;
+
+  try {
+    Reflect.apply(Reflect.get(tracker, "enqueueRetry"), tracker, [
+      retryCandidate,
+      0,
+      false,
+      new Set<string>(),
+    ]);
+    await Reflect.apply(Reflect.get(tracker, "flushRetries"), tracker, []);
+
+    assert.equal(attempts, 3);
+    const pending = Reflect.get(tracker, "pendingRetries") as Map<
+      string,
+      unknown
+    >;
+    assert.equal(pending.size, 0);
+  } finally {
+    config.application.apiWaitTime = originalWait;
+    config.application.apiRetryTimes = originalRetries;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("recovered retries keep the traversal's seen candidates", async () => {
+  const related = {
+    dynamic: {
+      desc: { type: 8, bvid: "BV1related", rid: 43 },
+    },
+  } as unknown as RelatedVideoWorkItem;
+  const { tracker, directory } = retryTracker({
+    processVideo: async () => ({
+      video: retryVideo,
+      relatedVideos: [related],
+      failed: false,
+    }),
+  });
+  const seen = new Set(["bvid:BV1retry"]);
+  const calls: unknown[][] = [];
+  Reflect.set(tracker, "processPage", async (...args: unknown[]) => {
+    calls.push(args);
+    return [];
+  });
+
+  const originalWait = config.application.apiWaitTime;
+  const originalRetries = config.application.apiRetryTimes;
+  config.application.apiWaitTime = 0;
+  config.application.apiRetryTimes = 2;
+
+  try {
+    Reflect.apply(Reflect.get(tracker, "enqueueRetry"), tracker, [
+      retryCandidate,
+      0,
+      true,
+      seen,
+    ]);
+    await Reflect.apply(Reflect.get(tracker, "flushRetries"), tracker, []);
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.[1], 1);
+    assert.equal(calls[0]?.[2], seen);
+    assert.equal(seen.has("bvid:BV1related"), false);
+  } finally {
+    config.application.apiWaitTime = originalWait;
+    config.application.apiRetryTimes = originalRetries;
     rmSync(directory, { recursive: true, force: true });
   }
 });
