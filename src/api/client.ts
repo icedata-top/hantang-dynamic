@@ -201,6 +201,14 @@ type CookieJarAxiosDefaults = AxiosInstance["defaults"] & {
   jar?: CookieJar;
 };
 
+// axios 1.20 ships separate type declarations for its CommonJS and ESM entry
+// points. axios-cookiejar-support is ESM-only, so its `wrapper` signature uses
+// the ESM types while this CommonJS project resolves axios to the CJS types.
+// Both describe the same runtime object; align `wrapper` on our type here.
+const wrapWithCookieJar = wrapper as unknown as (
+  instance: AxiosInstance,
+) => AxiosInstance;
+
 function createClient(
   baseURL: string,
   optionsOrSkip?: boolean | CreateClientOptions,
@@ -241,7 +249,7 @@ function createClient(
 
   // If cookie jar is available, use axios-cookiejar-support
   const axiosInstance = jar
-    ? wrapper(axios.create({ timeout: REQUEST_TIMEOUT_MS }))
+    ? wrapWithCookieJar(axios.create({ timeout: REQUEST_TIMEOUT_MS }))
     : axios.create({ timeout: REQUEST_TIMEOUT_MS });
   const client = axiosInstance;
 
