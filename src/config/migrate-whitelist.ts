@@ -44,8 +44,30 @@ function atPath(data: unknown, path: string): unknown {
   return value;
 }
 
+function normalizeToml(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeToml);
+  if (value === null || typeof value !== "object") return value;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== null && prototype !== Object.prototype) return value;
+
+  const normalized: Toml = {};
+  for (const [key, child] of Object.entries(value)) {
+    // Define properties instead of assigning so a literal "__proto__" key
+    // cannot mutate the prototype of the normalized object.
+    Object.defineProperty(normalized, key, {
+      value: normalizeToml(child),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
+  return normalized;
+}
+
 function parseConfig(source: string): Toml {
-  return parseToml(source);
+  // smol-toml 1.9 returns null-prototype objects; normalize them so callers
+  // keep seeing ordinary objects, including in deep-equality comparisons.
+  return normalizeToml(parseToml(source)) as Toml;
 }
 
 function hasMultilineString(line: string): boolean {
