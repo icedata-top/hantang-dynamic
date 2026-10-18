@@ -454,3 +454,73 @@ test("processVideo retries a transient failure across the whole pipeline", async
     config.application.apiWaitTime = originalWait;
   }
 });
+
+test("a retried pipeline still reports a video it already persisted", async () => {
+  const database = Database.getInstance();
+  const originalHasProcessedVideoById = database.hasProcessedVideoById;
+  const originalHasProcessedVideo = database.hasProcessedVideo;
+  const originalPersist = database.markVideoProcessedWithCollectionState;
+  const originalMetadataUpdate = database.updateProcessedVideoMetadata;
+  const originalPidV2Names = database.upsertPidV2Names;
+  const originalAddDiscoveredUser = database.addDiscoveredUser;
+  let persistAttempts = 0;
+
+  // The write commits, then the connection dies before the reply arrives.
+  database.hasProcessedVideoById = async () => persistAttempts > 0;
+  database.hasProcessedVideo = async () => false;
+  database.markVideoProcessedWithCollectionState = async () => {
+    persistAttempts++;
+    if (persistAttempts === 1) {
+      throw new Error("connection terminated unexpectedly");
+    }
+  };
+  database.updateProcessedVideoMetadata = async () => 0;
+  database.upsertPidV2Names = async () => 0;
+  database.addDiscoveredUser = async () => undefined;
+
+  const detailData = {
+    View: {
+      aid: video.aid,
+      bvid: video.bvid,
+      owner: { mid: video.user_id },
+      tid: video.type_id,
+      tid_v2: video.tid_v2,
+      title: video.title,
+      desc: video.description,
+      dynamic: "",
+      pic: video.pic,
+      pubdate: video.pubdate,
+      ctime: video.ctime,
+      copyright: 1,
+      duration: 1,
+      videos: 1,
+      state: 0,
+      cid: 1,
+    },
+    Card: { card: { mid: video.user_id, name: "owner", face: "", fans: 0 } },
+    Related: [],
+  } as unknown as BiliVideoDetailDataForProcessing;
+
+  const originalWait = config.application.apiWaitTime;
+  config.application.apiWaitTime = 0;
+
+  try {
+    const service = new DetailsService();
+    Reflect.set(service, "fetchVideoDetails", async () => detailData);
+
+    const result = await service.processVideoById(video.bvid, {
+      processRelated: false,
+    });
+
+    assert.equal(persistAttempts, 2);
+    assert.equal(result.video?.bvid, video.bvid);
+  } finally {
+    config.application.apiWaitTime = originalWait;
+    database.hasProcessedVideoById = originalHasProcessedVideoById;
+    database.hasProcessedVideo = originalHasProcessedVideo;
+    database.markVideoProcessedWithCollectionState = originalPersist;
+    database.updateProcessedVideoMetadata = originalMetadataUpdate;
+    database.upsertPidV2Names = originalPidV2Names;
+    database.addDiscoveredUser = originalAddDiscoveredUser;
+  }
+});

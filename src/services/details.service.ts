@@ -200,37 +200,41 @@ export class DetailsService {
     } = options;
 
     const identity = this.toVideoIdentity(id);
+    let bvid: string | undefined;
+    let aid: number | undefined;
+
+    // Determine ID type
+    if (typeof id === "number" || typeof id === "bigint") {
+      aid = Number(id);
+    } else if (id.startsWith("BV")) {
+      bvid = id;
+    } else if (id.toLowerCase().startsWith("av")) {
+      aid = parseInt(id.substring(2), 10);
+    } else if (!Number.isNaN(Number(id))) {
+      aid = Number(id);
+    } else {
+      bvid = id;
+    }
+
+    // 2. Check cache (using BVID or AID) - skip if in repair mode.
+    // Runs once rather than per attempt: a retried pipeline must not mistake the
+    // video it just persisted for one that was processed before this call.
+    const checkId = bvid || aid;
+    if (!skipCacheCheck && checkId) {
+      const exists = await this.db.hasProcessedVideoById(checkId);
+      if (exists) {
+        logger.debug(`Video ${checkId} already processed, skipping.`);
+        return { video: null, relatedVideos: [] };
+      }
+    }
+
+    let attemptNumber = 0;
     const attempt = async (): Promise<{
       video: VideoData | null;
       relatedVideos: RelatedVideoWorkItem[];
     }> => {
+      attemptNumber++;
       try {
-        let bvid: string | undefined;
-        let aid: number | undefined;
-
-        // Determine ID type
-        if (typeof id === "number" || typeof id === "bigint") {
-          aid = Number(id);
-        } else if (id.startsWith("BV")) {
-          bvid = id;
-        } else if (id.toLowerCase().startsWith("av")) {
-          aid = parseInt(id.substring(2), 10);
-        } else if (!Number.isNaN(Number(id))) {
-          aid = Number(id);
-        } else {
-          bvid = id;
-        }
-
-        // 2. Check cache (using BVID or AID) - skip if in repair mode
-        const checkId = bvid || aid;
-        if (!skipCacheCheck && checkId) {
-          const exists = await this.db.hasProcessedVideoById(checkId);
-          if (exists) {
-            logger.debug(`Video ${checkId} already processed, skipping.`);
-            return { video: null, relatedVideos: [] };
-          }
-        }
-
         // 3. Fetch details (with concurrency limiting)
         const release = await this.rateLimiter.acquire();
         let detailData: BiliVideoDetailDataForProcessing;
@@ -251,7 +255,7 @@ export class DetailsService {
         }
 
         // Re-check cache using the true BVID from response (useful if we started with AID)
-        if (!bvid && videoData.bvid) {
+        if (attemptNumber === 1 && !bvid && videoData.bvid) {
           const exists = await this.db.hasProcessedVideo(videoData.bvid);
           if (exists) {
             logger.debug(
