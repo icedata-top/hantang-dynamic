@@ -567,6 +567,13 @@ export const dynamicClient = createClient(
   "https://api.bilibili.com/x/polymer/web-dynamic/v1",
 );
 
+export const dynamicDetailClient = createClient(
+  config.bilibili.dynamicProxyUrl
+    ? `${config.bilibili.dynamicProxyUrl}/x/polymer/web-dynamic/v1`
+    : "https://api.bilibili.com/x/polymer/web-dynamic/v1",
+  !!config.bilibili.dynamicProxyUrl,
+);
+
 export const webInterfaceClient = createClient(
   config.bilibili.apiProxyUrl
     ? `${config.bilibili.apiProxyUrl}/x/web-interface`
