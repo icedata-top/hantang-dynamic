@@ -73,6 +73,39 @@ export function isAccountAuthError(error: unknown): error is AccountAuthError {
   return error instanceof AccountAuthError;
 }
 
+/**
+ * Bilibili answers with `MISS_*_DATA` when a dynamic references content that no
+ * longer exists, e.g. the HTTP 500 `MISS_MEDIALIST_DATA: dyn_id = …, rid = …`
+ * for a collection that was deleted or made private. Retrying cannot help.
+ */
+const MISSING_RESOURCE_MESSAGE = /^MISS_[A-Z0-9_]*DATA\b/;
+
+function payloadMessage(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const message = (payload as { message?: unknown }).message;
+  return typeof message === "string" ? message : undefined;
+}
+
+/**
+ * Extract the missing-content reason from an API error or response payload.
+ *
+ * Understands both the plain rejection objects produced by this client
+ * (`{ message, status, code, data }`) and raw axios errors.
+ */
+export function missingResourceReason(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const candidate = error as {
+    message?: unknown;
+    data?: unknown;
+    response?: { data?: unknown };
+  };
+  for (const payload of [candidate.data, candidate.response?.data, candidate]) {
+    const message = payloadMessage(payload);
+    if (message && MISSING_RESOURCE_MESSAGE.test(message)) return message;
+  }
+  return undefined;
+}
+
 async function notifyAccountAuthFailureOnce(
   accountLabel: string,
   code: number,

@@ -166,3 +166,52 @@ test("opus images and article content retain the existing storage fields", async
     db.saveDynamic = originalSave;
   }
 });
+
+test("forward pointing at deleted content is not re-requested", async (t) => {
+  t.mock.method(StateManager.prototype, "isTicketValid", () => true);
+  t.mock.method(StateManager.prototype, "isWbiKeysValid", () => true);
+  t.mock.getter(StateManager.prototype, "imgKey", () => "0".repeat(32));
+  t.mock.getter(StateManager.prototype, "subKey", () => "1".repeat(32));
+  const forward = item("90071992547409941", "DYNAMIC_TYPE_FORWARD");
+  forward.orig = item("90071992547409942", "DYNAMIC_TYPE_AV");
+  forward.modules.module_dynamic = { desc: { text: "forward caption" } };
+  const card = toDynamicCard(forward);
+  assert.ok(card);
+
+  const originalAdapter = dynamicDetailClient.defaults.adapter;
+  let requests = 0;
+  dynamicDetailClient.defaults.adapter = async (request) => {
+    requests++;
+    // Same shape as axios rejecting the HTTP 500 MISS_MEDIALIST_DATA answer.
+    throw {
+      message: "Request failed with status code 500",
+      config: request,
+      response: {
+        status: 500,
+        data: {
+          code: 500,
+          message:
+            "MISS_MEDIALIST_DATA: dyn_id = 90071992547409942, rid = 3931291464",
+        },
+      },
+    };
+  };
+  const db = Database.getInstance();
+  t.mock.method(db, "getCachedForwardBvid", async () => null);
+  t.mock.method(db, "addDiscoveredUser", async () => {});
+  t.mock.method(db, "saveDynamic", async () => {});
+  const service = new DetailsService();
+  t.mock.method(service, "processVideoById", async () => ({
+    video: null,
+    relatedVideos: [],
+  }));
+  try {
+    const first = await service.processVideo(card);
+    const second = await service.processVideo(card);
+    assert.deepEqual(first, { video: null, relatedVideos: [] });
+    assert.deepEqual(second, { video: null, relatedVideos: [] });
+    assert.equal(requests, 1);
+  } finally {
+    dynamicDetailClient.defaults.adapter = originalAdapter;
+  }
+});

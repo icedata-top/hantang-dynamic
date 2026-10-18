@@ -9,6 +9,7 @@ import { StateManager } from "../core/state";
 import {
   createAccountToViewClient,
   isAccountAuthError,
+  missingResourceReason,
   type RequestConfig,
 } from "./client";
 
@@ -106,4 +107,38 @@ test("raw API mode preserves account authentication and risk-control errors", as
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("missing dynamic content is recognized across error shapes", () => {
+  const message =
+    "MISS_MEDIALIST_DATA: dyn_id = 1172192284147449913, rid = 3931291464";
+
+  assert.equal(
+    missingResourceReason({
+      message: "Request failed with status code 500",
+      status: 500,
+      code: 500,
+      data: { code: 500, message },
+    }),
+    message,
+  );
+  assert.equal(
+    missingResourceReason({
+      message: "Request failed with status code 500",
+      response: { status: 500, data: { code: 500, message } },
+    }),
+    message,
+  );
+  assert.equal(missingResourceReason({ message }), message);
+
+  // Ordinary failures and other business codes stay retryable/observable.
+  assert.equal(
+    missingResourceReason({ message: "Request failed with status code 503" }),
+    undefined,
+  );
+  assert.equal(
+    missingResourceReason({ message: "MISSING_SOMETHING" }),
+    undefined,
+  );
+  assert.equal(missingResourceReason(null), undefined);
 });

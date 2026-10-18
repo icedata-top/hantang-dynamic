@@ -1,5 +1,9 @@
 import type { AxiosInstance } from "axios";
-import { dynamicDetailClient, isAccountAuthError } from "../api/client";
+import {
+  dynamicDetailClient,
+  isAccountAuthError,
+  missingResourceReason,
+} from "../api/client";
 import { fetchVideoFullDetail } from "../api/video";
 import { config } from "../config";
 import type { VideoIdentity } from "../database";
@@ -34,6 +38,13 @@ export interface RelatedVideoWorkItem {
 }
 
 const MAX_POSTGRES_INTEGER = 2_147_483_647;
+
+/**
+ * Forwards whose original content bilibili reports as deleted (HTTP 500 with
+ * `MISS_*_DATA`). The detail call can never succeed, so remember the IDs for
+ * the lifetime of the process and skip them on later polls.
+ */
+const unresolvableForwards = new Set<string>();
 
 function validPidV2(value: unknown): value is number {
   return (
@@ -322,16 +333,44 @@ export class DetailsService {
 
       const originalId =
         dynamic.desc.orig_dy_id_str || dynamic.desc.origin?.dynamic_id_str;
-      const response = await dynamicDetailClient.get<{
+      const requestId =
+        originalId && originalId !== "0" ? originalId : dynamicId;
+
+      // Content that bilibili reports as gone never comes back; skip the
+      // detail call instead of failing it on every poll.
+      if (unresolvableForwards.has(dynamicId)) return "";
+
+      let payload: {
         code: number;
+        message?: string;
         data?: { item?: BiliDynamicItem };
-      }>("/detail", {
-        params: {
-          id: originalId && originalId !== "0" ? originalId : dynamicId,
-        },
-      });
-      const item =
-        response.data.code === 0 ? response.data.data?.item : undefined;
+      };
+      try {
+        const response = await dynamicDetailClient.get<typeof payload>(
+          "/detail",
+          { params: { id: requestId } },
+        );
+        payload = response.data;
+      } catch (error) {
+        const missing = missingResourceReason(error);
+        if (!missing) throw error;
+        this.markForwardUnresolvable(dynamic, missing);
+        return "";
+      }
+
+      if (payload.code !== 0) {
+        const missing = missingResourceReason({ message: payload.message });
+        if (missing) {
+          this.markForwardUnresolvable(dynamic, missing);
+          return "";
+        }
+        logger.warn(
+          `Dynamic ${requestId} detail returned code ${payload.code}; leaving forward unresolved.`,
+        );
+        return "";
+      }
+
+      const item = payload.data?.item;
       bvid = item ? toDynamicCard(item)?.desc.bvid : undefined;
     }
     if (bvid) {
@@ -340,6 +379,18 @@ export class DetailsService {
     }
 
     return "";
+  }
+
+  /**
+   * Remember that a forward's original content is gone for good, so the detail
+   * request is not repeated on every poll.
+   */
+  private markForwardUnresolvable(dynamic: BiliDynamicCard, reason: string) {
+    const dynamicId = dynamic.desc.dynamic_id_str;
+    unresolvableForwards.add(dynamicId);
+    logger.warn(
+      `Dynamic ${dynamicId} references missing content (${reason}); skipping further lookups.`,
+    );
   }
 
   async processVideoDetailResponse(
