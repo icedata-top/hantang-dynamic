@@ -6,6 +6,7 @@ node_modules/*
 *.state
 state.json
 dist/*
+.build/*
 .vscode/*
 data/*
 
