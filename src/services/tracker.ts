@@ -26,6 +26,7 @@ interface PendingRetry {
   key: string;
   attempts: number;
   nextAt: number;
+  seenRelatedCandidates: Set<string>;
 }
 
 export class DynamicTracker {
@@ -277,7 +278,12 @@ export class DynamicTracker {
         if (!result.value) continue;
         const { workItem, video, relatedVideos, failed } = result.value;
         if (failed) {
-          this.enqueueRetry(workItem, depth, expandRelated);
+          this.enqueueRetry(
+            workItem,
+            depth,
+            expandRelated,
+            seenRelatedCandidates,
+          );
           continue;
         }
         if (video) {
@@ -314,6 +320,7 @@ export class DynamicTracker {
     workItem: RelatedVideoWorkItem,
     depth: number,
     processRelated: boolean,
+    seenRelatedCandidates: Set<string>,
   ): void {
     const key = this.getRelatedCandidateKey(workItem);
     if (!key || this.pendingRetries.has(key)) return;
@@ -324,13 +331,14 @@ export class DynamicTracker {
       key,
       attempts: 0,
       nextAt: Date.now() + config.application.apiWaitTime,
+      seenRelatedCandidates,
     });
     logger.warn(`[uid=${this.account.uid}] Queued ${key} for retry`);
   }
 
-  private async drainRetries(): Promise<void> {
+  private async drainRetries(force = false): Promise<void> {
     const due = [...this.pendingRetries.values()].filter(
-      (item) => item.nextAt <= Date.now(),
+      (item) => force || item.nextAt <= Date.now(),
     );
     const recovered: VideoData[] = [];
     for (const item of due) {
@@ -363,7 +371,7 @@ export class DynamicTracker {
           ...(await this.processPage(
             relatedVideos,
             item.depth + 1,
-            new Set([item.key]),
+            item.seenRelatedCandidates,
           )),
         );
       }
@@ -380,15 +388,11 @@ export class DynamicTracker {
   }
 
   private async flushRetries(): Promise<void> {
-    for (
-      let pass = 0;
-      pass < config.application.apiRetryTimes && this.pendingRetries.size > 0;
-      pass++
-    ) {
-      await this.drainRetries();
-      if (this.pendingRetries.size > 0) {
-        await sleep(config.application.apiWaitTime);
-      }
+    // drainRetries() only picks due items, so sleep first and force the drain.
+    // The attempt budget lives in drainRetries(), not in a pass count here.
+    while (this.pendingRetries.size > 0) {
+      await sleep(config.application.apiWaitTime);
+      await this.drainRetries(true);
     }
   }
 
