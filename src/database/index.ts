@@ -119,6 +119,7 @@ import {
   getBvidList,
   getProcessedVideoAids,
   getProcessedVideoAidsMissingPidV2,
+  getProcessedVideoIds,
   getProcessedVideoMetadataCandidates,
   getProcessedVideoMetadataUpperAid,
   getProcessedVideos,
@@ -296,6 +297,12 @@ export class Database {
       config.application.apiWaitTime,
       `hasProcessedVideoById ${id}`,
     );
+  }
+
+  public async getProcessedVideoIds(
+    ids: ReadonlyArray<string | number | bigint>,
+  ): Promise<Set<string>> {
+    return getProcessedVideoIds(this.ensurePool(), ids);
   }
 
   /**

@@ -122,6 +122,32 @@ export async function hasProcessedVideoById(
   return result.rows[0]?.exists === true;
 }
 
+/** Resolve which of the given BVID/AID values are already processed. */
+export async function getProcessedVideoIds(
+  pool: Pool,
+  ids: ReadonlyArray<string | number | bigint>,
+): Promise<Set<string>> {
+  const bvids: string[] = [];
+  const aids: string[] = [];
+  for (const id of ids) {
+    if (typeof id === "string" && id.startsWith("BV")) bvids.push(id);
+    else aids.push(BigInt(id).toString());
+  }
+  if (bvids.length === 0 && aids.length === 0) return new Set();
+
+  const { rows } = await pool.query<{ aid: string; bvid: string | null }>(
+    `SELECT aid, bvid FROM processed_videos
+     WHERE bvid = ANY($1::varchar[]) OR aid = ANY($2::bigint[])`,
+    [bvids, aids],
+  );
+  return new Set(
+    rows.flatMap((row) => [
+      `aid:${row.aid}`,
+      ...(row.bvid ? [`bvid:${row.bvid}`] : []),
+    ]),
+  );
+}
+
 /**
  * Get all processed video IDs of a specific type (aid or bvid)
  */
