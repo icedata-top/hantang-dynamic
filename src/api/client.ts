@@ -35,6 +35,12 @@ export interface RequestConfig extends InternalAxiosRequestConfig {
     proxyDetailLoginFallback?: boolean;
     /** 1-based page number when paging through the dynamic feed. */
     feedPage?: number;
+    /**
+     * Business codes the caller already handles as normal control flow.
+     * They are rejected like any other business error but logged at debug
+     * level instead of dumping the request config and response as an error.
+     */
+    expectedApiCodes?: readonly number[];
   };
 }
 
@@ -105,6 +111,27 @@ export function missingResourceReason(error: unknown): string | undefined {
     if (message && MISSING_RESOURCE_MESSAGE.test(message)) return message;
   }
   return undefined;
+}
+
+/**
+ * A request that bilibili answered with a `MISS_*_DATA` business code.
+ *
+ * The payload is kept so callers can tell which resource disappeared, but the
+ * condition is expected (deleted/private content) and must not be logged as an
+ * unexpected API failure or notified to operators.
+ */
+export class MissingResourceError extends Error {
+  readonly code: number;
+  readonly data: unknown;
+
+  constructor(code: number, data: unknown) {
+    super(
+      `API Error: code ${code} (${payloadMessage(data) ?? "missing data"})`,
+    );
+    this.name = "MissingResourceError";
+    this.code = code;
+    this.data = data;
+  }
 }
 
 async function notifyAccountAuthFailureOnce(
@@ -401,6 +428,26 @@ function createClient(
         response.data.code !== 62002 &&
         response.data.code !== 62004
       ) {
+        // Deleted/private content referenced by a dynamic is a normal answer,
+        // not a failed request. Report it with the payload intact so callers
+        // can skip it, but stay quiet in logs and notifications.
+        const missing = missingResourceReason(response.data);
+        if (missing) {
+          recordApiRequest(
+            baseURL,
+            response.config.url,
+            "error",
+            timeUsed,
+            `code=${response.data.code} ${missing}`,
+          );
+          logger.debug(
+            `${baseURL}${response.config.url} reports missing content (${missing}); not retrying.`,
+          );
+          return Promise.reject(
+            new MissingResourceError(response.data.code, response.data),
+          );
+        }
+
         const feedPage = requestConfig.metadata?.feedPage;
         recordApiRequest(
           baseURL,
@@ -411,17 +458,44 @@ function createClient(
             (feedPage === undefined ? "" : ` page=${feedPage}`) +
             (response.data.message ? ` ${response.data.message}` : ""),
         );
-        const message =
-          `API Error:\n` +
-          `Code: ${response.data.code}\n` +
-          (feedPage === undefined ? "" : `Feed page: ${feedPage}\n`) +
-          `baseURL: ${baseURL + response.config.url}\n` +
-          `Config: ${JSON.stringify(redactSensitive(response.config))}\n` +
-          `Response: ${JSON.stringify(
-            redactSensitive(response.data || "No message"),
-          )}`;
-
-        logger.error(message);
+        const expectedCode =
+          requestConfig.metadata?.expectedApiCodes?.includes(
+            response.data.code,
+          ) ?? false;
+        // Auth failures get their own account-scoped message below; never dump
+        // the cookie jar/agents that axios keeps on the request config.
+        const accountAuthCode =
+          response.data.code === ApiErrorCode.NotLoggedIn ||
+          response.data.code === ApiErrorCode.CookieExpired ||
+          response.data.code === ApiErrorCode.RiskControlFailed;
+        let message = "";
+        if (expectedCode) {
+          // The caller handles this code as normal control flow. Skip the
+          // diagnostic dump and keep a one-line trace.
+          logger.debug(
+            `API code ${response.data.code} from ${baseURL}${response.config.url} is handled by the caller` +
+              (feedPage === undefined ? "" : ` (feed page ${feedPage})`) +
+              (response.data.message ? `: ${response.data.message}` : ""),
+          );
+        } else if (!accountAuthCode) {
+          const requestParams = response.config.params
+            ? ` params=${JSON.stringify(
+                redactSensitive(response.config.params),
+              )}`
+            : "";
+          const requestData = response.config.data
+            ? ` data=${JSON.stringify(redactSensitive(response.config.data))}`
+            : "";
+          message =
+            `API Error:\n` +
+            `Code: ${response.data.code}\n` +
+            (feedPage === undefined ? "" : `Feed page: ${feedPage}\n`) +
+            `Request: ${(response.config.method ?? "get").toUpperCase()} ${baseURL}${response.config.url}${requestParams}${requestData}\n` +
+            `Response: ${JSON.stringify(
+              redactSensitive(response.data || "No message"),
+            )}`;
+          logger.error(message);
+        }
 
         if (response.data.code === ApiErrorCode.NotLoggedIn) {
           if (skipCookie) {
@@ -502,7 +576,10 @@ function createClient(
         }
 
         // We must await notify before rejecting, otherwise the message might not be sent
-        if (!(response.config as RequestConfig).metadata?.silent) {
+        if (
+          !expectedCode &&
+          !(response.config as RequestConfig).metadata?.silent
+        ) {
           await notifyWarning(message);
         }
 

@@ -69,12 +69,64 @@ test("logical API errors are logged with redaction before raw rejection", async 
 
   const diagnostic = errors.join("\n");
   assert.match(diagnostic, /Code: 90001/);
+  assert.match(diagnostic, /Request: POST/);
   assert.match(diagnostic, /Response:/);
+  // Never dump the axios config: it carries the cookie jar, agents, and TLS
+  // session cache, which made a single error tens of kilobytes long.
+  assert.doesNotMatch(
+    diagnostic,
+    /Config:|"jar"|withCredentials|httpsAgent|httpAgent/,
+  );
   assert.doesNotMatch(
     diagnostic,
     /request-secret|response-secret|response-token/,
   );
   assert.match(diagnostic, /\[redacted\]/);
+});
+
+test("caller-handled business codes are not logged as errors", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "hantang-api-expected-"));
+  const state = new StateManager(join(directory, "state.json"));
+  state.updateTicket("test-ticket", Math.floor(Date.now() / 1000) + 7200);
+  const client = createAccountToViewClient(
+    new CookieJar(),
+    join(directory, "cookies.txt"),
+    state,
+    "test-account",
+  );
+  const adapter: AxiosAdapter = async (request) => ({
+    config: request,
+    data: {
+      code: 4101133,
+      message: "请求数据发生错误，请刷新或稍后重试",
+    },
+    headers: {},
+    status: 200,
+    statusText: "OK",
+  });
+
+  const originalConsoleError = console.error;
+  const errors: string[] = [];
+  console.error = (...args: unknown[]) => errors.push(args.join(" "));
+  const requestConfig = {
+    adapter,
+    rawApiErrors: true,
+    metadata: { expectedApiCodes: [4101133] },
+  };
+  try {
+    await assert.rejects(
+      client.get("/feed/all", requestConfig),
+      (error: unknown) => {
+        assert.equal((error as { code?: unknown }).code, 4101133);
+        return true;
+      },
+    );
+  } finally {
+    console.error = originalConsoleError;
+    rmSync(directory, { recursive: true, force: true });
+  }
+
+  assert.equal(errors.join("\n"), "");
 });
 
 test("raw API mode preserves account authentication and risk-control errors", async () => {

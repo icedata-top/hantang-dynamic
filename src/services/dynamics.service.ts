@@ -1,5 +1,5 @@
 import { isAccountAuthError } from "../api/client";
-import { getDynamicFeed } from "../api/dynamic";
+import { FEED_END_CODE, getDynamicFeed } from "../api/dynamic";
 import { config } from "../config";
 import type { AccountContext } from "../core/account";
 import type { BiliDynamicCard, BiliDynamicFeedResponse } from "../types";
@@ -11,13 +11,6 @@ interface FetchDynamicsStreamOptions {
   minDynamicId: bigint;
   minTimestamp: number;
 }
-
-/**
- * Business code returned when the feed cursor can no longer be served. It
- * shows up at a stable depth near the end of the reachable feed, so it is
- * treated as the end of the traversal instead of a hard failure.
- */
-const FEED_END_CODE = 4101133;
 
 function errorCode(error: unknown): number | undefined {
   if (typeof error !== "object" || error === null || !("code" in error)) {

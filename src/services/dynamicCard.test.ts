@@ -215,3 +215,52 @@ test("forward pointing at deleted content is not re-requested", async (t) => {
     dynamicDetailClient.defaults.adapter = originalAdapter;
   }
 });
+
+test("deleted forward answered as a business code is not re-requested", async (t) => {
+  t.mock.method(StateManager.prototype, "isTicketValid", () => true);
+  t.mock.method(StateManager.prototype, "isWbiKeysValid", () => true);
+  t.mock.getter(StateManager.prototype, "imgKey", () => "0".repeat(32));
+  t.mock.getter(StateManager.prototype, "subKey", () => "1".repeat(32));
+  const forward = item("90071992547409951", "DYNAMIC_TYPE_FORWARD");
+  forward.orig = item("90071992547409952", "DYNAMIC_TYPE_AV");
+  forward.modules.module_dynamic = { desc: { text: "forward caption" } };
+  const card = toDynamicCard(forward);
+  assert.ok(card);
+
+  const originalAdapter = dynamicDetailClient.defaults.adapter;
+  let requests = 0;
+  dynamicDetailClient.defaults.adapter = async (request) => {
+    requests++;
+    // The shape bilibili actually returns: HTTP 200 with a business code 500.
+    return {
+      config: request,
+      data: {
+        code: 500,
+        message:
+          "MISS_MEDIALIST_DATA: dyn_id = 90071992547409952, rid = 3931291464",
+      },
+      headers: {},
+      status: 200,
+      statusText: "OK",
+    };
+  };
+  const db = Database.getInstance();
+  t.mock.method(db, "getCachedForwardBvid", async () => null);
+  t.mock.method(db, "addDiscoveredUser", async () => {});
+  t.mock.method(db, "saveDynamic", async () => {});
+  const service = new DetailsService();
+  t.mock.method(service, "processVideoById", async () => ({
+    video: null,
+    relatedVideos: [],
+  }));
+  try {
+    const first = await service.processVideo(card);
+    const second = await service.processVideo(card);
+    // Not `failed`, so the tracker does not queue the aid for another retry.
+    assert.deepEqual(first, { video: null, relatedVideos: [] });
+    assert.deepEqual(second, { video: null, relatedVideos: [] });
+    assert.equal(requests, 1);
+  } finally {
+    dynamicDetailClient.defaults.adapter = originalAdapter;
+  }
+});
