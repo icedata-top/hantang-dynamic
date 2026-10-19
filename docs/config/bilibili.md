@@ -72,7 +72,20 @@ written to the sidecar. If the sidecar is absent or the refresh fails, the
 account keeps using its current cookies.
 
 `ac_time_value` is not part of the Netscape cookie file; copy it from the
-devtools Local Storage entry for `https://www.bilibili.com`.
+devtools Local Storage entry for `https://www.bilibili.com`. It must come from
+the same login session as the exported cookies.
+
+The refresh is Bilibili's four-step passport flow:
+
+1. `GET /x/passport-login/web/cookie/info` for `refresh` and the server timestamp
+2. `GET https://www.bilibili.com/correspond/1/<RSA-OAEP correspondPath>` for `refresh_csrf`
+3. `POST /x/passport-login/web/cookie/refresh` for new cookies and a new refresh token
+4. `POST /x/passport-login/web/confirm/refresh` to invalidate the old token
+
+The confirmation invalidates the old cookie/refresh-token pair. Do not keep using
+the original browser session for the same account after the app rotates it, and
+do not export the cookie file from a browser that is still actively visiting
+Bilibili: either side rotating the pair makes the other copy stale.
 
 ## Watch-later minute sampling
 
