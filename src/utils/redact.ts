@@ -2,13 +2,19 @@ const SENSITIVE_KEY_RE =
   /cookie|sessdata|csrf|bili_jct|access_key|authorization|token|password|secret|database_url|url/i;
 
 const CONNECTION_RE = /\b(postgres(?:ql)?:\/\/)([^:\s/@]+):([^@\s]+)@/gi;
-const COOKIE_PAIR_RE =
-  /\b(SESSDATA|bili_jct|csrf|access_key|Authorization|Cookie)=?([^;\s]+)/gi;
+// Only redact `name=value` / `name: value` pairs. Requiring the separator keeps
+// filenames such as `.cookies_507256226.txt` readable in diagnostics.
+const SECRET_PAIR_RE =
+  /\b(SESSDATA|bili_jct|csrf|access_key|Cookie)\s*=\s*([^;\s]+)/gi;
+const AUTHORIZATION_RE = /\b(Authorization)\s*[:=]\s*([^\n,;]+)/gi;
+const COOKIE_HEADER_RE = /\b(Cookie)\s*:\s*([^\n]+)/gi;
 
 function redactString(value: string): string {
   return value
     .replace(CONNECTION_RE, "$1[redacted]:[redacted]@")
-    .replace(COOKIE_PAIR_RE, "$1=[redacted]");
+    .replace(COOKIE_HEADER_RE, "$1=[redacted]")
+    .replace(AUTHORIZATION_RE, "$1=[redacted]")
+    .replace(SECRET_PAIR_RE, "$1=[redacted]");
 }
 
 export function redactSensitive(value: unknown, depth = 0): unknown {

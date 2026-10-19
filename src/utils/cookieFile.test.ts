@@ -27,41 +27,65 @@ function withCookieFile(contents: string, run: (path: string) => void): void {
   }
 }
 
-test("parseNetscapeCookieFile rejects a SESSDATA whose column expiry has passed", () => {
+test("parseNetscapeCookieFile rejects a SESSDATA whose token expiry has passed", () => {
   withCookieFile(
-    cookieLine("SESSDATA", "hash%2C9999999999%2Cmd5", NOW - 60),
+    cookieLine("SESSDATA", `hash%2C${NOW - 60}%2Cmd5`, NOW + 3600),
     (path) => {
       assert.throws(() => parseNetscapeCookieFile(path), /expired SESSDATA/);
     },
   );
 });
 
-test("parseNetscapeCookieFile rejects a SESSDATA whose embedded expiry has passed", () => {
+test("parseNetscapeCookieFile rejects an expired token even when the column is a session value", () => {
   withCookieFile(cookieLine("SESSDATA", `hash%2C${NOW - 60}%2Cmd5`), (path) => {
     assert.throws(() => parseNetscapeCookieFile(path), /expired SESSDATA/);
   });
 });
 
-test("parseNetscapeCookieFile accepts a valid SESSDATA", () => {
+test("parseNetscapeCookieFile ignores a stale column when the SESSDATA token is valid", () => {
   withCookieFile(
-    cookieLine("SESSDATA", `hash%2C${NOW + 3600}%2Cmd5`, NOW + 3600),
+    cookieLine("SESSDATA", `hash%2C${NOW + 3600}%2Cmd5`, NOW - 60),
     (path) => {
       assert.equal(parseNetscapeCookieFile(path).length, 1);
     },
   );
 });
 
-test("createCookieJarFromNetscape skips expired cookies and keeps valid ones", () => {
+test("parseNetscapeCookieFile loads a SESSDATA without a parseable token expiry", () => {
+  withCookieFile(cookieLine("SESSDATA", "opaque-token", NOW - 60), (path) => {
+    assert.equal(parseNetscapeCookieFile(path).length, 1);
+  });
+});
+
+test("createCookieJarFromNetscape uses the SESSDATA token expiry over the file column", () => {
+  withCookieFile(
+    cookieLine("SESSDATA", `hash%2C${NOW + 3600}%2Cmd5`, NOW - 60),
+    (path) => {
+      const jar = createCookieJarFromNetscape(parseNetscapeCookieFile(path));
+      assert.match(getAllCookiesAsString(jar), /SESSDATA=hash/);
+
+      const sessdata = jar
+        .serializeSync()
+        ?.cookies.find((cookie) => cookie.key === "SESSDATA");
+      assert.equal(
+        new Date(sessdata?.expires as string).getTime(),
+        (NOW + 3600) * 1000,
+      );
+    },
+  );
+});
+
+test("createCookieJarFromNetscape skips expired non-auth cookies but keeps auth cookies", () => {
   withCookieFile(
     cookieLine("SESSDATA", `hash%2C${NOW + 3600}%2Cmd5`, NOW + 3600) +
-      cookieLine("buvid3", "valid", NOW + 3600) +
+      cookieLine("buvid3", "stale", NOW - 60) +
       cookieLine("b_lsid", "stale", NOW - 60),
     (path) => {
       const jar = createCookieJarFromNetscape(parseNetscapeCookieFile(path));
       const header = getAllCookiesAsString(jar);
       assert.match(header, /SESSDATA=hash/);
-      assert.match(header, /buvid3=valid/);
-      assert.doesNotMatch(header, /b_lsid=/);
+      assert.match(header, /b_lsid=stale/);
+      assert.doesNotMatch(header, /buvid3=/);
     },
   );
 });

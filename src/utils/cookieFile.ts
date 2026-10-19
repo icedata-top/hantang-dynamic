@@ -66,6 +66,28 @@ function formatExpiry(expiryMs: number): string {
 }
 
 /**
+ * Resolve the expiry that actually authenticates the request.
+ *
+ * Bilibili embeds the real SESSDATA lifetime in the token value. The Netscape
+ * `expires` column mirrors the browser cookie attribute, which can be a short
+ * rolling expiry (or a synthetic value written by an export tool) even while
+ * the token itself is still valid. The server only sees the token, so the
+ * token wins whenever it can be parsed.
+ */
+function resolveCookieExpiry(cookie: NetscapeCookie): {
+  expiry: number | null;
+  source: "token" | "file";
+} {
+  if (cookie.name === "SESSDATA") {
+    const tokenExpiry = sessdataExpiryMs(cookie.value);
+    if (tokenExpiry !== null) {
+      return { expiry: tokenExpiry, source: "token" };
+    }
+  }
+  return { expiry: cookieExpiryMs(cookie), source: "file" };
+}
+
+/**
  * Read all cookie entries from a Netscape file without validating them.
  * Throws when the file does not exist.
  */
@@ -149,21 +171,35 @@ export function parseNetscapeCookieFile(filePath: string): NetscapeCookie[] {
   }
 
   const now = Date.now();
-  const sessdataExpiries = [
-    cookieExpiryMs(sessdata),
-    sessdataExpiryMs(sessdata.value),
-  ].filter((expiry): expiry is number => expiry !== null);
-  const sessdataExpiry =
-    sessdataExpiries.length > 0
-      ? Math.min(...sessdataExpiries)
-      : Number.POSITIVE_INFINITY;
+  const tokenExpiry = sessdataExpiryMs(sessdata.value);
+  const columnExpiry = cookieExpiryMs(sessdata);
 
-  if (sessdataExpiry <= now) {
+  if (tokenExpiry !== null && tokenExpiry <= now) {
     throw new Error(
-      `Cookie file ${filePath} contains an expired SESSDATA (expired at ${formatExpiry(
-        sessdataExpiry,
-      )}). Log in again and re-export the cookies.`,
+      `Cookie file ${filePath} contains an expired SESSDATA token (expired at ${formatExpiry(
+        tokenExpiry,
+      )}; file expiry column: ${
+        columnExpiry === null ? "session" : formatExpiry(columnExpiry)
+      }). Log in again and re-export the cookies.`,
     );
+  }
+
+  if (columnExpiry !== null && columnExpiry <= now) {
+    if (tokenExpiry !== null) {
+      logger.warn(
+        `Cookie file ${filePath} SESSDATA file expiry column (${formatExpiry(
+          columnExpiry,
+        )}) has passed, but the token is valid until ${formatExpiry(
+          tokenExpiry,
+        )}; ignoring the stale column.`,
+      );
+    } else {
+      logger.warn(
+        `Cookie file ${filePath} SESSDATA has no parseable token expiry and its file expiry column (${formatExpiry(
+          columnExpiry,
+        )}) has passed; sending it as a session cookie anyway.`,
+      );
+    }
   }
 
   const expiredAuthCookies = cookies
@@ -176,11 +212,11 @@ export function parseNetscapeCookieFile(filePath: string): NetscapeCookie[] {
 
   if (expiredAuthCookies.length > 0) {
     logger.warn(
-      `Cookie file ${filePath} contains expired authentication cookie(s): ` +
+      `Cookie file ${filePath} contains authentication cookie(s) whose file expiry has passed: ` +
         expiredAuthCookies
           .map((c) => `${c.name} (expired at ${formatExpiry(c.expiry)})`)
           .join(", ") +
-        ". They will not be sent to Bilibili; re-export the cookies if these are still required.",
+        ". They will be sent as session cookies so Bilibili can validate them.",
     );
   }
 
@@ -202,13 +238,26 @@ export function createCookieJarFromNetscape(
   const jar = new CookieJar();
   const now = Date.now();
   const expired: string[] = [];
+  const staleAuthCookies: string[] = [];
   const rejected: string[] = [];
 
   for (const c of cookies) {
-    const expiry = cookieExpiryMs(c);
+    const resolved = resolveCookieExpiry(c);
+    let expiry = resolved.expiry;
+
     if (expiry !== null && expiry <= now) {
-      expired.push(`${c.name} (expired at ${formatExpiry(expiry)})`);
-      continue;
+      if (AUTH_COOKIE_NAMES.has(c.name)) {
+        // The Netscape column is a browser cookie attribute, not the token
+        // lifetime. Keep sending auth cookies as session cookies and let
+        // Bilibili decide whether the token is still valid.
+        staleAuthCookies.push(
+          `${c.name} (${resolved.source} expiry ${formatExpiry(expiry)})`,
+        );
+        expiry = null;
+      } else {
+        expired.push(`${c.name} (expired at ${formatExpiry(expiry)})`);
+        continue;
+      }
     }
 
     try {
@@ -233,8 +282,8 @@ export function createCookieJarFromNetscape(
       parts.push(`Path=${c.path}`);
       if (c.secure) parts.push("Secure");
       if (c.httpOnly) parts.push("HttpOnly");
-      if (c.expires > 0) {
-        parts.push(`Expires=${new Date(c.expires * 1000).toUTCString()}`);
+      if (expiry !== null) {
+        parts.push(`Expires=${new Date(expiry).toUTCString()}`);
       }
 
       const cookieString = parts.join("; ");
@@ -249,6 +298,13 @@ export function createCookieJarFromNetscape(
   if (expired.length > 0) {
     logger.warn(
       `Skipping ${expired.length} expired cookie(s)${source}: ${expired.join(", ")}`,
+    );
+  }
+  if (staleAuthCookies.length > 0) {
+    logger.warn(
+      `Sending ${staleAuthCookies.length} auth cookie(s)${source} as session cookies because their expiry has passed: ${staleAuthCookies.join(
+        ", ",
+      )}`,
     );
   }
   if (rejected.length > 0) {
