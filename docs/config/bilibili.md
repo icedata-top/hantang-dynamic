@@ -54,6 +54,26 @@ access_key = ""
 `csrf_token` maps to the `BILI_JCT` cookie and is needed for user relation
 operations. `access_key` maps to app authentication.
 
+## Cookie refresh
+
+Bilibili rotates `SESSDATA` and `bili_jct` through its passport cookie-refresh
+flow. To let the app refresh an account automatically, put the browser
+`localStorage` value `ac_time_value` in a sidecar file next to its cookie file:
+
+```text
+./.cookies_account1.txt            # cookies
+./.cookies_account1.txt.refresh_token  # ac_time_value, one line
+```
+
+The sidecar is optional. When present, the app checks Bilibili every six hours
+and reuses the official refresh flow when Bilibili reports `refresh: true`. New
+cookies are written back to the cookie file and the rotated refresh token is
+written to the sidecar. If the sidecar is absent or the refresh fails, the
+account keeps using its current cookies.
+
+`ac_time_value` is not part of the Netscape cookie file; copy it from the
+devtools Local Storage entry for `https://www.bilibili.com`.
+
 ## Watch-later minute sampling
 
 Set `enable_watch_later = true` on a cookie-file entry to sample that loaded

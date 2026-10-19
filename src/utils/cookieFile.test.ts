@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   createCookieJarFromNetscape,
   getAllCookiesAsString,
+  keepAuthCookiesAsSession,
   parseNetscapeCookieFile,
   writeCookieJarToNetscape,
 } from "./cookieFile";
@@ -110,6 +111,33 @@ test("createCookieJarFromNetscape skips expired non-auth cookies but keeps auth 
       assert.doesNotMatch(header, /buvid3=/);
     },
   );
+});
+
+test("keepAuthCookiesAsSession strips local expiry from auth cookies", () => {
+  const jar = createCookieJarFromNetscape([]);
+  const future = new Date(Date.now() + 86_400_000).toUTCString();
+  for (const name of ["SESSDATA", "bili_jct", "DedeUserID"]) {
+    jar.setCookieSync(
+      `${name}=value; Domain=bilibili.com; Path=/; Expires=${future}`,
+      "https://www.bilibili.com/",
+    );
+  }
+  jar.setCookieSync(
+    `buvid3=value; Domain=bilibili.com; Path=/; Expires=${future}`,
+    "https://www.bilibili.com/",
+  );
+
+  keepAuthCookiesAsSession(jar);
+
+  const cookies = jar.serializeSync()?.cookies ?? [];
+  for (const name of ["SESSDATA", "bili_jct", "DedeUserID"]) {
+    assert.equal(
+      cookies.find((cookie) => cookie.key === name)?.expires,
+      undefined,
+      `${name} must not expire locally`,
+    );
+  }
+  assert.ok(cookies.find((cookie) => cookie.key === "buvid3")?.expires);
 });
 
 test("writeCookieJarToNetscape refuses to overwrite auth cookies missing from the jar", () => {

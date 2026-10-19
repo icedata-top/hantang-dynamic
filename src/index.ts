@@ -3,6 +3,7 @@ import { loadAccounts } from "./core/account";
 import { Database } from "./database";
 import { initializeBuildInfo } from "./metrics/registry";
 import { startMetricsServer, stopMetricsServer } from "./metrics/server";
+import { CookieRefreshService } from "./services/cookieRefresh.service";
 import { MinuteHandler } from "./services/minute/minuteHandler";
 import { SubtitleService } from "./services/subtitle.service";
 import { DynamicTracker } from "./services/tracker";
@@ -53,6 +54,9 @@ async function runTracker() {
     `Loaded ${accounts.length} account(s): ${accounts.map((a) => a.uid).join(", ")}`,
   );
 
+  const cookieRefreshService = new CookieRefreshService(accounts);
+  await cookieRefreshService.start();
+
   const trackers = accounts.map((account) => new DynamicTracker(account));
   const subtitleService =
     config.subtitle.enabled && accounts.length > 0
@@ -66,6 +70,7 @@ async function runTracker() {
     for (const tracker of trackers) {
       tracker.stop();
     }
+    cookieRefreshService.stop();
     if (minuteHandler) await minuteHandler.stop();
     if (subtitleService) await subtitleService.stop();
     await stopMetricsServer();

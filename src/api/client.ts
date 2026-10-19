@@ -16,6 +16,7 @@ import {
 import {
   createCookieJarFromNetscape,
   getAllCookiesAsString,
+  keepAuthCookiesAsSession,
   parseNetscapeCookieFile,
   writeCookieJarToNetscape,
 } from "../utils/cookieFile";
@@ -323,6 +324,7 @@ function createClient(
 
   const persistJar = () => {
     if (jar && resolvedFilePath) {
+      keepAuthCookiesAsSession(jar);
       writeCookieJarToNetscape(jar, resolvedFilePath);
     }
   };
