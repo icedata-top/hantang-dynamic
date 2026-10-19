@@ -56,7 +56,7 @@ export function loadCookieFileAccount(
   const { path: filePath, enableWatchLater } = cookieFile;
   try {
     const cookies = parseNetscapeCookieFile(filePath);
-    const jar = createCookieJarFromNetscape(cookies);
+    const jar = createCookieJarFromNetscape(cookies, filePath);
 
     const uid = getDedeUserIDFromCookieFile(filePath) ?? fallbackUid ?? "";
     if (!/^\d+$/.test(uid)) {

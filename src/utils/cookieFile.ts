@@ -17,12 +17,62 @@ interface NetscapeCookie {
 }
 
 /**
- * Parse a Netscape format cookie file into an array of cookie objects.
- * Format: domain<TAB>includeSubdomains<TAB>path<TAB>secure<TAB>expires<TAB>name<TAB>value
- *
- * Lines starting with # are comments, except #HttpOnly_ prefix indicates HttpOnly flag.
+ * Cookies that carry authentication state. Losing them turns every request
+ * into an anonymous request and Bilibili answers with `-101 账号未登录`.
  */
-export function parseNetscapeCookieFile(filePath: string): NetscapeCookie[] {
+const AUTH_COOKIE_NAMES = new Set([
+  "SESSDATA",
+  "bili_jct",
+  "DedeUserID",
+  "DedeUserID__ckMd5",
+  "b_lsid",
+]);
+
+/**
+ * Auth cookies that must never be silently dropped when persisting a jar.
+ * `b_lsid` is excluded because it is short-lived and refreshed frequently.
+ */
+const CRITICAL_COOKIE_NAMES = new Set([
+  "SESSDATA",
+  "bili_jct",
+  "DedeUserID",
+  "DedeUserID__ckMd5",
+]);
+
+/** Absolute expiry from the Netscape `expires` column, or null for session cookies. */
+function cookieExpiryMs(cookie: NetscapeCookie): number | null {
+  return cookie.expires > 0 ? cookie.expires * 1000 : null;
+}
+
+/**
+ * SESSDATA embeds its own expiry as `<hash>,<expiresAt>,<md5>`. Prefer it over
+ * the Netscape column because stale exports often keep a misleading column.
+ */
+function sessdataExpiryMs(value: string): number | null {
+  try {
+    const parts = decodeURIComponent(value).split(",");
+    if (parts.length < 2) return null;
+    const expiresAt = Number.parseInt(parts[1], 10);
+    return Number.isFinite(expiresAt) && expiresAt > 0
+      ? expiresAt * 1000
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function formatExpiry(expiryMs: number): string {
+  return new Date(expiryMs).toISOString();
+}
+
+/**
+ * Read all cookie entries from a Netscape file without validating them.
+ * Throws when the file does not exist.
+ */
+function readNetscapeCookieFile(
+  filePath: string,
+  logMalformed = true,
+): NetscapeCookie[] {
   if (!fs.existsSync(filePath)) {
     throw new Error(`Cookie file not found: ${filePath}`);
   }
@@ -54,7 +104,9 @@ export function parseNetscapeCookieFile(filePath: string): NetscapeCookie[] {
       parts = line.split(/\s+/);
     }
     if (parts.length < 7) {
-      logger.warn(`Skipping malformed cookie line: ${line}`);
+      if (logMalformed) {
+        logger.warn(`Skipping malformed cookie line: ${line}`);
+      }
       continue;
     }
 
@@ -73,11 +125,62 @@ export function parseNetscapeCookieFile(filePath: string): NetscapeCookie[] {
     });
   }
 
+  return cookies;
+}
+
+/**
+ * Parse a Netscape format cookie file into an array of cookie objects.
+ * Format: domain<TAB>includeSubdomains<TAB>path<TAB>secure<TAB>expires<TAB>name<TAB>value
+ *
+ * Lines starting with # are comments, except #HttpOnly_ prefix indicates HttpOnly flag.
+ *
+ * Fails when SESSDATA is missing or already expired, because the account would
+ * otherwise load successfully and then spam `-101 账号未登录` on every request.
+ */
+export function parseNetscapeCookieFile(filePath: string): NetscapeCookie[] {
+  const cookies = readNetscapeCookieFile(filePath);
+
   // Validate SESSDATA exists (required for authentication)
-  const hasSessdata = cookies.some((c) => c.name === "SESSDATA");
-  if (!hasSessdata) {
+  const sessdata = cookies.find((c) => c.name === "SESSDATA");
+  if (!sessdata) {
     throw new Error(
       `Cookie file ${filePath} does not contain SESSDATA. Authentication will fail.`,
+    );
+  }
+
+  const now = Date.now();
+  const sessdataExpiries = [
+    cookieExpiryMs(sessdata),
+    sessdataExpiryMs(sessdata.value),
+  ].filter((expiry): expiry is number => expiry !== null);
+  const sessdataExpiry =
+    sessdataExpiries.length > 0
+      ? Math.min(...sessdataExpiries)
+      : Number.POSITIVE_INFINITY;
+
+  if (sessdataExpiry <= now) {
+    throw new Error(
+      `Cookie file ${filePath} contains an expired SESSDATA (expired at ${formatExpiry(
+        sessdataExpiry,
+      )}). Log in again and re-export the cookies.`,
+    );
+  }
+
+  const expiredAuthCookies = cookies
+    .filter((c) => AUTH_COOKIE_NAMES.has(c.name) && c.name !== "SESSDATA")
+    .map((c) => ({ name: c.name, expiry: cookieExpiryMs(c) }))
+    .filter(
+      (c): c is { name: string; expiry: number } =>
+        c.expiry !== null && c.expiry <= now,
+    );
+
+  if (expiredAuthCookies.length > 0) {
+    logger.warn(
+      `Cookie file ${filePath} contains expired authentication cookie(s): ` +
+        expiredAuthCookies
+          .map((c) => `${c.name} (expired at ${formatExpiry(c.expiry)})`)
+          .join(", ") +
+        ". They will not be sent to Bilibili; re-export the cookies if these are still required.",
     );
   }
 
@@ -87,13 +190,27 @@ export function parseNetscapeCookieFile(filePath: string): NetscapeCookie[] {
 
 /**
  * Create a CookieJar from an array of parsed Netscape cookies.
+ *
+ * Expired cookies are skipped instead of being handed to tough-cookie, because
+ * `getCookiesSync` purges them later and they would otherwise disappear from
+ * the jar without any explanation in the logs.
  */
 export function createCookieJarFromNetscape(
   cookies: NetscapeCookie[],
+  sourceLabel?: string,
 ): CookieJar {
   const jar = new CookieJar();
+  const now = Date.now();
+  const expired: string[] = [];
+  const rejected: string[] = [];
 
   for (const c of cookies) {
+    const expiry = cookieExpiryMs(c);
+    if (expiry !== null && expiry <= now) {
+      expired.push(`${c.name} (expired at ${formatExpiry(expiry)})`);
+      continue;
+    }
+
     try {
       // Determine protocol based on secure flag
       const protocol = c.secure ? "https" : "http";
@@ -123,8 +240,30 @@ export function createCookieJarFromNetscape(
       const cookieString = parts.join("; ");
       jar.setCookieSync(cookieString, url);
     } catch (error) {
-      logger.warn(`Failed to add cookie ${c.name}: ${error}`);
+      const reason = error instanceof Error ? error.message : String(error);
+      rejected.push(`${c.name} (${reason})`);
     }
+  }
+
+  const source = sourceLabel ? ` from ${sourceLabel}` : "";
+  if (expired.length > 0) {
+    logger.warn(
+      `Skipping ${expired.length} expired cookie(s)${source}: ${expired.join(", ")}`,
+    );
+  }
+  if (rejected.length > 0) {
+    logger.warn(
+      `Failed to add ${rejected.length} cookie(s)${source}: ${rejected.join(", ")}`,
+    );
+  }
+
+  const accepted = cookies.length - expired.length - rejected.length;
+  const stored = jar.serializeSync()?.cookies.length ?? 0;
+  if (stored < accepted) {
+    logger.warn(
+      `Cookie jar${source} stored ${stored} of ${accepted} accepted cookies; ` +
+        "the remaining cookies were rejected by tough-cookie (domain or path mismatch).",
+    );
   }
 
   return jar;
@@ -145,6 +284,33 @@ export function writeCookieJarToNetscape(
       return;
     }
     const uniqueCookies = serialized.cookies;
+
+    // Never clobber a cookie file when the in-memory jar has lost auth cookies.
+    // This happens after tough-cookie purges expired cookies, and persisting it
+    // would permanently delete SESSDATA/DedeUserID from disk.
+    if (fs.existsSync(filePath)) {
+      const existingCookies = readNetscapeCookieFile(filePath, false);
+      const jarCookieNames = new Set(uniqueCookies.map((c) => c.key));
+      const lostCookies = [
+        ...new Set(
+          existingCookies
+            .map((c) => c.name)
+            .filter(
+              (name) =>
+                CRITICAL_COOKIE_NAMES.has(name) && !jarCookieNames.has(name),
+            ),
+        ),
+      ];
+
+      if (lostCookies.length > 0) {
+        logger.warn(
+          `Refusing to persist cookies to ${filePath}: the in-memory jar no longer contains ${lostCookies.join(
+            ", ",
+          )}. The existing file was left untouched to avoid destroying authentication cookies.`,
+        );
+        return;
+      }
+    }
 
     const lines: string[] = [
       "# Netscape HTTP Cookie File",

@@ -183,14 +183,29 @@ function apiCodeLabel(data: unknown): string | null {
 
 // Singleton cookie jar manager for cookie file support
 let globalCookieJar: CookieJar | null = null;
+let globalCookieJarInitFailed = false;
 let cookieFilePath: string | null = null;
 
 function getGlobalCookieJar(): CookieJar | null {
   if (!config.bilibili.cookieFile) return null;
-  if (!globalCookieJar) {
-    const cookies = parseNetscapeCookieFile(config.bilibili.cookieFile);
-    globalCookieJar = createCookieJarFromNetscape(cookies);
-    cookieFilePath = config.bilibili.cookieFile;
+  if (!globalCookieJar && !globalCookieJarInitFailed) {
+    try {
+      const cookies = parseNetscapeCookieFile(config.bilibili.cookieFile);
+      globalCookieJar = createCookieJarFromNetscape(
+        cookies,
+        config.bilibili.cookieFile,
+      );
+      cookieFilePath = config.bilibili.cookieFile;
+    } catch (error) {
+      // A single invalid global cookie file must not abort process startup;
+      // per-account loaders and cookie-free clients keep working.
+      globalCookieJarInitFailed = true;
+      logger.error(
+        `Failed to initialize the global cookie jar from ${config.bilibili.cookieFile}; continuing without it.`,
+        error,
+      );
+      return null;
+    }
   }
   return globalCookieJar;
 }
