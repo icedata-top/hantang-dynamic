@@ -3,13 +3,6 @@ import {
   apiEndpointRecentErrorRatio,
   apiEndpointRecentSampleCount,
 } from "../metrics/registry";
-import { redactForLog } from "../utils/redact";
-
-/**
- * Trim only to keep one line readable; long reports reach Telegram intact
- * because over-long messages are sent as a `.txt` file.
- */
-const REASON_LIMIT = 500;
 
 export class EndpointErrorAlerts {
   private readonly endpoints = new Map<string, (string | null)[]>();
@@ -30,11 +23,7 @@ export class EndpointErrorAlerts {
     if (result === "retry") return;
     const samples = this.endpoints.get(key) ?? [];
     samples.push(
-      result === "error"
-        ? redactForLog(reason ?? "error")
-            .replace(/\s+/g, " ")
-            .slice(0, REASON_LIMIT)
-        : null,
+      result === "error" ? (reason ?? "error").replace(/\s+/g, " ") : null,
     );
     if (samples.length > 20) samples.shift();
     this.endpoints.set(key, samples);

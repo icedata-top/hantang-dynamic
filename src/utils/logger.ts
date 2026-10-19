@@ -1,5 +1,5 @@
+import { inspect } from "node:util";
 import { config } from "../config";
-import { redactForLog } from "./redact";
 
 type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -23,7 +23,15 @@ class Logger {
   }
 
   private formatMessage(message: unknown): string {
-    return redactForLog(message);
+    if (typeof message === "string") return message;
+    if (message instanceof Error) {
+      return message.stack ?? `${message.name}: ${message.message}`;
+    }
+    return inspect(message, {
+      depth: null,
+      maxArrayLength: null,
+      maxStringLength: null,
+    });
   }
 
   debug(...args: unknown[]): void {

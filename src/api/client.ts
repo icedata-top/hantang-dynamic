@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import axios, {
   type AxiosInstance,
   type AxiosResponse,
@@ -21,7 +22,6 @@ import {
 import { getRandomDelay, retryDelay, sleep } from "../utils/datetime";
 import { logger } from "../utils/logger";
 import { notifyWarning } from "../utils/notifier/notifier";
-import { redactSensitive } from "../utils/redact";
 import { EndpointErrorAlerts } from "./endpointErrors";
 import { generateBiliTicket } from "./signatures/biliTicket";
 import { buildSignedQuery } from "./signatures/wbiSignature";
@@ -43,6 +43,9 @@ export interface RequestConfig extends InternalAxiosRequestConfig {
     expectedApiCodes?: readonly number[];
   };
 }
+
+const inspectForLog = (value: unknown): string =>
+  inspect(value, { depth: null, maxArrayLength: null, maxStringLength: null });
 
 enum ApiErrorCode {
   Success = 0,
@@ -462,38 +465,21 @@ function createClient(
           requestConfig.metadata?.expectedApiCodes?.includes(
             response.data.code,
           ) ?? false;
-        // Auth failures get their own account-scoped message below; never dump
-        // the cookie jar/agents that axios keeps on the request config.
-        const accountAuthCode =
-          response.data.code === ApiErrorCode.NotLoggedIn ||
-          response.data.code === ApiErrorCode.CookieExpired ||
-          response.data.code === ApiErrorCode.RiskControlFailed;
         let message = "";
         if (expectedCode) {
-          // The caller handles this code as normal control flow. Skip the
-          // diagnostic dump and keep a one-line trace.
           logger.debug(
             `API code ${response.data.code} from ${baseURL}${response.config.url} is handled by the caller` +
               (feedPage === undefined ? "" : ` (feed page ${feedPage})`) +
               (response.data.message ? `: ${response.data.message}` : ""),
           );
-        } else if (!accountAuthCode) {
-          const requestParams = response.config.params
-            ? ` params=${JSON.stringify(
-                redactSensitive(response.config.params),
-              )}`
-            : "";
-          const requestData = response.config.data
-            ? ` data=${JSON.stringify(redactSensitive(response.config.data))}`
-            : "";
+        } else {
           message =
             `API Error:\n` +
             `Code: ${response.data.code}\n` +
             (feedPage === undefined ? "" : `Feed page: ${feedPage}\n`) +
-            `Request: ${(response.config.method ?? "get").toUpperCase()} ${baseURL}${response.config.url}${requestParams}${requestData}\n` +
-            `Response: ${JSON.stringify(
-              redactSensitive(response.data || "No message"),
-            )}`;
+            `baseURL: ${baseURL + response.config.url}\n` +
+            `Config: ${inspectForLog(response.config)}\n` +
+            `Response: ${inspectForLog(response.data || "No message")}`;
           logger.error(message);
         }
 

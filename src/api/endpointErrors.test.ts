@@ -92,9 +92,8 @@ test("alert includes the failure reasons in full", async () => {
     /Last 20 requests: 20\/20 failed \(100%\)\.\n\nFailures by reason:\n- code=-352 page=2 风控校验失败: 10/,
   );
   assert.ok(
-    messages[0].includes(`- HTTP 502: SESSDATA=[redacted] ${longTail}: 10`),
+    messages[0].includes(`- HTTP 502: SESSDATA=secret ${longTail}: 10`),
   );
-  assert.doesNotMatch(messages[0], /secret/);
 });
 
 test("notification rejection is handled without repeating the alert", async () => {

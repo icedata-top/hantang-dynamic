@@ -13,7 +13,7 @@ import {
   type RequestConfig,
 } from "./client";
 
-test("logical API errors are logged with redaction before raw rejection", async () => {
+test("logical API errors are logged before raw rejection", async () => {
   const directory = mkdtempSync(join(tmpdir(), "hantang-api-client-"));
   const state = new StateManager(join(directory, "state.json"));
   state.updateTicket("test-ticket", Math.floor(Date.now() / 1000) + 7200);
@@ -69,19 +69,13 @@ test("logical API errors are logged with redaction before raw rejection", async 
 
   const diagnostic = errors.join("\n");
   assert.match(diagnostic, /Code: 90001/);
-  assert.match(diagnostic, /Request: POST/);
   assert.match(diagnostic, /Response:/);
-  // Never dump the axios config: it carries the cookie jar, agents, and TLS
-  // session cache, which made a single error tens of kilobytes long.
-  assert.doesNotMatch(
-    diagnostic,
-    /Config:|"jar"|withCredentials|httpsAgent|httpAgent/,
-  );
-  assert.doesNotMatch(
-    diagnostic,
-    /request-secret|response-secret|response-token/,
-  );
-  assert.match(diagnostic, /\[redacted\]/);
+  // Nothing is redacted: operators need the real request and response values.
+  assert.match(diagnostic, /Config:/);
+  assert.match(diagnostic, /request-secret/);
+  assert.match(diagnostic, /response-secret/);
+  assert.match(diagnostic, /response-token/);
+  assert.doesNotMatch(diagnostic, /\[redacted\]/);
 });
 
 test("caller-handled business codes are not logged as errors", async () => {
