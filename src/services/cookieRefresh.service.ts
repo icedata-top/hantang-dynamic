@@ -42,7 +42,7 @@ const http = axios.create({
 interface ApiPayload {
   code?: number;
   message?: string;
-  data?: { refresh?: boolean; refresh_token?: string };
+  data?: { refresh?: boolean; refresh_token?: string; timestamp?: number };
 }
 
 function refreshTokenPath(cookieFilePath: string): string {
@@ -159,8 +159,9 @@ function failure(response: AxiosResponse, operation: string): Error {
 async function fetchRefreshCsrf(
   account: AccountContext,
   jar: CookieJar,
+  timestamp: number,
 ): Promise<string> {
-  const url = `${CORRESPOND_URL}/${buildCorrespondPath()}`;
+  const url = `${CORRESPOND_URL}/${buildCorrespondPath(timestamp)}`;
   const response = await http.get(url, {
     headers: {
       ...headers(account, cookieHeader(account, true)),
@@ -183,23 +184,30 @@ async function refreshAccount(account: AccountContext): Promise<boolean> {
   const refreshToken = readRefreshToken(file);
   if (!refreshToken) return false;
 
-  const info = await http.get(COOKIE_INFO_URL, {
+  const csrf = cookieValue(jar, "bili_jct");
+  if (!csrf) throw new Error("cookie refresh requires bili_jct");
+
+  const infoUrl = `${COOKIE_INFO_URL}?csrf=${encodeURIComponent(csrf)}`;
+  const info = await http.get(infoUrl, {
     headers: headers(account, cookieHeader(account, false)),
   });
-  applySetCookie(jar, info, COOKIE_INFO_URL);
+  applySetCookie(jar, info, infoUrl);
   if (info.status !== 200 || payloadCode(info) !== 0) {
     throw failure(info, "cookie/info");
   }
-  const refreshDue = (info.data as ApiPayload | undefined)?.data?.refresh;
-  if (refreshDue !== true) {
+  const infoData = (info.data as ApiPayload | undefined)?.data;
+  if (infoData?.refresh !== true) {
     logger.debug(`[uid=${account.uid}] Bilibili cookies do not need refresh`);
     return false;
   }
 
-  const csrf = cookieValue(jar, "bili_jct");
-  if (!csrf) throw new Error("cookie refresh requires bili_jct");
-
-  const refreshCsrf = await fetchRefreshCsrf(account, jar);
+  // Prefer Bilibili's timestamp over the local clock: correspondPath is only
+  // accepted while its timestamp is fresh, and local clock drift is common.
+  const timestamp =
+    typeof infoData.timestamp === "number" && infoData.timestamp > 0
+      ? infoData.timestamp
+      : Date.now();
+  const refreshCsrf = await fetchRefreshCsrf(account, jar, timestamp);
   const response = await http.post(
     REFRESH_URL,
     new URLSearchParams({
