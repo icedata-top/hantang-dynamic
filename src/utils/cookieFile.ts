@@ -76,13 +76,19 @@ function formatExpiry(expiryMs: number): string {
  */
 function resolveCookieExpiry(cookie: NetscapeCookie): {
   expiry: number | null;
-  source: "token" | "file";
+  source: "token" | "file" | "session";
 } {
   if (cookie.name === "SESSDATA") {
     const tokenExpiry = sessdataExpiryMs(cookie.value);
-    if (tokenExpiry !== null) {
-      return { expiry: tokenExpiry, source: "token" };
-    }
+    return tokenExpiry === null
+      ? { expiry: null, source: "session" }
+      : { expiry: tokenExpiry, source: "token" };
+  }
+  // The Netscape column for auth cookies is a browser attribute that can pass
+  // mid-run while the server-side session is still valid. Sending them as
+  // session cookies keeps tough-cookie from purging them after startup.
+  if (AUTH_COOKIE_NAMES.has(cookie.name)) {
+    return { expiry: null, source: "session" };
   }
   return { expiry: cookieExpiryMs(cookie), source: "file" };
 }
@@ -217,6 +223,17 @@ export function parseNetscapeCookieFile(filePath: string): NetscapeCookie[] {
           .map((c) => `${c.name} (expired at ${formatExpiry(c.expiry)})`)
           .join(", ") +
         ". They will be sent as session cookies so Bilibili can validate them.",
+    );
+  }
+
+  const missingAuthCookies = [...CRITICAL_COOKIE_NAMES].filter(
+    (name) => !cookies.some((c) => c.name === name),
+  );
+  if (missingAuthCookies.length > 0) {
+    logger.warn(
+      `Cookie file ${filePath} is missing authentication cookie(s): ${missingAuthCookies.join(
+        ", ",
+      )}. Re-export the cookies from a logged-in browser if requests return -101.`,
     );
   }
 

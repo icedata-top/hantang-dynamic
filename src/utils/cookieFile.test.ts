@@ -75,6 +75,28 @@ test("createCookieJarFromNetscape uses the SESSDATA token expiry over the file c
   );
 });
 
+test("auth cookies stay session-scoped even when their file expiry is in the future", () => {
+  withCookieFile(
+    cookieLine("SESSDATA", `hash%2C${NOW + 3600}%2Cmd5`, NOW + 3600) +
+      cookieLine("DedeUserID", "42", NOW + 1) +
+      cookieLine("DedeUserID__ckMd5", "abc", NOW + 1) +
+      cookieLine("bili_jct", "csrf", NOW + 1),
+    (path) => {
+      const jar = createCookieJarFromNetscape(parseNetscapeCookieFile(path));
+      const serialized = jar.serializeSync()?.cookies ?? [];
+      for (const name of ["DedeUserID", "DedeUserID__ckMd5", "bili_jct"]) {
+        const cookie = serialized.find((c) => c.key === name);
+        assert.ok(cookie, `${name} should be in the jar`);
+        assert.equal(
+          cookie.expires,
+          undefined,
+          `${name} must not expire locally`,
+        );
+      }
+    },
+  );
+});
+
 test("createCookieJarFromNetscape skips expired non-auth cookies but keeps auth cookies", () => {
   withCookieFile(
     cookieLine("SESSDATA", `hash%2C${NOW + 3600}%2Cmd5`, NOW + 3600) +
