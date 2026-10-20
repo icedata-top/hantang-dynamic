@@ -1,11 +1,5 @@
 import { constants, publicEncrypt } from "node:crypto";
-import {
-  chmodSync,
-  existsSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { RequestConfig } from "../api/client";
 import type { AccountContext } from "../core/account";
 import { getCookieValue } from "../utils/cookieFile";
@@ -28,8 +22,6 @@ JNrRuoEUXpabUzGB8QIDAQAB
 -----END PUBLIC KEY-----`;
 
 type ApiPayload = {
-  code?: number;
-  message?: string;
   data?: { refresh?: boolean; timestamp?: number; refresh_token?: string };
 };
 function tokenPath(cookieFilePath: string): string {
@@ -42,10 +34,9 @@ function readToken(cookieFilePath: string): string | null {
 }
 
 function writeToken(cookieFilePath: string, token: string): void {
-  const staged = `${tokenPath(cookieFilePath)}.tmp`;
-  writeFileSync(staged, `${token}\n`, { mode: 0o600 });
-  chmodSync(staged, 0o600);
-  renameSync(staged, tokenPath(cookieFilePath));
+  const path = tokenPath(cookieFilePath);
+  writeFileSync(`${path}.tmp`, `${token}\n`, { mode: 0o600 });
+  renameSync(`${path}.tmp`, path);
 }
 
 /** RSA-OAEP(SHA-256) of `refresh_<timestamp>`; this is the correspond path. */
@@ -118,41 +109,28 @@ async function refreshAccount(account: AccountContext): Promise<void> {
   logger.info(`[uid=${account.uid}] Bilibili cookies refreshed`);
 }
 
-/**
- * Refreshes cookies when `<cookie file>.refresh_token` exists. The sidecar holds
- * the browser's `ac_time_value` and is replaced after each rotation.
- */
-export class CookieRefreshService {
-  private timer: ReturnType<typeof setInterval> | null = null;
-  private running = false;
-
-  constructor(private readonly accounts: AccountContext[]) {}
-
-  async start(): Promise<void> {
-    if (this.running) return;
-    this.running = true;
-    await this.refreshAll();
-    this.timer = setInterval(() => void this.refreshAll(), CHECK_INTERVAL_MS);
-    this.timer.unref?.();
-  }
-
-  stop(): void {
-    this.running = false;
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
-  }
-
-  private async refreshAll(): Promise<void> {
-    for (const account of this.accounts) {
-      if (!this.running) return;
-      try {
-        await refreshAccount(account);
-      } catch (error) {
-        logger.warn(
-          `[uid=${account.uid}] Bilibili cookie refresh failed:`,
-          error,
-        );
-      }
+async function refreshAll(accounts: AccountContext[]): Promise<void> {
+  for (const account of accounts) {
+    try {
+      await refreshAccount(account);
+    } catch (error) {
+      logger.warn(
+        `[uid=${account.uid}] Bilibili cookie refresh failed:`,
+        error,
+      );
     }
   }
+}
+
+/**
+ * Refreshes cookies when `<cookie file>.refresh_token` exists, then checks every
+ * six hours. Returns a stop function for graceful shutdown.
+ */
+export async function startCookieRefresh(
+  accounts: AccountContext[],
+): Promise<() => void> {
+  await refreshAll(accounts);
+  const timer = setInterval(() => void refreshAll(accounts), CHECK_INTERVAL_MS);
+  timer.unref?.();
+  return () => clearInterval(timer);
 }

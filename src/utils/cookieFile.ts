@@ -20,7 +20,7 @@ interface NetscapeCookie {
  * Cookies that carry authentication state. Losing them turns every request
  * into an anonymous request and Bilibili answers with `-101 账号未登录`.
  */
-export const AUTH_COOKIE_NAMES = new Set([
+const AUTH_COOKIE_NAMES = new Set([
   "SESSDATA",
   "bili_jct",
   "DedeUserID",
@@ -348,32 +348,14 @@ export function createCookieJarFromNetscape(
  * set mid-run; Bilibili validates the values server-side.
  */
 function keepAuthCookiesAsSession(jar: CookieJar): void {
-  const cookies = jar.getCookiesSync("https://www.bilibili.com/", {
+  for (const cookie of jar.getCookiesSync("https://www.bilibili.com/", {
     allPaths: true,
-  });
-  for (const cookie of cookies) {
-    if (!AUTH_COOKIE_NAMES.has(cookie.key)) continue;
-    if (cookie.expires === "Infinity") continue;
-
-    const domain = (cookie.domain || "bilibili.com").replace(/^\./, "");
-    const path = cookie.path || "/";
-    const parts = [
-      `${cookie.key}=${cookie.value}`,
-      `Domain=${domain}`,
-      `Path=${path}`,
-    ];
-    if (cookie.secure) parts.push("Secure");
-    if (cookie.httpOnly) parts.push("HttpOnly");
-    try {
-      jar.setCookieSync(
-        parts.join("; "),
-        `${cookie.secure ? "https" : "http"}://${domain}${path}`,
-      );
-    } catch (error) {
-      logger.warn(
-        `Failed to keep auth cookie ${cookie.key} as a session cookie: ${error}`,
-      );
+  })) {
+    if (!AUTH_COOKIE_NAMES.has(cookie.key) || cookie.expires === "Infinity") {
+      continue;
     }
+    cookie.expires = "Infinity";
+    jar.setCookieSync(cookie, "https://www.bilibili.com/");
   }
 }
 
