@@ -2,7 +2,7 @@ import { constants, publicEncrypt } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { RequestConfig } from "../api/client";
 import type { AccountContext } from "../core/account";
-import { getCookieValue } from "../utils/cookieFile";
+import { getCookieValue, writeCookieJarToNetscape } from "../utils/cookieFile";
 import { logger } from "../utils/logger";
 
 const REFRESH_TOKEN_SUFFIX = ".refresh_token";
@@ -97,6 +97,7 @@ async function refreshAccount(account: AccountContext): Promise<void> {
     }),
   );
   const nextToken = (refreshed.data as ApiPayload).data?.refresh_token;
+  if (!writeCookieJarToNetscape(jar, file)) return;
   if (nextToken) writeToken(file, nextToken);
   else logger.warn(`[uid=${account.uid}] refresh returned no refresh_token`);
 

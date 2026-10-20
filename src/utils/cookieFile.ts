@@ -365,7 +365,7 @@ function keepAuthCookiesAsSession(jar: CookieJar): void {
 export function writeCookieJarToNetscape(
   jar: CookieJar,
   filePath: string,
-): void {
+): boolean | undefined {
   keepAuthCookiesAsSession(jar);
   try {
     // Use serializeSync to get all cookies from the jar (avoids hardcoding domains)
@@ -433,6 +433,7 @@ export function writeCookieJarToNetscape(
 
     fs.writeFileSync(filePath, `${lines.join("\n")}\n`, "utf-8");
     logger.debug(`Persisted ${uniqueCookies.length} cookies to ${filePath}`);
+    return true;
   } catch (error) {
     logger.warn(`Failed to persist cookies to ${filePath}: ${error}`);
   }
