@@ -6,15 +6,9 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import axios, { type AxiosInstance } from "axios";
-import { wrapper } from "axios-cookiejar-support";
-import type { CookieJar } from "tough-cookie";
+import type { RequestConfig } from "../api/client";
 import type { AccountContext } from "../core/account";
-import {
-  getCookieValue,
-  keepAuthCookiesAsSession,
-  writeCookieJarToNetscape,
-} from "../utils/cookieFile";
+import { getCookieValue } from "../utils/cookieFile";
 import { logger } from "../utils/logger";
 
 const REFRESH_TOKEN_SUFFIX = ".refresh_token";
@@ -38,26 +32,6 @@ type ApiPayload = {
   message?: string;
   data?: { refresh?: boolean; timestamp?: number; refresh_token?: string };
 };
-type JarDefaults = AxiosInstance["defaults"] & { jar?: CookieJar };
-const wrapWithCookieJar = wrapper as unknown as (
-  instance: AxiosInstance,
-) => AxiosInstance;
-
-function clientFor(jar: CookieJar, userAgent: string): AxiosInstance {
-  const client = wrapWithCookieJar(
-    axios.create({
-      timeout: 30_000,
-      maxRedirects: 0,
-      validateStatus: () => true,
-    }),
-  );
-  (client.defaults as JarDefaults).jar = jar;
-  client.defaults.withCredentials = true;
-  client.defaults.headers.common["User-Agent"] = userAgent;
-  client.defaults.headers.common.Referer = "https://www.bilibili.com";
-  return client;
-}
-
 function tokenPath(cookieFilePath: string): string {
   return `${cookieFilePath}${REFRESH_TOKEN_SUFFIX}`;
 }
@@ -92,43 +66,33 @@ export function extractRefreshCsrf(html: string): string | null {
   );
 }
 
-function payload(response: { data: unknown }): ApiPayload {
-  return (response.data ?? {}) as ApiPayload;
-}
-
-function fail(operation: string, response: { status: number; data: unknown }) {
-  const body = payload(response);
-  throw new Error(
-    `${operation} failed: HTTP ${response.status}, code ${String(
-      body.code,
-    )} ${body.message ?? ""}`,
-  );
-}
-
 async function refreshAccount(account: AccountContext): Promise<void> {
   const { cookieJar: jar, cookieFilePath: file } = account;
   if (!jar || !file) return;
   const token = readToken(file);
   if (!token) return;
 
-  const client = clientFor(jar, account.stateManager.lastUA);
   const csrf = getCookieValue(jar, "bili_jct");
   if (!csrf) throw new Error("cookie refresh requires bili_jct");
 
+  const client = account.webInterfaceClient;
   const info = await client.get(INFO_URL, { params: { csrf } });
-  const infoBody = payload(info);
-  if (info.status !== 200 || infoBody.code !== 0) fail("cookie/info", info);
-  if (infoBody.data?.refresh !== true) return;
+  const infoData = (info.data as ApiPayload).data;
+  if (infoData?.refresh !== true) return;
 
   const timestamp =
-    typeof infoBody.data.timestamp === "number" && infoBody.data.timestamp > 0
-      ? infoBody.data.timestamp
+    typeof infoData.timestamp === "number" && infoData.timestamp > 0
+      ? infoData.timestamp
       : Date.now();
   const correspond = await client.get(
     `${CORRESPOND_URL}/${buildCorrespondPath(timestamp)}`,
-    { responseType: "text", headers: { Accept: "text/html" } },
+    {
+      responseType: "text",
+      headers: { Accept: "text/html" },
+      maxRedirects: 0,
+      metadata: { skipApiChecks: true },
+    } as RequestConfig,
   );
-  if (correspond.status !== 200) fail("correspond", correspond);
   const refreshCsrf = extractRefreshCsrf(String(correspond.data));
   if (!refreshCsrf) throw new Error("correspond page has no refresh_csrf");
 
@@ -141,29 +105,17 @@ async function refreshAccount(account: AccountContext): Promise<void> {
       source: "main_web",
     }),
   );
-  const refreshedBody = payload(refreshed);
-  if (refreshed.status !== 200 || refreshedBody.code !== 0)
-    fail("cookie/refresh", refreshed);
-
-  keepAuthCookiesAsSession(jar);
-  writeCookieJarToNetscape(jar, file);
-  if (refreshedBody.data?.refresh_token) {
-    writeToken(file, refreshedBody.data.refresh_token);
-  } else {
-    logger.warn(`[uid=${account.uid}] refresh returned no refresh_token`);
-  }
+  const nextToken = (refreshed.data as ApiPayload).data?.refresh_token;
+  if (nextToken) writeToken(file, nextToken);
+  else logger.warn(`[uid=${account.uid}] refresh returned no refresh_token`);
 
   const nextCsrf = getCookieValue(jar, "bili_jct");
   if (!nextCsrf) throw new Error("refreshed cookies are missing bili_jct");
-  const confirmed = await client.post(
+  await client.post(
     CONFIRM_URL,
     new URLSearchParams({ csrf: nextCsrf, refresh_token: token }),
   );
-  if (confirmed.status !== 200 || payload(confirmed).code !== 0) {
-    logger.warn(`[uid=${account.uid}] cookie refresh confirmation failed`);
-  } else {
-    logger.info(`[uid=${account.uid}] Bilibili cookies refreshed`);
-  }
+  logger.info(`[uid=${account.uid}] Bilibili cookies refreshed`);
 }
 
 /**

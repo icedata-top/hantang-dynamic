@@ -347,7 +347,7 @@ export function createCookieJarFromNetscape(
  * cookies when their browser expiry passes, which would drop the login cookie
  * set mid-run; Bilibili validates the values server-side.
  */
-export function keepAuthCookiesAsSession(jar: CookieJar): void {
+function keepAuthCookiesAsSession(jar: CookieJar): void {
   const cookies = jar.getCookiesSync("https://www.bilibili.com/", {
     allPaths: true,
   });
@@ -384,6 +384,7 @@ export function writeCookieJarToNetscape(
   jar: CookieJar,
   filePath: string,
 ): void {
+  keepAuthCookiesAsSession(jar);
   try {
     // Use serializeSync to get all cookies from the jar (avoids hardcoding domains)
     const serialized = jar.serializeSync();

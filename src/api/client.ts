@@ -16,7 +16,6 @@ import {
 import {
   createCookieJarFromNetscape,
   getAllCookiesAsString,
-  keepAuthCookiesAsSession,
   parseNetscapeCookieFile,
   writeCookieJarToNetscape,
 } from "../utils/cookieFile";
@@ -36,6 +35,8 @@ export interface RequestConfig extends InternalAxiosRequestConfig {
     proxyDetailLoginFallback?: boolean;
     /** 1-based page number when paging through the dynamic feed. */
     feedPage?: number;
+    /** Return raw responses even when the body has no Bilibili JSON code. */
+    skipApiChecks?: boolean;
     /**
      * Business codes the caller already handles as normal control flow.
      * They are rejected like any other business error but logged at debug
@@ -324,7 +325,6 @@ function createClient(
 
   const persistJar = () => {
     if (jar && resolvedFilePath) {
-      keepAuthCookiesAsSession(jar);
       writeCookieJarToNetscape(jar, resolvedFilePath);
     }
   };
@@ -426,6 +426,7 @@ function createClient(
 
       // Handle non-success response codes
       if (
+        !requestConfig.metadata?.skipApiChecks &&
         response.data.code !== ApiErrorCode.Success &&
         response.data.code !== 404 &&
         response.data.code !== -404 &&

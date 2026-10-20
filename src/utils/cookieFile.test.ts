@@ -6,7 +6,6 @@ import test from "node:test";
 import {
   createCookieJarFromNetscape,
   getAllCookiesAsString,
-  keepAuthCookiesAsSession,
   parseNetscapeCookieFile,
   writeCookieJarToNetscape,
 } from "./cookieFile";
@@ -113,33 +112,6 @@ test("createCookieJarFromNetscape skips expired non-auth cookies but keeps auth 
   );
 });
 
-test("keepAuthCookiesAsSession strips local expiry from auth cookies", () => {
-  const jar = createCookieJarFromNetscape([]);
-  const future = new Date(Date.now() + 86_400_000).toUTCString();
-  for (const name of ["SESSDATA", "bili_jct", "DedeUserID"]) {
-    jar.setCookieSync(
-      `${name}=value; Domain=bilibili.com; Path=/; Expires=${future}`,
-      "https://www.bilibili.com/",
-    );
-  }
-  jar.setCookieSync(
-    `buvid3=value; Domain=bilibili.com; Path=/; Expires=${future}`,
-    "https://www.bilibili.com/",
-  );
-
-  keepAuthCookiesAsSession(jar);
-
-  const cookies = jar.serializeSync()?.cookies ?? [];
-  for (const name of ["SESSDATA", "bili_jct", "DedeUserID"]) {
-    assert.equal(
-      cookies.find((cookie) => cookie.key === name)?.expires,
-      undefined,
-      `${name} must not expire locally`,
-    );
-  }
-  assert.ok(cookies.find((cookie) => cookie.key === "buvid3")?.expires);
-});
-
 test("writeCookieJarToNetscape refuses to overwrite auth cookies missing from the jar", () => {
   const original =
     cookieLine("SESSDATA", `hash%2C${NOW + 3600}%2Cmd5`, NOW + 3600) +
@@ -151,16 +123,19 @@ test("writeCookieJarToNetscape refuses to overwrite auth cookies missing from th
   });
 });
 
-test("writeCookieJarToNetscape persists a jar that still has auth cookies", () => {
-  withCookieFile(
-    cookieLine("SESSDATA", `hash%2C${NOW + 3600}%2Cmd5`, NOW + 3600) +
-      cookieLine("DedeUserID", "42"),
-    (path) => {
-      const jar = createCookieJarFromNetscape(parseNetscapeCookieFile(path));
-      writeCookieJarToNetscape(jar, path);
-      const persisted = readFileSync(path, "utf-8");
-      assert.match(persisted, /SESSDATA/);
-      assert.match(persisted, /DedeUserID/);
-    },
-  );
+test("writeCookieJarToNetscape persists auth cookies as session cookies", () => {
+  withCookieFile("", (path) => {
+    const jar = createCookieJarFromNetscape([]);
+    const future = new Date(Date.now() + 86_400_000).toUTCString();
+    for (const name of ["SESSDATA", "DedeUserID"]) {
+      jar.setCookieSync(
+        `${name}=value; Domain=bilibili.com; Path=/; Expires=${future}`,
+        "https://www.bilibili.com/",
+      );
+    }
+    writeCookieJarToNetscape(jar, path);
+    const persisted = readFileSync(path, "utf-8");
+    assert.match(persisted, /\t0\tSESSDATA\t/);
+    assert.match(persisted, /\t0\tDedeUserID\t/);
+  });
 });
