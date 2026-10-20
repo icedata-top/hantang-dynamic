@@ -29,35 +29,40 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function argument(args: string[], name: string): string | undefined {
-  const index = args.indexOf(name);
-  return index < 0 ? undefined : args[index + 1];
-}
-
 function parseArgs(args: string[]): {
   account?: string;
   configPath: string;
   updateConfig: boolean;
 } {
-  const account =
-    argument(args, "--account") ??
-    args.find(
-      (arg, index) =>
-        !arg.startsWith("-") &&
-        args[index - 1] !== "--config" &&
-        args[index - 1] !== "--account",
-    );
+  let account: string | undefined;
+  let configPath = "config.toml";
+  let updateConfig = true;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--no-config") {
+      updateConfig = false;
+    } else if (arg === "--account" || arg === "--config") {
+      const value = args[++i];
+      if (!value) throw new Error(`${arg} requires a value`);
+      if (arg === "--account") account = value;
+      else configPath = value;
+    } else if (arg.startsWith("-")) {
+      throw new Error(`Unknown option: ${arg}`);
+    } else if (account) {
+      throw new Error(`Unexpected argument: ${arg}`);
+    } else {
+      account = arg;
+    }
+  }
+
   if (account !== undefined && !ACCOUNT_NAME_RE.test(account)) {
     throw new Error(
       "Usage: pnpm login-qr [account] [--config config.toml] [--no-config]\n" +
         "Account names may contain letters, digits, dots, underscores, and dashes.",
     );
   }
-  return {
-    account,
-    configPath: argument(args, "--config") ?? "config.toml",
-    updateConfig: !args.includes("--no-config"),
-  };
+  return { account, configPath, updateConfig };
 }
 
 export async function runLoginQr(args: string[]): Promise<void> {

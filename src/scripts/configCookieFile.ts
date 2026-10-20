@@ -14,23 +14,18 @@ export function accountNameFromUname(uname: string, uid: string): string {
   return cleaned || uid;
 }
 
-export function cookieFilePathsFromToml(content: string): string[] {
-  return entriesFromConfig(parse(content)).map(entryPath);
-}
-
 type CookieEntry = string | { path: string; enable_watch_later: boolean };
 
 function entryPath(entry: CookieEntry): string {
   return typeof entry === "string" ? entry : entry.path;
 }
 
-function entriesFromConfig(data: unknown): CookieEntry[] {
+function entriesFrom(data: unknown): CookieEntry[] {
   const bilibili = (data as { bilibili?: Record<string, unknown> }).bilibili;
   if (!bilibili) return [];
 
-  const entries: CookieEntry[] = [];
   const cookieFiles = bilibili.cookie_files;
-  const hasCookieFiles = Array.isArray(cookieFiles);
+  const entries: CookieEntry[] = [];
   if (Array.isArray(cookieFiles)) {
     for (const item of cookieFiles) {
       if (typeof item === "string") {
@@ -52,7 +47,7 @@ function entriesFromConfig(data: unknown): CookieEntry[] {
 
   const single = bilibili.cookie_file;
   if (
-    !hasCookieFiles &&
+    !Array.isArray(cookieFiles) &&
     typeof single === "string" &&
     single &&
     !entries.some((entry) => entryPath(entry) === single)
@@ -62,27 +57,25 @@ function entriesFromConfig(data: unknown): CookieEntry[] {
   return entries;
 }
 
+export function cookieFilePathsFromToml(content: string): string[] {
+  return entriesFrom(parse(content)).map(entryPath);
+}
+
 function formatEntry(entry: CookieEntry): string {
   return typeof entry === "string"
     ? JSON.stringify(entry)
     : `{ path = ${JSON.stringify(entry.path)}, enable_watch_later = ${entry.enable_watch_later} }`;
 }
 
-function sectionBounds(
-  lines: string[],
-  name: string,
-): { start: number; end: number } | null {
-  const header = new RegExp(`^\\s*\\[${name}\\]\\s*(?:#.*)?$`);
-  const start = lines.findIndex((line) => header.test(line));
+function sectionBounds(lines: string[]): { start: number; end: number } | null {
+  const start = lines.findIndex((line) =>
+    /^\s*\[bilibili\]\s*(?:#.*)?$/.test(line),
+  );
   if (start < 0) return null;
-  let end = lines.length;
-  for (let i = start + 1; i < lines.length; i++) {
-    if (/^\s*\[/.test(lines[i])) {
-      end = i;
-      break;
-    }
-  }
-  return { start, end };
+  const end = lines.findIndex(
+    (line, index) => index > start && /^\s*\[/.test(line),
+  );
+  return { start, end: end < 0 ? lines.length : end };
 }
 
 function assignmentRange(
@@ -91,56 +84,36 @@ function assignmentRange(
   end: number,
   key: string,
 ): { start: number; end: number } | null {
-  const assignment = new RegExp(`^\\s*${key}\\s*=`);
+  const pattern = new RegExp(`^\\s*${key}\\s*=`);
   const first = lines.findIndex(
-    (line, index) => index >= start && index < end && assignment.test(line),
+    (line, index) => index >= start && index < end && pattern.test(line),
   );
   if (first < 0) return null;
+  if (!lines[first].includes("[")) return { start: first, end: first + 1 };
 
-  let depth = 0;
-  let quote: string | null = null;
-  let escaped = false;
-  for (let i = first; i < end; i++) {
-    const line = lines[i];
-    const from = i === first ? line.indexOf("=") + 1 : 0;
-    for (let j = from; j < line.length; j++) {
-      const char = line[j];
-      if (quote) {
-        if (escaped) escaped = false;
-        else if (char === "\\") escaped = true;
-        else if (char === quote) quote = null;
-      } else if (char === '"' || char === "'") {
-        quote = char;
-      } else if (char === "[" || char === "{") {
-        depth++;
-      } else if (char === "]" || char === "}") {
-        depth--;
-      } else if (char === "#") {
-        break;
-      }
-    }
-    if (depth <= 0 && quote === null) return { start: first, end: i + 1 };
-  }
-  return { start: first, end };
+  const close = lines.findIndex(
+    (line, index) => index > first && index < end && /^\s*\]/.test(line),
+  );
+  return { start: first, end: close < 0 ? first + 1 : close + 1 };
 }
 
 /**
- * Add a cookie file to the `[bilibili]` section without rewriting unrelated
- * lines. Existing cookie_files entries, including Watch Later objects, are kept.
+ * Add a cookie file to `[bilibili]`, preserving other lines and existing
+ * cookie_files entries (including Watch Later objects).
  */
 export function addCookieFileToToml(content: string, newPath: string): string {
   const parsed = parse(content);
-  const entries = entriesFromConfig(parsed);
+  const entries = entriesFrom(parsed);
   if (entries.some((entry) => entryPath(entry) === newPath)) return content;
   entries.push(newPath);
 
   const bilibili = (parsed as { bilibili?: Record<string, unknown> }).bilibili;
-  const usesCookieFiles = Array.isArray(bilibili?.cookie_files);
   const single = bilibili?.cookie_file;
-  const useSingle = !usesCookieFiles && (!single || single === newPath);
+  const useSingle =
+    !Array.isArray(bilibili?.cookie_files) && (!single || single === newPath);
 
   const lines = content.split(/\r?\n/);
-  const bounds = sectionBounds(lines, "bilibili");
+  const bounds = sectionBounds(lines);
   if (!bounds) {
     const block = useSingle
       ? `[bilibili]\ncookie_file = ${JSON.stringify(newPath)}`
@@ -148,35 +121,18 @@ export function addCookieFileToToml(content: string, newPath: string): string {
     return `${content.trimEnd()}\n\n${block}\n`;
   }
 
-  if (useSingle) {
-    const value = `cookie_file = ${JSON.stringify(newPath)}`;
-    const range = assignmentRange(
-      lines,
-      bounds.start,
-      bounds.end,
-      "cookie_file",
-    );
-    if (range) lines.splice(range.start, range.end - range.start, value);
-    else lines.splice(bounds.start + 1, 0, value);
+  const key = useSingle ? "cookie_file" : "cookie_files";
+  const value = useSingle
+    ? `cookie_file = ${JSON.stringify(newPath)}`
+    : `cookie_files = [${entries.map(formatEntry).join(", ")}]`;
+  const range = assignmentRange(lines, bounds.start, bounds.end, key);
+  if (range) {
+    lines.splice(range.start, range.end - range.start, value);
   } else {
-    const value = `cookie_files = [${entries.map(formatEntry).join(", ")}]`;
-    const range = assignmentRange(
-      lines,
-      bounds.start,
-      bounds.end,
-      "cookie_files",
-    );
-    if (range) {
-      lines.splice(range.start, range.end - range.start, value);
-    } else {
-      const singleRange = assignmentRange(
-        lines,
-        bounds.start,
-        bounds.end,
-        "cookie_file",
-      );
-      lines.splice(singleRange ? singleRange.end : bounds.start + 1, 0, value);
-    }
+    const anchor = useSingle
+      ? null
+      : assignmentRange(lines, bounds.start, bounds.end, "cookie_file");
+    lines.splice(anchor ? anchor.end : bounds.start + 1, 0, value);
   }
 
   const updated = lines.join("\n");
