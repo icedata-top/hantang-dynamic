@@ -222,7 +222,7 @@ export function parseNetscapeCookieFile(filePath: string): NetscapeCookie[] {
         expiredAuthCookies
           .map((c) => `${c.name} (expired at ${formatExpiry(c.expiry)})`)
           .join(", ") +
-        ". They will be sent as session cookies so Bilibili can validate them.",
+        ". They will be sent as session cookies, but Bilibili may still reject them with -101; re-export the cookies or configure the .refresh_token sidecar.",
     );
   }
 
@@ -321,7 +321,7 @@ export function createCookieJarFromNetscape(
     logger.warn(
       `Sending ${staleAuthCookies.length} auth cookie(s)${source} as session cookies because their expiry has passed: ${staleAuthCookies.join(
         ", ",
-      )}`,
+      )}. If requests return -101, Bilibili no longer accepts them; re-export or refresh.`,
     );
   }
   if (rejected.length > 0) {
