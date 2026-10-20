@@ -59,10 +59,13 @@ operations. `access_key` maps to app authentication.
 Create or renew an account without exporting cookies by hand:
 
 ```bash
-pnpm login-qr <account> [--config config.toml]
+pnpm login-qr [account] [--config config.toml]
 ```
 
-The command prints a QR code, waits for the Bilibili app, then writes:
+The command prints a QR code and waits for the Bilibili app. If `account` is
+omitted, it uses the logged-in profile name (falling back to the numeric uid);
+if that uid already exists in a configured cookie file, that file is reused.
+It then writes:
 
 ```text
 ./.cookies.<account>.txt

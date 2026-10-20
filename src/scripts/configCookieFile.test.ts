@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parse } from "smol-toml";
-import { addCookieFileToToml, cookieFilePath } from "./configCookieFile";
+import {
+  accountNameFromUname,
+  addCookieFileToToml,
+  cookieFilePath,
+  cookieFilePathsFromToml,
+} from "./configCookieFile";
 
 test("cookieFilePath uses the account name", () => {
   assert.equal(cookieFilePath("deironized"), "./.cookies.deironized.txt");
@@ -68,4 +73,19 @@ test("ignores cookie_file when cookie_files is present", () => {
     "./.cookies.old.txt",
     "./.cookies.new.txt",
   ]);
+});
+
+test("derives a safe account name from the profile name", () => {
+  assert.equal(accountNameFromUname("极星口服液", "123"), "极星口服液");
+  assert.equal(accountNameFromUname("a/b c", "123"), "a_b_c");
+  assert.equal(accountNameFromUname("...", "123"), "123");
+});
+
+test("lists configured cookie paths", () => {
+  assert.deepEqual(
+    cookieFilePathsFromToml(
+      '[bilibili]\ncookie_files = ["./.cookies.a.txt", "./.cookies.b.txt"]\n',
+    ),
+    ["./.cookies.a.txt", "./.cookies.b.txt"],
+  );
 });

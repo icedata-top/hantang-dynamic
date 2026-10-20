@@ -5,12 +5,17 @@ import axios, { type AxiosInstance } from "axios";
 import { wrapper } from "axios-cookiejar-support";
 import qrcode from "qrcode-terminal";
 import { CookieJar } from "tough-cookie";
-import { writeCookieJarToNetscape } from "../utils/cookieFile";
+import {
+  getDedeUserIDFromCookieFile,
+  writeCookieJarToNetscape,
+} from "../utils/cookieFile";
 import { refreshTokenPath, writeRefreshToken } from "../utils/refreshTokenFile";
 import {
   ACCOUNT_NAME_RE,
+  accountNameFromUname,
   addCookieFileToToml,
   cookieFilePath,
+  cookieFilePathsFromToml,
 } from "./configCookieFile";
 
 const PASSPORT = "https://passport.bilibili.com/x/passport-login/web";
@@ -30,19 +35,21 @@ function argument(args: string[], name: string): string | undefined {
 }
 
 function parseArgs(args: string[]): {
-  account: string;
+  account?: string;
   configPath: string;
   updateConfig: boolean;
 } {
   const account =
     argument(args, "--account") ??
     args.find(
-      (arg) =>
-        !arg.startsWith("-") && args[args.indexOf(arg) - 1] !== "--config",
+      (arg, index) =>
+        !arg.startsWith("-") &&
+        args[index - 1] !== "--config" &&
+        args[index - 1] !== "--account",
     );
-  if (!account || !ACCOUNT_NAME_RE.test(account)) {
+  if (account !== undefined && !ACCOUNT_NAME_RE.test(account)) {
     throw new Error(
-      "Usage: pnpm login-qr <account> [--config config.toml] [--no-config]\n" +
+      "Usage: pnpm login-qr [account] [--config config.toml] [--no-config]\n" +
         "Account names may contain letters, digits, dots, underscores, and dashes.",
     );
   }
@@ -55,7 +62,6 @@ function parseArgs(args: string[]): {
 
 export async function runLoginQr(args: string[]): Promise<void> {
   const { account, configPath, updateConfig } = parseArgs(args);
-  const cookiePath = cookieFilePath(account);
   const jar = new CookieJar();
   const client = wrapWithCookieJar(
     axios.create({
@@ -79,8 +85,7 @@ export async function runLoginQr(args: string[]): Promise<void> {
     throw new Error(`qrcode/generate failed: ${gen.code} ${gen.message ?? ""}`);
   }
 
-  console.log(`Account: ${account}`);
-  console.log(`Cookie file: ${cookiePath}`);
+  console.log(`Account: ${account ?? "auto (from Bilibili profile)"}`);
   qrcode.generate(gen.data.url, { small: true });
   console.log("Scan with the Bilibili app. Waiting up to 180 seconds...");
 
@@ -117,6 +122,26 @@ export async function runLoginQr(args: string[]): Promise<void> {
         throw new Error("Login succeeded but refresh_token is missing");
       }
 
+      const nav = await client
+        .get("https://api.bilibili.com/x/web-interface/nav")
+        .catch(() => null);
+      const profile = (nav?.data as { data?: { uname?: string } } | undefined)
+        ?.data;
+      const absoluteConfig = resolve(process.cwd(), configPath);
+      const previous = existsSync(absoluteConfig)
+        ? readFileSync(absoluteConfig, "utf-8")
+        : "";
+      const existingPath = account
+        ? null
+        : cookieFilePathsFromToml(previous).find(
+            (path) => getDedeUserIDFromCookieFile(path) === uid,
+          );
+      const cookiePath =
+        existingPath ??
+        cookieFilePath(
+          account ?? accountNameFromUname(profile?.uname ?? "", uid),
+        );
+
       const spi = await client
         .get("https://api.bilibili.com/x/frontend/finger/spi")
         .catch(() => null);
@@ -141,17 +166,13 @@ export async function runLoginQr(args: string[]): Promise<void> {
       writeRefreshToken(cookiePath, status.refresh_token);
 
       if (updateConfig) {
-        const absolute = resolve(process.cwd(), configPath);
-        const previous = existsSync(absolute)
-          ? readFileSync(absolute, "utf-8")
-          : "";
         const updated = addCookieFileToToml(previous, cookiePath);
         if (updated !== previous) {
-          writeFileSync(`${absolute}.tmp`, updated);
-          renameSync(`${absolute}.tmp`, absolute);
-          console.log(`Updated ${absolute}`);
+          writeFileSync(`${absoluteConfig}.tmp`, updated);
+          renameSync(`${absoluteConfig}.tmp`, absoluteConfig);
+          console.log(`Updated ${absoluteConfig}`);
         } else {
-          console.log(`${absolute} already references ${cookiePath}`);
+          console.log(`${absoluteConfig} already references ${cookiePath}`);
         }
       }
 
@@ -159,7 +180,9 @@ export async function runLoginQr(args: string[]): Promise<void> {
         .getCookiesSync("https://www.bilibili.com/", { allPaths: true })
         .map((cookie) => cookie.key)
         .join(", ");
-      console.log(`Logged in as uid=${uid}`);
+      console.log(
+        `Logged in as uid=${uid}${profile?.uname ? ` (${profile.uname})` : ""}`,
+      );
       console.log(`Cookies (${names}): ${cookiePath}`);
       console.log(`Refresh token: ${refreshTokenPath(cookiePath)}`);
       console.log("Restart the service to use this account.");

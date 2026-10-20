@@ -1,9 +1,21 @@
 import { parse } from "smol-toml";
 
-export const ACCOUNT_NAME_RE = /^[A-Za-z0-9._-]+$/;
+export const ACCOUNT_NAME_RE = /^[\p{L}\p{N}._-]+$/u;
 
 export function cookieFilePath(account: string): string {
   return `./.cookies.${account}.txt`;
+}
+
+export function accountNameFromUname(uname: string, uid: string): string {
+  const cleaned = uname
+    .normalize("NFKC")
+    .replace(/[^\p{L}\p{N}._-]+/gu, "_")
+    .replace(/^[._-]+|[._-]+$/g, "");
+  return cleaned || uid;
+}
+
+export function cookieFilePathsFromToml(content: string): string[] {
+  return entriesFromConfig(parse(content)).map(entryPath);
 }
 
 type CookieEntry = string | { path: string; enable_watch_later: boolean };
