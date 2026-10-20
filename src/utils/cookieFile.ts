@@ -222,7 +222,7 @@ export function parseNetscapeCookieFile(filePath: string): NetscapeCookie[] {
         expiredAuthCookies
           .map((c) => `${c.name} (expired at ${formatExpiry(c.expiry)})`)
           .join(", ") +
-        ". They will be sent as session cookies so Bilibili can validate them.",
+        ". They will be sent as session cookies, but Bilibili may still reject them with -101; re-export the cookies or configure the .refresh_token sidecar.",
     );
   }
 
@@ -321,7 +321,7 @@ export function createCookieJarFromNetscape(
     logger.warn(
       `Sending ${staleAuthCookies.length} auth cookie(s)${source} as session cookies because their expiry has passed: ${staleAuthCookies.join(
         ", ",
-      )}`,
+      )}. If requests return -101, Bilibili no longer accepts them; re-export or refresh.`,
     );
   }
   if (rejected.length > 0) {
@@ -343,12 +343,30 @@ export function createCookieJarFromNetscape(
 }
 
 /**
+ * Remove local expiry from auth cookies already in a jar. Tough-cookie purges
+ * cookies when their browser expiry passes, which would drop the login cookie
+ * set mid-run; Bilibili validates the values server-side.
+ */
+function keepAuthCookiesAsSession(jar: CookieJar): void {
+  for (const cookie of jar.getCookiesSync("https://www.bilibili.com/", {
+    allPaths: true,
+  })) {
+    if (!AUTH_COOKIE_NAMES.has(cookie.key) || cookie.expires === "Infinity") {
+      continue;
+    }
+    cookie.expires = "Infinity";
+    jar.setCookieSync(cookie, "https://www.bilibili.com/");
+  }
+}
+
+/**
  * Write a CookieJar back to a Netscape format cookie file.
  */
 export function writeCookieJarToNetscape(
   jar: CookieJar,
   filePath: string,
-): void {
+): boolean | undefined {
+  keepAuthCookiesAsSession(jar);
   try {
     // Use serializeSync to get all cookies from the jar (avoids hardcoding domains)
     const serialized = jar.serializeSync();
@@ -415,6 +433,7 @@ export function writeCookieJarToNetscape(
 
     fs.writeFileSync(filePath, `${lines.join("\n")}\n`, "utf-8");
     logger.debug(`Persisted ${uniqueCookies.length} cookies to ${filePath}`);
+    return true;
   } catch (error) {
     logger.warn(`Failed to persist cookies to ${filePath}: ${error}`);
   }

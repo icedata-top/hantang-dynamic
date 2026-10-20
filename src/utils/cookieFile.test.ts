@@ -123,16 +123,19 @@ test("writeCookieJarToNetscape refuses to overwrite auth cookies missing from th
   });
 });
 
-test("writeCookieJarToNetscape persists a jar that still has auth cookies", () => {
-  withCookieFile(
-    cookieLine("SESSDATA", `hash%2C${NOW + 3600}%2Cmd5`, NOW + 3600) +
-      cookieLine("DedeUserID", "42"),
-    (path) => {
-      const jar = createCookieJarFromNetscape(parseNetscapeCookieFile(path));
-      writeCookieJarToNetscape(jar, path);
-      const persisted = readFileSync(path, "utf-8");
-      assert.match(persisted, /SESSDATA/);
-      assert.match(persisted, /DedeUserID/);
-    },
-  );
+test("writeCookieJarToNetscape persists auth cookies as session cookies", () => {
+  withCookieFile("", (path) => {
+    const jar = createCookieJarFromNetscape([]);
+    const future = new Date(Date.now() + 86_400_000).toUTCString();
+    for (const name of ["SESSDATA", "DedeUserID"]) {
+      jar.setCookieSync(
+        `${name}=value; Domain=bilibili.com; Path=/; Expires=${future}`,
+        "https://www.bilibili.com/",
+      );
+    }
+    writeCookieJarToNetscape(jar, path);
+    const persisted = readFileSync(path, "utf-8");
+    assert.match(persisted, /\t0\tSESSDATA\t/);
+    assert.match(persisted, /\t0\tDedeUserID\t/);
+  });
 });
