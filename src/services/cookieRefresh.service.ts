@@ -1,11 +1,10 @@
 import { constants, publicEncrypt } from "node:crypto";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { RequestConfig } from "../api/client";
 import type { AccountContext } from "../core/account";
 import { getCookieValue, writeCookieJarToNetscape } from "../utils/cookieFile";
 import { logger } from "../utils/logger";
+import { readRefreshToken, writeRefreshToken } from "../utils/refreshTokenFile";
 
-const REFRESH_TOKEN_SUFFIX = ".refresh_token";
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const INFO_URL =
   "https://passport.bilibili.com/x/passport-login/web/cookie/info";
@@ -24,21 +23,6 @@ JNrRuoEUXpabUzGB8QIDAQAB
 type ApiPayload = {
   data?: { refresh?: boolean; timestamp?: number; refresh_token?: string };
 };
-function tokenPath(cookieFilePath: string): string {
-  return `${cookieFilePath}${REFRESH_TOKEN_SUFFIX}`;
-}
-
-function readToken(cookieFilePath: string): string | null {
-  const path = tokenPath(cookieFilePath);
-  return existsSync(path) ? readFileSync(path, "utf-8").trim() || null : null;
-}
-
-function writeToken(cookieFilePath: string, token: string): void {
-  const path = tokenPath(cookieFilePath);
-  writeFileSync(`${path}.tmp`, `${token}\n`, { mode: 0o600 });
-  renameSync(`${path}.tmp`, path);
-}
-
 /** RSA-OAEP(SHA-256) of `refresh_<timestamp>`; this is the correspond path. */
 export function buildCorrespondPath(timestamp = Date.now()): string {
   return publicEncrypt(
@@ -60,7 +44,7 @@ export function extractRefreshCsrf(html: string): string | null {
 async function refreshAccount(account: AccountContext): Promise<void> {
   const { cookieJar: jar, cookieFilePath: file } = account;
   if (!jar || !file) return;
-  const token = readToken(file);
+  const token = readRefreshToken(file);
   if (!token) return;
 
   const csrf = getCookieValue(jar, "bili_jct");
@@ -98,7 +82,7 @@ async function refreshAccount(account: AccountContext): Promise<void> {
   );
   const nextToken = (refreshed.data as ApiPayload).data?.refresh_token;
   if (!writeCookieJarToNetscape(jar, file)) return;
-  if (nextToken) writeToken(file, nextToken);
+  if (nextToken) writeRefreshToken(file, nextToken);
   else logger.warn(`[uid=${account.uid}] refresh returned no refresh_token`);
 
   const nextCsrf = getCookieValue(jar, "bili_jct");

@@ -54,6 +54,25 @@ access_key = ""
 `csrf_token` maps to the `BILI_JCT` cookie and is needed for user relation
 operations. `access_key` maps to app authentication.
 
+## QR onboarding
+
+Create or renew an account without exporting cookies by hand:
+
+```bash
+pnpm login-qr <account> [--config config.toml]
+```
+
+The command prints a QR code, waits for the Bilibili app, then writes:
+
+```text
+./.cookies.<account>.txt
+./.cookies.<account>.txt.refresh_token
+```
+
+It also adds the cookie file to `[bilibili]` in `config.toml`, converting
+`cookie_file` to `cookie_files` when the account is added alongside another one.
+Use `--no-config` to skip the config edit.
+
 ## Cookie refresh
 
 Bilibili rotates `SESSDATA` and `bili_jct` through its passport cookie-refresh
