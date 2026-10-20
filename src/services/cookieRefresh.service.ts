@@ -1,4 +1,4 @@
-import { constants, publicEncrypt, randomUUID } from "node:crypto";
+import { constants, publicEncrypt } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -6,10 +6,12 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import axios, { type AxiosResponse } from "axios";
+import axios, { type AxiosInstance } from "axios";
+import { wrapper } from "axios-cookiejar-support";
 import type { CookieJar } from "tough-cookie";
 import type { AccountContext } from "../core/account";
 import {
+  getCookieValue,
   keepAuthCookiesAsSession,
   writeCookieJarToNetscape,
 } from "../utils/cookieFile";
@@ -17,15 +19,13 @@ import { logger } from "../utils/logger";
 
 const REFRESH_TOKEN_SUFFIX = ".refresh_token";
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
-
-const COOKIE_INFO_URL =
+const INFO_URL =
   "https://passport.bilibili.com/x/passport-login/web/cookie/info";
 const REFRESH_URL =
   "https://passport.bilibili.com/x/passport-login/web/cookie/refresh";
 const CONFIRM_URL =
   "https://passport.bilibili.com/x/passport-login/web/confirm/refresh";
 const CORRESPOND_URL = "https://www.bilibili.com/correspond/1";
-
 const PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
 MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDLgd2OAkcGVtoE3ThUREbio0Eg
 Uc/prcajMKXvkCKFCWhJYJcLkcM2DKKcSeFpD/j6Boy538YXnR6VhcuUJOhH2x71
@@ -33,246 +33,142 @@ nzPjfdTcqMz7djHum0qSZA0AyCBDABUqCrfNgCiJ00Ra7GmRj+YCK1NJEuewlb40
 JNrRuoEUXpabUzGB8QIDAQAB
 -----END PUBLIC KEY-----`;
 
-const http = axios.create({
-  timeout: 30_000,
-  maxRedirects: 0,
-  validateStatus: () => true,
-});
-
-interface ApiPayload {
+type ApiPayload = {
   code?: number;
   message?: string;
-  data?: { refresh?: boolean; refresh_token?: string; timestamp?: number };
+  data?: { refresh?: boolean; timestamp?: number; refresh_token?: string };
+};
+type JarDefaults = AxiosInstance["defaults"] & { jar?: CookieJar };
+const wrapWithCookieJar = wrapper as unknown as (
+  instance: AxiosInstance,
+) => AxiosInstance;
+
+function clientFor(jar: CookieJar, userAgent: string): AxiosInstance {
+  const client = wrapWithCookieJar(
+    axios.create({
+      timeout: 30_000,
+      maxRedirects: 0,
+      validateStatus: () => true,
+    }),
+  );
+  (client.defaults as JarDefaults).jar = jar;
+  client.defaults.withCredentials = true;
+  client.defaults.headers.common["User-Agent"] = userAgent;
+  client.defaults.headers.common.Referer = "https://www.bilibili.com";
+  return client;
 }
 
-function refreshTokenPath(cookieFilePath: string): string {
+function tokenPath(cookieFilePath: string): string {
   return `${cookieFilePath}${REFRESH_TOKEN_SUFFIX}`;
 }
 
-function readRefreshToken(cookieFilePath: string): string | null {
-  const path = refreshTokenPath(cookieFilePath);
-  if (!existsSync(path)) return null;
-  const token = readFileSync(path, "utf-8").trim();
-  return token || null;
+function readToken(cookieFilePath: string): string | null {
+  const path = tokenPath(cookieFilePath);
+  return existsSync(path) ? readFileSync(path, "utf-8").trim() || null : null;
 }
 
-function writeRefreshToken(cookieFilePath: string, token: string): void {
-  const path = refreshTokenPath(cookieFilePath);
-  const staged = `${path}.tmp`;
+function writeToken(cookieFilePath: string, token: string): void {
+  const staged = `${tokenPath(cookieFilePath)}.tmp`;
   writeFileSync(staged, `${token}\n`, { mode: 0o600 });
   chmodSync(staged, 0o600);
-  renameSync(staged, path);
+  renameSync(staged, tokenPath(cookieFilePath));
 }
 
 /** RSA-OAEP(SHA-256) of `refresh_<timestamp>`; this is the correspond path. */
-export function buildCorrespondPath(now = Date.now()): string {
-  const encrypted = publicEncrypt(
+export function buildCorrespondPath(timestamp = Date.now()): string {
+  return publicEncrypt(
     {
       key: PUBLIC_KEY,
       padding: constants.RSA_PKCS1_OAEP_PADDING,
       oaepHash: "sha256",
     },
-    Buffer.from(`refresh_${now}`),
-  );
-  return encrypted.toString("hex");
+    Buffer.from(`refresh_${timestamp}`),
+  ).toString("hex");
 }
 
 export function extractRefreshCsrf(html: string): string | null {
-  const match = /<div id=["']1-name["']>([^<]+)<\/div>/.exec(html);
-  return match?.[1]?.trim() || null;
-}
-
-function cookieHeader(account: AccountContext, randomBuvid3: boolean): string {
-  const jar = account.cookieJar;
-  if (!jar) return "";
-  const cookies = jar
-    .getCookiesSync("https://www.bilibili.com/", { allPaths: true })
-    .filter((cookie) => !(randomBuvid3 && cookie.key === "buvid3"))
-    .map((cookie) => `${cookie.key}=${cookie.value}`);
-  if (randomBuvid3) cookies.push(`buvid3=${randomUUID()}`);
-  return cookies.join("; ");
-}
-
-function cookieValue(jar: CookieJar, name: string): string | null {
   return (
-    jar
-      .getCookiesSync("https://www.bilibili.com/", { allPaths: true })
-      .find((cookie) => cookie.key === name)?.value ?? null
+    /<div id=["']1-name["']>([^<]+)<\/div>/.exec(html)?.[1]?.trim() || null
   );
 }
 
-function applySetCookie(
-  jar: CookieJar,
-  response: AxiosResponse,
-  url: string,
-): void {
-  const raw = response.headers["set-cookie"] as unknown;
-  const values = Array.isArray(raw)
-    ? raw
-    : typeof raw === "string"
-      ? [raw]
-      : [];
-  for (const value of values) {
-    try {
-      jar.setCookieSync(value, url);
-    } catch (error) {
-      logger.warn(
-        `Failed to apply cookie from ${url}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  }
+function payload(response: { data: unknown }): ApiPayload {
+  return (response.data ?? {}) as ApiPayload;
 }
 
-function headers(
-  account: AccountContext,
-  cookie: string,
-  contentType?: string,
-): Record<string, string> {
-  return {
-    "User-Agent": account.stateManager.lastUA,
-    Referer: "https://www.bilibili.com",
-    Cookie: cookie,
-    ...(contentType ? { "Content-Type": contentType } : {}),
-  };
-}
-
-function payloadCode(response: AxiosResponse): number | undefined {
-  const data = response.data as ApiPayload | undefined;
-  return typeof data?.code === "number" ? data.code : undefined;
-}
-
-function payloadMessage(response: AxiosResponse): string {
-  const data = response.data as ApiPayload | undefined;
-  return typeof data?.message === "string" ? data.message : "";
-}
-
-function failure(response: AxiosResponse, operation: string): Error {
-  return new Error(
+function fail(operation: string, response: { status: number; data: unknown }) {
+  const body = payload(response);
+  throw new Error(
     `${operation} failed: HTTP ${response.status}, code ${String(
-      payloadCode(response),
-    )} ${payloadMessage(response)}`,
+      body.code,
+    )} ${body.message ?? ""}`,
   );
 }
 
-async function fetchRefreshCsrf(
-  account: AccountContext,
-  jar: CookieJar,
-  timestamp: number,
-): Promise<string> {
-  const url = `${CORRESPOND_URL}/${buildCorrespondPath(timestamp)}`;
-  const response = await http.get(url, {
-    headers: {
-      ...headers(account, cookieHeader(account, true)),
-      Accept: "text/html",
-    },
-    responseType: "text",
-  });
-  applySetCookie(jar, response, url);
-  if (response.status !== 200) throw failure(response, "correspond");
-  const csrf = extractRefreshCsrf(String(response.data));
-  if (!csrf) throw new Error("correspond page did not contain refresh_csrf");
-  return csrf;
-}
+async function refreshAccount(account: AccountContext): Promise<void> {
+  const { cookieJar: jar, cookieFilePath: file } = account;
+  if (!jar || !file) return;
+  const token = readToken(file);
+  if (!token) return;
 
-async function refreshAccount(account: AccountContext): Promise<boolean> {
-  const file = account.cookieFilePath;
-  const jar = account.cookieJar;
-  if (!file || !jar) return false;
-
-  const refreshToken = readRefreshToken(file);
-  if (!refreshToken) return false;
-
-  const csrf = cookieValue(jar, "bili_jct");
+  const client = clientFor(jar, account.stateManager.lastUA);
+  const csrf = getCookieValue(jar, "bili_jct");
   if (!csrf) throw new Error("cookie refresh requires bili_jct");
 
-  const infoUrl = `${COOKIE_INFO_URL}?csrf=${encodeURIComponent(csrf)}`;
-  const info = await http.get(infoUrl, {
-    headers: headers(account, cookieHeader(account, false)),
-  });
-  applySetCookie(jar, info, infoUrl);
-  if (info.status !== 200 || payloadCode(info) !== 0) {
-    throw failure(info, "cookie/info");
-  }
-  const infoData = (info.data as ApiPayload | undefined)?.data;
-  if (infoData?.refresh !== true) {
-    logger.debug(`[uid=${account.uid}] Bilibili cookies do not need refresh`);
-    return false;
-  }
+  const info = await client.get(INFO_URL, { params: { csrf } });
+  const infoBody = payload(info);
+  if (info.status !== 200 || infoBody.code !== 0) fail("cookie/info", info);
+  if (infoBody.data?.refresh !== true) return;
 
-  // Prefer Bilibili's timestamp over the local clock: correspondPath is only
-  // accepted while its timestamp is fresh, and local clock drift is common.
   const timestamp =
-    typeof infoData.timestamp === "number" && infoData.timestamp > 0
-      ? infoData.timestamp
+    typeof infoBody.data.timestamp === "number" && infoBody.data.timestamp > 0
+      ? infoBody.data.timestamp
       : Date.now();
-  const refreshCsrf = await fetchRefreshCsrf(account, jar, timestamp);
-  const response = await http.post(
+  const correspond = await client.get(
+    `${CORRESPOND_URL}/${buildCorrespondPath(timestamp)}`,
+    { responseType: "text", headers: { Accept: "text/html" } },
+  );
+  if (correspond.status !== 200) fail("correspond", correspond);
+  const refreshCsrf = extractRefreshCsrf(String(correspond.data));
+  if (!refreshCsrf) throw new Error("correspond page has no refresh_csrf");
+
+  const refreshed = await client.post(
     REFRESH_URL,
     new URLSearchParams({
       csrf,
       refresh_csrf: refreshCsrf,
-      refresh_token: refreshToken,
+      refresh_token: token,
       source: "main_web",
     }),
-    {
-      headers: headers(
-        account,
-        cookieHeader(account, true),
-        "application/x-www-form-urlencoded",
-      ),
-    },
   );
-  applySetCookie(jar, response, REFRESH_URL);
-  if (response.status !== 200 || payloadCode(response) !== 0) {
-    throw failure(response, "cookie/refresh");
-  }
+  const refreshedBody = payload(refreshed);
+  if (refreshed.status !== 200 || refreshedBody.code !== 0)
+    fail("cookie/refresh", refreshed);
 
-  const nextRefreshToken = (response.data as ApiPayload | undefined)?.data
-    ?.refresh_token;
   keepAuthCookiesAsSession(jar);
   writeCookieJarToNetscape(jar, file);
-  if (typeof nextRefreshToken === "string" && nextRefreshToken) {
-    writeRefreshToken(file, nextRefreshToken);
+  if (refreshedBody.data?.refresh_token) {
+    writeToken(file, refreshedBody.data.refresh_token);
   } else {
-    logger.warn(
-      `[uid=${account.uid}] Bilibili cookie refresh returned no refresh_token; keeping the old one`,
-    );
+    logger.warn(`[uid=${account.uid}] refresh returned no refresh_token`);
   }
 
-  const nextCsrf = cookieValue(jar, "bili_jct");
+  const nextCsrf = getCookieValue(jar, "bili_jct");
   if (!nextCsrf) throw new Error("refreshed cookies are missing bili_jct");
-  const confirm = await http.post(
+  const confirmed = await client.post(
     CONFIRM_URL,
-    new URLSearchParams({
-      csrf: nextCsrf,
-      refresh_token: refreshToken,
-    }),
-    {
-      headers: headers(
-        account,
-        cookieHeader(account, false),
-        "application/x-www-form-urlencoded",
-      ),
-    },
+    new URLSearchParams({ csrf: nextCsrf, refresh_token: token }),
   );
-  applySetCookie(jar, confirm, CONFIRM_URL);
-  if (confirm.status !== 200 || payloadCode(confirm) !== 0) {
-    logger.warn(
-      `[uid=${account.uid}] Bilibili cookie refresh confirmation failed: ${
-        failure(confirm, "confirm/refresh").message
-      }`,
-    );
+  if (confirmed.status !== 200 || payload(confirmed).code !== 0) {
+    logger.warn(`[uid=${account.uid}] cookie refresh confirmation failed`);
   } else {
     logger.info(`[uid=${account.uid}] Bilibili cookies refreshed`);
   }
-  return true;
 }
 
 /**
- * Performs Bilibili's passport cookie refresh when `<cookie file>.refresh_token`
- * exists. The sidecar is updated in place after every successful rotation.
+ * Refreshes cookies when `<cookie file>.refresh_token` exists. The sidecar holds
+ * the browser's `ac_time_value` and is replaced after each rotation.
  */
 export class CookieRefreshService {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -284,18 +180,14 @@ export class CookieRefreshService {
     if (this.running) return;
     this.running = true;
     await this.refreshAll();
-    this.timer = setInterval(() => {
-      void this.refreshAll();
-    }, CHECK_INTERVAL_MS);
+    this.timer = setInterval(() => void this.refreshAll(), CHECK_INTERVAL_MS);
     this.timer.unref?.();
   }
 
   stop(): void {
     this.running = false;
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
   }
 
   private async refreshAll(): Promise<void> {
