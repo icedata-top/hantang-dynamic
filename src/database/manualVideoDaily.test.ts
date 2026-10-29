@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { Connection } from "mysql2/promise";
 import type { PoolClient } from "pg";
 import { backfillVideoDaily } from "./manualVideoDaily";
 
 type Row = { record_date: string; aid: string; coin: number };
-const row = (date: string, aid: string, coin = 1): Row => ({
-  record_date: date,
+const row = (record_date: string, aid: string, coin = 1): Row => ({
+  record_date,
   aid,
   coin,
 });
@@ -19,157 +18,122 @@ const compare = (a: Row, b: Row) =>
       : a.record_date.localeCompare(b.record_date);
 
 function fixture(
-  initialSource: Row[],
-  initialTarget: Row[],
-  chunkExists = true,
-  splitChunks = false,
+  source: Row[],
+  target: Row[],
+  {
+    missingChunk = false,
+    split = false,
+    failInsert = 0,
+    failCompression = false,
+    failDelete = false,
+  } = {},
 ) {
-  let sourceRows = [...initialSource];
-  let targetRows = [...initialTarget];
-  let batch: Row[] = [];
+  let sourceRows = [...source],
+    targetRows = [...target],
+    batch: Row[] = [];
   let snapshot: Row[] | undefined;
-  let exists = chunkExists;
-  let failInsert = false;
-  let failDelete = false;
-  let failCompression = false;
-  let compressions = 0;
-  const insertedBatches: string[][] = [];
-  const sourceWindows: string[][] = [];
+  let exists = !missingChunk,
+    inserts = 0,
+    compressions = 0;
+  const deleted: string[] = [],
+    windows: string[][] = [];
   let sourceAtFirstInsert: Row[] | undefined;
-  const source = {
-    async query(sql: string, args: string[]) {
-      assert.ok(sql.includes("`source_db`.`daily_history`"));
-      const [from, through, after] = args;
-      sourceWindows.push([from, through]);
-      const aids = [
-        ...new Set(
-          sourceRows
-            .filter(
-              (r) =>
-                r.record_date >= from &&
-                r.record_date <= through &&
-                BigInt(r.aid) > BigInt(after),
-            )
-            .sort(compare)
-            .map((r) => r.aid),
-        ),
-      ];
-      return [aids.slice(0, 1).map((aid) => ({ aid }))];
-    },
-    async execute(sql: string, args: string[]) {
-      assert.ok(sql.includes("`source_db`.`daily_history`"));
-      if (sql.startsWith("DELETE")) {
-        if (failDelete) throw new Error("delete failed");
-        const keys = new Set<string>();
-        for (let i = 0; i < args.length; i += 2) {
-          assert.ok(
-            targetRows.some((r) => key(r) === `${args[i]}/${args[i + 1]}`),
-          );
-          assert.ok(args[i] < "2026-04-18");
-          keys.add(`${args[i]}/${args[i + 1]}`);
-        }
-        sourceRows = sourceRows.filter((r) => !keys.has(key(r)));
-        return [{ affectedRows: keys.size }];
-      }
-      const [from, through, after, last, cursorAid, cursorDate] = args;
-      let rows = sourceRows.filter(
-        (r) => r.record_date >= from && r.record_date <= through,
-      );
-      if (sql.includes("ORDER BY record_date,aid")) {
-        return [
-          [...rows]
-            .sort(
-              (a, b) =>
-                a.record_date.localeCompare(b.record_date) || compare(a, b),
-            )
-            .slice(0, 1),
-        ];
-      }
-      rows = rows.filter(
-        (r) =>
-          BigInt(r.aid) > BigInt(after) &&
-          BigInt(r.aid) <= BigInt(last) &&
-          (BigInt(r.aid) > BigInt(cursorAid) ||
-            (r.aid === cursorAid && r.record_date > cursorDate)),
-      );
-      const page = rows.sort(compare).slice(0, 1000);
-      return [
-        sql.startsWith("SELECT `record_date`,`aid` FROM")
-          ? page.map(({ record_date, aid }) => ({ record_date, aid }))
-          : page,
-      ];
-    },
-  } as unknown as Pick<Connection, "execute" | "query">;
   const pg = {
     async query(sql: string, args: string[] = []) {
       if (sql.startsWith("TRUNCATE")) batch = [];
-      if (sql.startsWith("INSERT INTO pg_temp")) {
-        const width = sql.includes('("record_date","aid") VALUES') ? 2 : 9;
-        for (let i = 0; i < args.length; i += width)
-          batch.push(
-            row(args[i], args[i + 1], width === 2 ? 1 : Number(args[i + 2])),
-          );
-      }
-      if (sql.startsWith("SELECT b.record_date")) {
-        const [today, date, aid, from, through, firstAid, lastAid] = args;
-        assert.match(
-          sql,
-          /t\.record_date >= \$4::date AND t\.record_date <= \$5::date AND t\.aid >= \$6::bigint AND t\.aid <= \$7::bigint/,
-        );
-        for (const r of batch) {
-          assert.ok(r.record_date >= from && r.record_date <= through);
-          assert.ok(
-            BigInt(r.aid) >= BigInt(firstAid) &&
-              BigInt(r.aid) <= BigInt(lastAid),
-          );
-        }
-        return {
-          rows: batch
-            .filter(
-              (r) =>
-                r.record_date < today &&
-                (r.record_date > date ||
-                  (r.record_date === date && BigInt(r.aid) > BigInt(aid))) &&
-                targetRows.some((t) => key(t) === key(r)),
-            )
-            .sort(
-              (a, b) =>
-                a.record_date.localeCompare(b.record_date) || compare(a, b),
-            )
-            .slice(0, 1000),
-        };
-      }
-      if (
-        sql.includes("FROM timescaledb_information.chunks") &&
-        sql.includes("AS start,")
-      )
-        return {
-          rows: !exists
-            ? []
-            : splitChunks
+      if (sql.includes("FROM timescaledb_information.chunks")) {
+        if (!exists) return { rows: [] };
+        if (sql.includes("AS start,"))
+          return {
+            rows: split
               ? [
                   { start: "2026-04-16", finish: "2026-04-16" },
                   { start: "2026-04-17", finish: "2026-04-18" },
                 ]
               : [{ start: "2026-04-16", finish: "2026-04-18" }],
-        };
-      if (sql.includes("FROM timescaledb_information.chunks"))
+          };
         return {
-          rows: exists
-            ? [
-                {
-                  name:
-                    splitChunks && args[1] > "2026-04-16"
-                      ? "second_chunk"
-                      : "chunk",
-                  is_compressed: chunkExists,
-                  finish:
-                    splitChunks && args[1] <= "2026-04-16"
-                      ? "2026-04-16"
-                      : "2026-04-30",
-                },
-              ]
-            : [],
+          rows: [
+            {
+              name: "chunk",
+              is_compressed: !missingChunk,
+              finish:
+                split && args[1] === "2026-04-16" ? "2026-04-16" : "2026-04-30",
+            },
+          ],
+        };
+      }
+      if (sql.startsWith("SELECT aid FROM")) {
+        windows.push(args.slice(0, 2));
+        const aids = [
+          ...new Set(
+            sourceRows
+              .filter(
+                (r) =>
+                  r.record_date >= args[0] &&
+                  r.record_date <= args[1] &&
+                  BigInt(r.aid) > BigInt(args[2]),
+              )
+              .sort(compare)
+              .map((r) => r.aid),
+          ),
+        ];
+        return { rows: aids.slice(0, Number(args[3])).map((aid) => ({ aid })) };
+      }
+      if (sql.startsWith("WITH page AS")) {
+        const [from, through, after, last, aid, date] = args;
+        const page = sourceRows
+          .filter(
+            (r) =>
+              r.record_date >= from &&
+              r.record_date <= through &&
+              BigInt(r.aid) > BigInt(after) &&
+              BigInt(r.aid) <= BigInt(last) &&
+              (BigInt(r.aid) > BigInt(aid) ||
+                (r.aid === aid && r.record_date > date)),
+          )
+          .sort(compare)
+          .slice(0, 1000);
+        batch.push(...page);
+        return { rows: page };
+      }
+      if (sql.startsWith("SELECT b.record_date")) {
+        const dates = [...new Set(batch.map((r) => r.record_date))];
+        return {
+          rows: dates.map((date) => ({
+            date,
+            complete: batch
+              .filter((r) => r.record_date === date)
+              .every((r) => targetRows.some((t) => key(t) === key(r))),
+          })),
+        };
+      }
+      if (sql.startsWith('DELETE FROM "hantang_dynamic".mysql_video_daily')) {
+        assert.match(
+          sql,
+          /WHERE record_date = \$1::date AND record_date < \$2::date/,
+        );
+        assert.ok(args[0] < args[1]);
+        assert.ok(
+          sourceRows
+            .filter((r) => r.record_date === args[0])
+            .every((r) => targetRows.some((t) => key(t) === key(r))),
+          "whole date must exist in committed PG before deletion",
+        );
+        assert.equal(snapshot, undefined);
+        if (failDelete) throw new Error("delete failed");
+        sourceRows = sourceRows.filter((r) => r.record_date !== args[0]);
+        deleted.push(args[0]);
+      }
+      if (sql.startsWith("SELECT record_date::text,aid::text"))
+        return {
+          rows: sourceRows
+            .filter((r) => r.record_date >= args[0] && r.record_date <= args[1])
+            .sort(
+              (a, b) =>
+                a.record_date.localeCompare(b.record_date) || compare(a, b),
+            )
+            .slice(0, 1),
         };
       if (sql === "BEGIN") snapshot = [...targetRows];
       if (sql === "ROLLBACK") {
@@ -177,29 +141,15 @@ function fixture(
         snapshot = undefined;
       }
       if (sql === "COMMIT") snapshot = undefined;
-      if (sql.startsWith('INSERT INTO "hantang_dynamic"')) {
+      if (sql.startsWith('INSERT INTO "hantang_dynamic".video_daily')) {
         sourceAtFirstInsert ??= [...sourceRows];
-        if (failInsert) throw new Error("insert failed");
+        if (++inserts === failInsert) throw new Error("insert failed");
         const candidates = sql.includes("FROM pg_temp")
           ? batch
           : [row(args[0], args[1], Number(args[2]))];
-        if (sql.includes("FROM pg_temp")) {
-          assert.match(
-            sql,
-            /t\.record_date >= \$1::date AND t\.record_date <= \$2::date AND t\.aid > \$3::bigint AND t\.aid <= \$4::bigint/,
-          );
-          for (const r of batch) {
-            assert.ok(r.record_date >= args[0] && r.record_date <= args[1]);
-            assert.ok(
-              BigInt(r.aid) > BigInt(args[2]) &&
-                BigInt(r.aid) <= BigInt(args[3]),
-            );
-          }
-        }
         const missing = candidates.filter(
           (r) => !targetRows.some((t) => key(t) === key(r)),
         );
-        insertedBatches.push(missing.map(key));
         targetRows.push(...missing);
         exists = true;
         return { rows: [], rowCount: missing.length };
@@ -213,130 +163,111 @@ function fixture(
   } as unknown as PoolClient;
   return {
     run: () =>
-      backfillVideoDaily(pg, source, {
+      backfillVideoDaily(pg, {
         startDate: "2026-04-16",
         endDate: "2026-04-18",
         schema: "hantang_dynamic",
         today: "2026-04-18",
         size: 1,
-        sourceTable: "`source_db`.`daily_history`",
       }),
     source: () => sourceRows,
     target: () => targetRows,
-    batches: () => insertedBatches,
-    windows: () => sourceWindows,
-    sourceAtFirstInsert: () => sourceAtFirstInsert,
+    deleted: () => deleted,
+    firstInsertSource: () => sourceAtFirstInsert,
+    windows: () => windows,
     compressions: () => compressions,
-    failCompression: () => {
-      failCompression = true;
-    },
-    failInsert: () => {
-      failInsert = true;
-    },
-    failDelete: (value: boolean) => {
-      failDelete = value;
+    allowDelete: () => {
+      failDelete = false;
     },
   };
 }
 
-test("cleanup precedes inserts, preserves existing values and keeps today's source rows", async () => {
+test("complete dates are cleaned first, partial dates wait for all aids, existing values and today are preserved", async () => {
   const f = fixture(
     [
-      row("2026-04-16", "1", 99),
-      row("2026-04-16", "2"),
+      row("2026-04-16", "1"),
+      row("2026-04-17", "1", 99),
       row("2026-04-17", "2"),
       row("2026-04-18", "2"),
     ],
-    [row("2026-04-16", "1", 3)],
+    [row("2026-04-16", "1"), row("2026-04-17", "1", 3)],
   );
   await f.run();
-  assert.deepEqual(f.source(), [row("2026-04-18", "2")]);
-  assert.equal(f.target().find((r) => r.aid === "1")?.coin, 3);
-  assert.deepEqual(f.batches(), [
-    ["2026-04-16/2", "2026-04-17/2", "2026-04-18/2"],
+  assert.deepEqual(f.firstInsertSource(), [
+    row("2026-04-17", "1", 99),
+    row("2026-04-17", "2"),
+    row("2026-04-18", "2"),
   ]);
-  assert.equal(f.compressions(), 1);
-});
-
-test("cleanup succeeds before an insert failure without deleting missing records", async () => {
-  const f = fixture(
-    [row("2026-04-16", "1"), row("2026-04-17", "2")],
-    [row("2026-04-16", "1")],
+  assert.deepEqual(f.deleted(), ["2026-04-16", "2026-04-17"]);
+  assert.deepEqual(f.source(), [row("2026-04-18", "2")]);
+  assert.equal(
+    f.target().find((r) => r.record_date === "2026-04-17" && r.aid === "1")
+      ?.coin,
+    3,
   );
-  f.failInsert();
-  await assert.rejects(f.run(), /insert failed/);
-  assert.deepEqual(f.source(), [row("2026-04-17", "2")]);
-  assert.deepEqual(f.target(), [row("2026-04-16", "1")]);
 });
 
-test("committed insert survives source delete failure and rerun cleans up without duplication", async () => {
-  const f = fixture([row("2026-04-16", "2"), row("2026-04-17", "2")], []);
-  f.failDelete(true);
+test("failure after one committed aid retains the entire incomplete date", async () => {
+  const f = fixture([row("2026-04-16", "1"), row("2026-04-16", "2")], [], {
+    failInsert: 2,
+  });
+  await assert.rejects(f.run(), /insert failed/);
+  assert.deepEqual(f.target(), [row("2026-04-16", "1")]);
+  assert.equal(f.source().length, 2);
+  assert.deepEqual(f.deleted(), []);
+});
+
+test("source delete failure can be retried without duplicate inserts", async () => {
+  const f = fixture([row("2026-04-16", "2"), row("2026-04-17", "2")], [], {
+    failDelete: true,
+  });
   await assert.rejects(f.run(), /delete failed/);
   assert.equal(f.target().length, 2);
   assert.equal(f.source().length, 2);
-  f.failDelete(false);
+  f.allowDelete();
   await f.run();
   assert.equal(f.target().length, 2);
   assert.deepEqual(f.source(), []);
 });
 
-test("missing chunk is seeded once then the aid batch includes all dates", async () => {
+test("missing target chunk is seeded and large aid values span dates without source loss", async () => {
   const f = fixture(
     [
-      row("2026-04-16", "1"),
-      row("2026-04-17", "1"),
+      row("2026-04-16", "9007199254740993"),
       row("2026-04-17", "9007199254740993"),
     ],
     [],
-    false,
+    { missingChunk: true },
   );
   await f.run();
+  assert.equal(f.target().length, 2);
   assert.deepEqual(f.source(), []);
-  assert.equal(f.target().length, 3);
-  assert.deepEqual(f.batches(), [
-    ["2026-04-16/1"],
-    ["2026-04-17/1"],
-    ["2026-04-17/9007199254740993"],
-  ]);
   assert.equal(f.compressions(), 0);
 });
 
-test("compression failure retains source after committed insert", async () => {
-  const f = fixture([row("2026-04-16", "2")], []);
-  f.failCompression();
+test("compression failure retains the whole date after committed insert", async () => {
+  const f = fixture([row("2026-04-16", "2")], [], { failCompression: true });
   await assert.rejects(f.run(), /compression failed/);
   assert.deepEqual(f.target(), [row("2026-04-16", "2")]);
-  assert.deepEqual(f.source(), [row("2026-04-16", "2")]);
+  assert.equal(f.source().length, 1);
 });
 
-test("all chunks are cleaned in aid batches before missing rows are inserted per chunk", async () => {
+test("every chunk is cleaned before inserts and both passes preserve chunk locality", async () => {
   const f = fixture(
-    [
-      row("2026-04-16", "1"),
-      row("2026-04-17", "1"),
-      row("2026-04-16", "2"),
-      row("2026-04-17", "2"),
-    ],
+    [row("2026-04-16", "1"), row("2026-04-17", "1"), row("2026-04-18", "2")],
     [row("2026-04-16", "1"), row("2026-04-17", "1")],
-    true,
-    true,
+    { split: true },
   );
   await f.run();
-  assert.deepEqual(f.sourceAtFirstInsert(), [
-    row("2026-04-16", "2"),
-    row("2026-04-17", "2"),
-  ]);
+  assert.deepEqual(f.firstInsertSource(), [row("2026-04-18", "2")]);
   assert.ok(
     f
       .windows()
       .every(
         ([from, through]) =>
           (from === "2026-04-16" && through === "2026-04-16") ||
-          (from === "2026-04-17" && through === "2026-04-18"),
+          (from >= "2026-04-17" && through === "2026-04-18"),
       ),
   );
-  assert.deepEqual(f.batches(), [["2026-04-16/2"], ["2026-04-17/2"]]);
-  assert.equal(f.compressions(), 2);
-  assert.deepEqual(f.source(), []);
+  assert.deepEqual(f.deleted(), ["2026-04-16", "2026-04-17"]);
 });

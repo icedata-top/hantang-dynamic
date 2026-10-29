@@ -1,6 +1,4 @@
-import type { Connection, RowDataPacket } from "mysql2/promise";
 import type { Pool, PoolClient } from "pg";
-import { connectVideoDailySource } from "./mysqlFdwSource";
 
 const columns = [
   "record_date",
@@ -14,7 +12,6 @@ const columns = [
   "like",
 ];
 const quoted = columns.map((column) => `"${column}"`).join(",");
-const mysqlColumns = columns.map((column) => `\`${column}\``).join(",");
 const identifier = (value: string) => `"${value.replace(/"/g, '""')}"`;
 
 export async function syncVideoDailyRange(
@@ -49,39 +46,28 @@ export async function syncVideoDailyRange(
     day: "2-digit",
   }).format(new Date());
   const pg = await pool.connect();
-  let source: Connection | undefined;
   try {
-    const resolved = await connectVideoDailySource(pg, options.schema);
-    source = resolved.connection;
-    await backfillVideoDaily(pg, source, {
-      ...options,
-      today,
-      size,
-      sourceTable: resolved.table,
-    });
+    await backfillVideoDaily(pg, { ...options, today, size });
   } finally {
     pg.release(true);
-    await source?.end();
   }
 }
 
-// Connections are owned by the caller; the worker holds the shared sync lock.
+// The caller owns the PG connection; the worker holds the shared sync lock.
 export async function backfillVideoDaily(
   pg: PoolClient,
-  source: Pick<Connection, "execute" | "query">,
   options: {
     startDate: string;
     endDate: string;
     schema: string;
     today: string;
     size: number;
-    sourceTable: string;
     onProgress?: (message: string) => void;
   },
 ): Promise<void> {
   const { startDate, endDate, schema, today, size } = options;
   const target = `${identifier(schema)}.video_daily`;
-  const sourceTable = options.sourceTable;
+  const sourceTable = `${identifier(schema)}.mysql_video_daily`;
   let locked = false;
   try {
     await pg.query(
@@ -92,94 +78,77 @@ export async function backfillVideoDaily(
     await pg.query(
       `CREATE TEMP TABLE manual_daily_batch (LIKE ${target} INCLUDING DEFAULTS, PRIMARY KEY(record_date,aid)) ON COMMIT PRESERVE ROWS`,
     );
-    async function removeVerified(
-      from: string,
-      through: string,
-      firstAid: string,
-      lastAid: string,
-    ): Promise<void> {
-      let date = "0001-01-01",
-        aid = "-9223372036854775808";
-      while (true) {
-        const keys = await pg.query(
-          `SELECT b.record_date::text, b.aid::text FROM pg_temp.manual_daily_batch b WHERE b.record_date < $1::date AND (b.record_date,b.aid)>($2::date,$3::bigint) AND EXISTS (SELECT 1 FROM ${target} t WHERE t.record_date >= $4::date AND t.record_date <= $5::date AND t.aid >= $6::bigint AND t.aid <= $7::bigint AND (t.record_date,t.aid)=(b.record_date,b.aid)) ORDER BY b.record_date,b.aid LIMIT 1000`,
-          [today, date, aid, from, through, firstAid, lastAid],
-        );
-        if (!keys.rows.length) break;
-        const values = keys.rows.flatMap((row) => [row.record_date, row.aid]);
-        await source.execute(
-          `DELETE FROM ${sourceTable} WHERE (record_date,aid) IN (${keys.rows.map(() => "(?,CAST(? AS SIGNED))").join(",")})`,
-          values,
-        );
-        const last = keys.rows[keys.rows.length - 1];
-        date = last.record_date;
-        aid = last.aid;
-      }
-    }
-    async function stage(
-      from: string,
-      through: string,
-      after: string,
-      last: string,
-      cleanup: boolean,
-    ): Promise<void> {
-      await pg.query("TRUNCATE pg_temp.manual_daily_batch");
-      const selectedColumns = cleanup ? columns.slice(0, 2) : columns;
-      const sourceColumns = selectedColumns
-        .map((column) => `\`${column}\``)
-        .join(",");
-      const targetColumns = selectedColumns.map(identifier).join(",");
-      let cursorAid = after,
-        cursorDate = "0001-01-01";
-      while (true) {
-        const [rows] = await source.execute<RowDataPacket[]>(
-          `SELECT ${sourceColumns} FROM ${sourceTable} WHERE record_date >= ? AND record_date <= ? AND aid > CAST(? AS SIGNED) AND aid <= CAST(? AS SIGNED) AND (aid,record_date)>(CAST(? AS SIGNED),?) ORDER BY aid,record_date LIMIT 1000`,
-          [from, through, after, last, cursorAid, cursorDate],
-        );
-        if (!rows.length) break;
-        const values = rows.flatMap((row) =>
-          selectedColumns.map((column) => row[column]),
-        );
-        await pg.query(
-          `INSERT INTO pg_temp.manual_daily_batch (${targetColumns}) VALUES ${rows.map((_, i) => `(${selectedColumns.map((_, j) => `$${i * selectedColumns.length + j + 1}`).join(",")})`).join(",")}`,
-          values,
-        );
-        const tail = rows[rows.length - 1];
-        cursorAid = String(tail.aid);
-        cursorDate = String(tail.record_date);
-        if (cleanup) {
-          const dates = rows.map((row) => String(row.record_date));
-          await removeVerified(
-            dates.reduce((a, b) => (a < b ? a : b)),
-            dates.reduce((a, b) => (a > b ? a : b)),
-            String(rows[0].aid),
-            String(tail.aid),
-          );
-          await pg.query("TRUNCATE pg_temp.manual_daily_batch");
-        }
-      }
-    }
     async function batches(
       from: string,
       through: string,
       insert: boolean,
       compressedChunk?: string,
     ): Promise<void> {
+      const completeDays = new Map<string, boolean>();
+      async function recordCoverage(firstAid: string, lastAid: string) {
+        const coverage = await pg.query<{ date: string; complete: boolean }>(
+          `SELECT b.record_date::text AS date,
+             bool_and(EXISTS (SELECT 1 FROM ${target} t
+               WHERE t.record_date >= $1::date AND t.record_date <= $2::date
+                 AND t.aid >= $3::bigint AND t.aid <= $4::bigint
+                 AND (t.record_date,t.aid)=(b.record_date,b.aid))) AS complete
+           FROM pg_temp.manual_daily_batch b GROUP BY b.record_date`,
+          [from, through, firstAid, lastAid],
+        );
+        for (const row of coverage.rows)
+          completeDays.set(
+            row.date,
+            completeDays.get(row.date) !== false && row.complete,
+          );
+      }
       let after = "-9223372036854775808";
       while (true) {
-        const [aids] = await source.query<RowDataPacket[]>(
-          `SELECT DISTINCT aid FROM ${sourceTable} WHERE record_date >= ? AND record_date <= ? AND aid > CAST(? AS SIGNED) ORDER BY aid LIMIT ${size}`,
-          [from, through, after],
+        const aids = await pg.query<{ aid: string }>(
+          `SELECT aid FROM ${sourceTable}
+           WHERE record_date >= $1::date AND record_date <= $2::date
+             AND aid > $3::bigint GROUP BY aid ORDER BY aid LIMIT $4::integer`,
+          [from, through, after, size],
         );
-        if (!aids.length) break;
-        const last = String(aids[aids.length - 1].aid);
-        await stage(from, through, after, last, !insert);
+        if (!aids.rows.length) break;
+        const firstAid = String(aids.rows[0].aid);
+        const last = String(aids.rows[aids.rows.length - 1].aid);
+        await pg.query("TRUNCATE pg_temp.manual_daily_batch");
+        const selected = insert ? quoted : '"record_date","aid"';
+        let cursorAid = after;
+        let cursorDate = "0001-01-01";
+        while (true) {
+          const page = await pg.query<{ aid: string; record_date: string }>(
+            `WITH page AS (
+               SELECT ${selected} FROM ${sourceTable}
+               WHERE record_date >= $1::date AND record_date <= $2::date
+                 AND aid > $3::bigint AND aid <= $4::bigint
+                 AND (aid > $5::bigint OR (aid = $5::bigint AND record_date > $6::date))
+               ORDER BY aid,record_date LIMIT 1000
+             ), staged AS (
+               INSERT INTO pg_temp.manual_daily_batch (${selected})
+               SELECT ${selected} FROM page RETURNING aid,record_date
+             ) SELECT aid::text,record_date::text FROM staged ORDER BY staged.aid,staged.record_date`,
+            [from, through, after, last, cursorAid, cursorDate],
+          );
+          if (!page.rows.length) break;
+          const tail = page.rows[page.rows.length - 1];
+          cursorAid = tail.aid;
+          cursorDate = tail.record_date;
+          if (!insert) {
+            await recordCoverage(firstAid, last);
+            await pg.query("TRUNCATE pg_temp.manual_daily_batch");
+          }
+        }
         if (insert) {
           await pg.query("BEGIN");
           let inserted = 0;
           try {
             const result = await pg.query(
-              `INSERT INTO ${target} (${quoted}) SELECT ${quoted} FROM pg_temp.manual_daily_batch b WHERE NOT EXISTS (SELECT 1 FROM ${target} t WHERE t.record_date >= $1::date AND t.record_date <= $2::date AND t.aid > $3::bigint AND t.aid <= $4::bigint AND (t.record_date,t.aid)=(b.record_date,b.aid))`,
+              `INSERT INTO ${target} (${quoted}) SELECT ${quoted} FROM pg_temp.manual_daily_batch b
+               WHERE NOT EXISTS (SELECT 1 FROM ${target} t
+                 WHERE t.record_date >= $1::date AND t.record_date <= $2::date
+                   AND t.aid > $3::bigint AND t.aid <= $4::bigint
+                   AND (t.record_date,t.aid)=(b.record_date,b.aid))`,
               [from, through, after, last],
             );
             inserted = result.rowCount ?? 0;
@@ -188,18 +157,28 @@ export async function backfillVideoDaily(
             await pg.query("ROLLBACK");
             throw error;
           }
-          if (inserted && compressedChunk) {
+          if (inserted && compressedChunk)
             await pg.query("CALL convert_to_columnstore($1::regclass)", [
               compressedChunk,
             ]);
-          }
+          await recordCoverage(firstAid, last);
         }
-        if (insert)
-          await removeVerified(from, through, String(aids[0].aid), last);
         options.onProgress?.(
           `video_daily ${insert ? "insert" : "cleanup"}: ${from} through ${through}, aid ${last}`,
         );
         after = last;
+      }
+      // Source history is immutable. Delete only after every aid in the window
+      // has been checked; mysql_fdw identifies remote deletions by record_date.
+      for (const [date, complete] of completeDays) {
+        if (!complete || date >= today) continue;
+        await pg.query(
+          `DELETE FROM ${sourceTable} WHERE record_date = $1::date AND record_date < $2::date`,
+          [date, today],
+        );
+        options.onProgress?.(
+          `video_daily cleanup: deleted complete date ${date}`,
+        );
       }
     }
     const cleanupWindows = await pg.query<{ start: string; finish: string }>(
@@ -217,12 +196,12 @@ export async function backfillVideoDaily(
     }
     let from = startDate;
     while (from <= endDate) {
-      const [first] = await source.execute<RowDataPacket[]>(
-        `SELECT ${mysqlColumns} FROM ${sourceTable} WHERE record_date >= ? AND record_date <= ? ORDER BY record_date,aid LIMIT 1`,
+      const first = await pg.query(
+        `SELECT record_date::text,aid::text,coin,favorite,danmaku,"view",reply,share,"like" FROM ${sourceTable} WHERE record_date >= $1::date AND record_date <= $2::date ORDER BY ${sourceTable}.record_date,${sourceTable}.aid LIMIT 1`,
         [from, endDate],
       );
-      if (!first.length) break;
-      from = String(first[0].record_date);
+      if (!first.rows.length) break;
+      from = String(first.rows[0].record_date);
       const findChunk = () =>
         pg.query(
           `SELECT format('%I.%I',chunk_schema,chunk_name) AS name, is_compressed, ((range_end AT TIME ZONE 'UTC')::date-1)::text AS finish FROM timescaledb_information.chunks WHERE hypertable_schema=$1 AND hypertable_name='video_daily' AND (range_start AT TIME ZONE 'UTC')::date <= $2::date AND (range_end AT TIME ZONE 'UTC')::date > $2::date`,
@@ -231,8 +210,8 @@ export async function backfillVideoDaily(
       let chunk = (await findChunk()).rows[0];
       if (!chunk) {
         // Seed one row so Timescale chooses the real chunk bounds. Keep its
-        // source record until the following aid batch has completed.
-        const values = columns.map((column) => first[0][column]);
+        // source record until its entire date has been verified.
+        const values = columns.map((column) => first.rows[0][column]);
         await pg.query(
           `INSERT INTO ${target} (${quoted}) SELECT ${columns.map((_, i) => `$${i + 1}`).join(",")} WHERE NOT EXISTS (SELECT 1 FROM ${target} WHERE record_date=$1::date AND aid=$2::bigint)`,
           values,
