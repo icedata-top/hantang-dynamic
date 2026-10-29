@@ -202,7 +202,19 @@ export async function backfillVideoDaily(
         after = last;
       }
     }
-    await batches(startDate, endDate, false);
+    const cleanupWindows = await pg.query<{ start: string; finish: string }>(
+      `SELECT greatest((range_start AT TIME ZONE 'UTC')::date, $2::date)::text AS start,
+         least((range_end AT TIME ZONE 'UTC')::date - 1, $3::date)::text AS finish
+       FROM timescaledb_information.chunks
+       WHERE hypertable_schema = $1 AND hypertable_name = 'video_daily'
+         AND (range_end AT TIME ZONE 'UTC')::date > $2::date
+         AND (range_start AT TIME ZONE 'UTC')::date <= $3::date
+       ORDER BY range_start`,
+      [schema, startDate, endDate],
+    );
+    for (const window of cleanupWindows.rows) {
+      await batches(window.start, window.finish, false);
+    }
     let from = startDate;
     while (from <= endDate) {
       const [first] = await source.execute<RowDataPacket[]>(

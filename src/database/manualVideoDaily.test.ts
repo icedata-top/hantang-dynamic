@@ -34,10 +34,13 @@ function fixture(
   let failCompression = false;
   let compressions = 0;
   const insertedBatches: string[][] = [];
+  const sourceWindows: string[][] = [];
+  let sourceAtFirstInsert: Row[] | undefined;
   const source = {
     async query(sql: string, args: string[]) {
       assert.ok(sql.includes("`source_db`.`daily_history`"));
       const [from, through, after] = args;
+      sourceWindows.push([from, through]);
       const aids = [
         ...new Set(
           sourceRows
@@ -136,6 +139,20 @@ function fixture(
             .slice(0, 1000),
         };
       }
+      if (
+        sql.includes("FROM timescaledb_information.chunks") &&
+        sql.includes("AS start,")
+      )
+        return {
+          rows: !exists
+            ? []
+            : splitChunks
+              ? [
+                  { start: "2026-04-16", finish: "2026-04-16" },
+                  { start: "2026-04-17", finish: "2026-04-18" },
+                ]
+              : [{ start: "2026-04-16", finish: "2026-04-18" }],
+        };
       if (sql.includes("FROM timescaledb_information.chunks"))
         return {
           rows: exists
@@ -161,6 +178,7 @@ function fixture(
       }
       if (sql === "COMMIT") snapshot = undefined;
       if (sql.startsWith('INSERT INTO "hantang_dynamic"')) {
+        sourceAtFirstInsert ??= [...sourceRows];
         if (failInsert) throw new Error("insert failed");
         const candidates = sql.includes("FROM pg_temp")
           ? batch
@@ -206,6 +224,8 @@ function fixture(
     source: () => sourceRows,
     target: () => targetRows,
     batches: () => insertedBatches,
+    windows: () => sourceWindows,
+    sourceAtFirstInsert: () => sourceAtFirstInsert,
     compressions: () => compressions,
     failCompression: () => {
       failCompression = true;
@@ -290,14 +310,32 @@ test("compression failure retains source after committed insert", async () => {
   assert.deepEqual(f.source(), [row("2026-04-16", "2")]);
 });
 
-test("same aid across chunks is inserted in separate chunk batches", async () => {
+test("all chunks are cleaned in aid batches before missing rows are inserted per chunk", async () => {
   const f = fixture(
-    [row("2026-04-16", "2"), row("2026-04-17", "2")],
-    [],
+    [
+      row("2026-04-16", "1"),
+      row("2026-04-17", "1"),
+      row("2026-04-16", "2"),
+      row("2026-04-17", "2"),
+    ],
+    [row("2026-04-16", "1"), row("2026-04-17", "1")],
     true,
     true,
   );
   await f.run();
+  assert.deepEqual(f.sourceAtFirstInsert(), [
+    row("2026-04-16", "2"),
+    row("2026-04-17", "2"),
+  ]);
+  assert.ok(
+    f
+      .windows()
+      .every(
+        ([from, through]) =>
+          (from === "2026-04-16" && through === "2026-04-16") ||
+          (from === "2026-04-17" && through === "2026-04-18"),
+      ),
+  );
   assert.deepEqual(f.batches(), [["2026-04-16/2"], ["2026-04-17/2"]]);
   assert.equal(f.compressions(), 2);
   assert.deepEqual(f.source(), []);
