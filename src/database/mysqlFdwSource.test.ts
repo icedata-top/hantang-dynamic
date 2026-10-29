@@ -11,6 +11,7 @@ function catalog(overrides: Record<string, unknown> = {}) {
         rows: [
           {
             fdw: "mysql_fdw",
+            server_encoding: "UTF8",
             database_name: "hantang_dynamic",
             table_name: "mysql_video_daily",
             server_options: { host: "source-host", port: "3307" },
@@ -43,6 +44,11 @@ test("source connection and quoted relation come from the existing foreign table
     bigNumberStrings: true,
     dateStrings: true,
   });
+  const encodingSource = await resolveVideoDailySource(
+    catalog({ server_options: { character_set: "PGDatabaseEncoding" } }),
+    "hantang_dynamic",
+  );
+  assert.equal(encodingSource.connection.charset, "UTF8");
 });
 
 test("hidden mapping credentials stop setup before any MySQL connection or deletion", async () => {

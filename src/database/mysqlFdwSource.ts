@@ -6,13 +6,15 @@ const mysqlIdentifier = (value: string) => `\`${value.replace(/`/g, "``")}\``;
 export async function resolveVideoDailySource(pg: PoolClient, schema: string) {
   const result = await pg.query<{
     fdw: string;
+    server_encoding: string;
     database_name: string;
     table_name: string;
     server_options: Record<string, string>;
     table_options: Record<string, string>;
     mapping_options: Record<string, string> | null;
   }>(
-    `SELECT w.fdwname AS fdw, n.nspname AS database_name, c.relname AS table_name,
+    `SELECT w.fdwname AS fdw, current_setting('server_encoding') AS server_encoding,
+       n.nspname AS database_name, c.relname AS table_name,
        COALESCE((SELECT jsonb_object_agg(option_name, option_value)
          FROM pg_options_to_table(s.srvoptions)), '{}'::jsonb) AS server_options,
        COALESCE((SELECT jsonb_object_agg(option_name, option_value)
@@ -57,6 +59,10 @@ export async function resolveVideoDailySource(pg: PoolClient, schema: string) {
     throw new Error("The MySQL FDW port is invalid");
   const database = row.table_options.dbname ?? row.database_name;
   const table = row.table_options.table_name ?? row.table_name;
+  const charset =
+    server.character_set === "PGDatabaseEncoding"
+      ? row.server_encoding
+      : server.character_set;
   return {
     connection: {
       host: server.host ?? "127.0.0.1",
@@ -64,9 +70,7 @@ export async function resolveVideoDailySource(pg: PoolClient, schema: string) {
       user: row.mapping_options.username,
       password: row.mapping_options.password,
       database,
-      ...(server.character_set && server.character_set !== "auto"
-        ? { charset: server.character_set }
-        : {}),
+      ...(charset && charset !== "auto" ? { charset } : {}),
       supportBigNumbers: true,
       bigNumberStrings: true,
       dateStrings: true,
