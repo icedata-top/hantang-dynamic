@@ -3,6 +3,7 @@ import { z } from "zod";
 // Database configuration for PostgreSQL
 export const databaseSchema = z.object({
   url: z.string(),
+  videoDailyMysqlUrl: z.string().optional(),
   schema: z.string().default("public"),
   poolSize: z.coerce.number().int().min(1).default(20),
 });
@@ -20,6 +21,10 @@ export function createDatabaseConfig(
   ) => any,
 ): DatabaseConfig {
   return {
+    videoDailyMysqlUrl: getConfigValue(
+      ["database", "video_daily_mysql_url"],
+      "VIDEO_DAILY_MYSQL_URL",
+    ),
     url: getConfigValue(
       ["database", "url"],
       "DATABASE_URL",
