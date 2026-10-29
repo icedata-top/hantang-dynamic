@@ -151,13 +151,22 @@ async function main() {
   if (args.includes("--backfill-video-daily")) {
     const startDate = argumentValue(args, "--from");
     const endDate = argumentValue(args, "--through");
-    const batchSizeValue = argumentValue(args, "--batch-size");
+    if (
+      args.some(
+        (arg) => arg === "--batch-size" || arg.startsWith("--batch-size="),
+      )
+    ) {
+      throw new Error(
+        "--batch-size was replaced by --aid-batch-size (distinct aids, default 5000)",
+      );
+    }
+    const batchSizeValue = argumentValue(args, "--aid-batch-size");
     if (!startDate || !endDate) {
       throw new Error(
         "--backfill-video-daily requires --from and --through dates",
       );
     }
-    const { syncVideoDailyRange } = await import("./database/videoDaily");
+    const { syncVideoDailyRange } = await import("./database/manualVideoDaily");
     const batchSize =
       batchSizeValue === undefined ? undefined : Number(batchSizeValue);
     const db = Database.getInstance();
@@ -167,7 +176,8 @@ async function main() {
         startDate,
         endDate,
         schema: config.database.schema,
-        batchSize,
+        aidBatchSize: batchSize,
+        businessTimezone: config.minute.collectionBusinessTimezone,
         onProgress: (message) => logger.info(message),
       });
     } finally {
