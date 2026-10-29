@@ -125,9 +125,9 @@ export async function initCronVideoDaily(
           INTO v_batch_first_aid, v_last_aid
           FROM pg_temp.video_daily_sync_batch;
 
-          -- Plan each date separately so TimescaleDB prunes historical chunks
-          -- before applying the hypertable UPDATE.
-          EXECUTE $sync_update$
+          -- Literal date and aid bounds let TimescaleDB prune chunks and compressed
+          -- batches before the UPDATE join is evaluated.
+          EXECUTE format($sync_update$
             UPDATE "${schema}".video_daily AS target
             SET
               coin = source.coin,
@@ -138,8 +138,10 @@ export async function initCronVideoDaily(
               share = source.share,
               "like" = source."like"
             FROM pg_temp.video_daily_sync_batch AS source
-            WHERE target.record_date = $1
-              AND source.record_date = $1
+            WHERE target.record_date = %1$L::date
+              AND source.record_date = %1$L::date
+              AND target.aid >= %2$L::bigint
+              AND target.aid <= %3$L::bigint
               AND target.aid = source.aid
               AND target.record_date = source.record_date
               AND ROW(
@@ -149,7 +151,7 @@ export async function initCronVideoDaily(
                 source.coin, source.favorite, source.danmaku, source."view",
                 source.reply, source.share, source."like"
               )
-          $sync_update$ USING v_record_date;
+          $sync_update$, v_record_date, v_batch_first_aid, v_last_aid);
 
           GET DIAGNOSTICS v_updated_rows = ROW_COUNT;
 
