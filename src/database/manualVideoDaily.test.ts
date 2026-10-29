@@ -35,7 +35,8 @@ function fixture(
   let compressions = 0;
   const insertedBatches: string[][] = [];
   const source = {
-    async query(_sql: string, args: string[]) {
+    async query(sql: string, args: string[]) {
+      assert.ok(sql.includes("`source_db`.`daily_history`"));
       const [from, through, after] = args;
       const aids = [
         ...new Set(
@@ -53,6 +54,7 @@ function fixture(
       return [aids.slice(0, 1).map((aid) => ({ aid }))];
     },
     async execute(sql: string, args: string[]) {
+      assert.ok(sql.includes("`source_db`.`daily_history`"));
       if (sql.startsWith("DELETE")) {
         if (failDelete) throw new Error("delete failed");
         const keys = new Set<string>();
@@ -199,6 +201,7 @@ function fixture(
         schema: "hantang_dynamic",
         today: "2026-04-18",
         size: 1,
+        sourceTable: "`source_db`.`daily_history`",
       }),
     source: () => sourceRows,
     target: () => targetRows,

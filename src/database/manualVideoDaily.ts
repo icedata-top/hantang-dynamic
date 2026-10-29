@@ -1,9 +1,6 @@
-import {
-  type Connection,
-  createConnection,
-  type RowDataPacket,
-} from "mysql2/promise";
+import type { Connection, RowDataPacket } from "mysql2/promise";
 import type { Pool, PoolClient } from "pg";
+import { connectVideoDailySource } from "./mysqlFdwSource";
 
 const columns = [
   "record_date",
@@ -26,7 +23,6 @@ export async function syncVideoDailyRange(
     startDate: string;
     endDate: string;
     schema: string;
-    mysqlUrl: string;
     businessTimezone: string;
     aidBatchSize?: number;
     onProgress?: (message: string) => void;
@@ -52,27 +48,20 @@ export async function syncVideoDailyRange(
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
+  const pg = await pool.connect();
+  let source: Connection | undefined;
   try {
-    const url = new URL(options.mysqlUrl);
-    if (url.protocol !== "mysql:" || !url.pathname.slice(1)) throw new Error();
-  } catch {
-    throw new Error(
-      "VIDEO_DAILY_MYSQL_URL must be a MySQL URL with a database name",
-    );
-  }
-  const source = await createConnection({
-    uri: options.mysqlUrl,
-    supportBigNumbers: true,
-    bigNumberStrings: true,
-    dateStrings: true,
-  });
-  let pg: PoolClient | undefined;
-  try {
-    pg = await pool.connect();
-    await backfillVideoDaily(pg, source, { ...options, today, size });
+    const resolved = await connectVideoDailySource(pg, options.schema);
+    source = resolved.connection;
+    await backfillVideoDaily(pg, source, {
+      ...options,
+      today,
+      size,
+      sourceTable: resolved.table,
+    });
   } finally {
-    pg?.release(true);
-    await source.end();
+    pg.release(true);
+    await source?.end();
   }
 }
 
@@ -86,11 +75,13 @@ export async function backfillVideoDaily(
     schema: string;
     today: string;
     size: number;
+    sourceTable: string;
     onProgress?: (message: string) => void;
   },
 ): Promise<void> {
   const { startDate, endDate, schema, today, size } = options;
   const target = `${identifier(schema)}.video_daily`;
+  const sourceTable = options.sourceTable;
   let locked = false;
   try {
     await pg.query(
@@ -117,7 +108,7 @@ export async function backfillVideoDaily(
         if (!keys.rows.length) break;
         const values = keys.rows.flatMap((row) => [row.record_date, row.aid]);
         await source.execute(
-          `DELETE FROM video_daily WHERE (record_date,aid) IN (${keys.rows.map(() => "(?,CAST(? AS SIGNED))").join(",")})`,
+          `DELETE FROM ${sourceTable} WHERE (record_date,aid) IN (${keys.rows.map(() => "(?,CAST(? AS SIGNED))").join(",")})`,
           values,
         );
         const last = keys.rows[keys.rows.length - 1];
@@ -142,7 +133,7 @@ export async function backfillVideoDaily(
         cursorDate = "0001-01-01";
       while (true) {
         const [rows] = await source.execute<RowDataPacket[]>(
-          `SELECT ${sourceColumns} FROM video_daily WHERE record_date >= ? AND record_date <= ? AND aid > CAST(? AS SIGNED) AND aid <= CAST(? AS SIGNED) AND (aid,record_date)>(CAST(? AS SIGNED),?) ORDER BY aid,record_date LIMIT 1000`,
+          `SELECT ${sourceColumns} FROM ${sourceTable} WHERE record_date >= ? AND record_date <= ? AND aid > CAST(? AS SIGNED) AND aid <= CAST(? AS SIGNED) AND (aid,record_date)>(CAST(? AS SIGNED),?) ORDER BY aid,record_date LIMIT 1000`,
           [from, through, after, last, cursorAid, cursorDate],
         );
         if (!rows.length) break;
@@ -177,7 +168,7 @@ export async function backfillVideoDaily(
       let after = "-9223372036854775808";
       while (true) {
         const [aids] = await source.query<RowDataPacket[]>(
-          `SELECT DISTINCT aid FROM video_daily WHERE record_date >= ? AND record_date <= ? AND aid > CAST(? AS SIGNED) ORDER BY aid LIMIT ${size}`,
+          `SELECT DISTINCT aid FROM ${sourceTable} WHERE record_date >= ? AND record_date <= ? AND aid > CAST(? AS SIGNED) ORDER BY aid LIMIT ${size}`,
           [from, through, after],
         );
         if (!aids.length) break;
@@ -215,7 +206,7 @@ export async function backfillVideoDaily(
     let from = startDate;
     while (from <= endDate) {
       const [first] = await source.execute<RowDataPacket[]>(
-        `SELECT ${mysqlColumns} FROM video_daily WHERE record_date >= ? AND record_date <= ? ORDER BY record_date,aid LIMIT 1`,
+        `SELECT ${mysqlColumns} FROM ${sourceTable} WHERE record_date >= ? AND record_date <= ? ORDER BY record_date,aid LIMIT 1`,
         [from, endDate],
       );
       if (!first.length) break;

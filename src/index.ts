@@ -161,10 +161,6 @@ async function main() {
       );
     }
     const batchSizeValue = argumentValue(args, "--aid-batch-size");
-    if (!config.database.videoDailyMysqlUrl)
-      throw new Error(
-        "Manual backfill requires database.video_daily_mysql_url or VIDEO_DAILY_MYSQL_URL",
-      );
     if (!startDate || !endDate) {
       throw new Error(
         "--backfill-video-daily requires --from and --through dates",
@@ -181,7 +177,6 @@ async function main() {
         endDate,
         schema: config.database.schema,
         aidBatchSize: batchSize,
-        mysqlUrl: config.database.videoDailyMysqlUrl,
         businessTimezone: config.minute.collectionBusinessTimezone,
         onProgress: (message) => logger.info(message),
       });
