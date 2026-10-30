@@ -78,6 +78,36 @@ test("native deletion uses mapped identifiers, credentials and session settings 
   }
 });
 
+test("FDW automatic charset uses the native driver's default", async () => {
+  const connect = mock.method(
+    mysql,
+    "createConnection",
+    async (options: ConnectionOptions) => {
+      assert.equal(options.charset, undefined);
+      return {
+        async execute() {
+          return [{ affectedRows: 1 }];
+        },
+        async commit() {},
+        async end() {},
+      };
+    },
+  );
+  const source = await videoDailySource(
+    pg({
+      ...metadata,
+      server_options: [...metadata.server_options, "character_set=auto"],
+    }),
+    "local",
+  );
+  try {
+    assert.equal(await source.deleteDates(["2026-04-15"], "2026-04-18"), 1);
+  } finally {
+    await source.close();
+    connect.mock.restore();
+  }
+});
+
 test("inaccessible mapping credentials fail before connection with a privilege hint", async () => {
   const connect = mock.method(mysql, "createConnection", () => {
     throw new Error("must not connect");

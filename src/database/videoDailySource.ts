@@ -98,7 +98,7 @@ export async function videoDailySource(pg: PoolClient, schema: string) {
           user,
           password: mapping.get("password"),
           database: table.get("dbname") ?? metadata.local_schema,
-          ...(charset ? { charset } : {}),
+          ...(charset && charset !== "auto" ? { charset } : {}),
         });
         try {
           const init = server.get("init_command");
