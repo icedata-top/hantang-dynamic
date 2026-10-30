@@ -177,6 +177,7 @@ async function main() {
         endDate,
         schema: config.database.schema,
         aidBatchSize: batchSize,
+        keepSource: args.includes("--keep-source"),
         businessTimezone: config.minute.collectionBusinessTimezone,
         onProgress: (message) => logger.info(message),
       });

@@ -28,6 +28,7 @@ export async function syncVideoDailyRange(
     schema: string;
     businessTimezone: string;
     aidBatchSize?: number;
+    keepSource?: boolean;
     onProgress?: (message: string) => void;
   },
 ): Promise<void> {
@@ -67,6 +68,7 @@ export async function backfillVideoDaily(
     schema: string;
     today: string;
     size: number;
+    keepSource?: boolean;
     onProgress?: (message: string) => void;
   },
 ): Promise<void> {
@@ -93,7 +95,7 @@ export async function backfillVideoDaily(
       );
       locked = true;
     });
-    source = await videoDailySource(pg, schema);
+    if (!options.keepSource) source = await videoDailySource(pg, schema);
     const remote = source;
     async function batches(
       from: string,
@@ -205,13 +207,24 @@ export async function backfillVideoDaily(
       } finally {
         if (cursorOpen) await pg.query("CLOSE manual_daily_aids");
       }
+      if (options.keepSource) {
+        const incompleteDates = [...completeDays]
+          .filter(([, complete]) => !complete)
+          .map(([date]) => date)
+          .sort();
+        if (incompleteDates.length)
+          throw new Error(
+            `video_daily incomplete target coverage for dates ${incompleteDates.join(", ")}; source retained`,
+          );
+        return;
+      }
       // Source history is immutable. Check every aid before deleting complete
       // dates in one native statement; incomplete gaps must remain untouched.
       const completeDates = [...completeDays]
         .filter(([date, complete]) => complete && date < today)
         .map(([date]) => date)
         .sort();
-      if (completeDates.length) {
+      if (completeDates.length && remote) {
         const deleted = await phase(
           `delete complete dates ${completeDates.join(", ")}`,
           () => remote.deleteDates(completeDates, today),
@@ -221,20 +234,22 @@ export async function backfillVideoDaily(
         );
       }
     }
-    const cleanupWindows = await phase("find cleanup chunks", () =>
-      pg.query<{ start: string; finish: string }>(
-        `SELECT greatest((range_start AT TIME ZONE 'UTC')::date, $2::date)::text AS start,
-         least((range_end AT TIME ZONE 'UTC')::date - 1, $3::date)::text AS finish
-       FROM timescaledb_information.chunks
-       WHERE hypertable_schema = $1 AND hypertable_name = 'video_daily'
-         AND (range_end AT TIME ZONE 'UTC')::date > $2::date
-         AND (range_start AT TIME ZONE 'UTC')::date <= $3::date
-       ORDER BY range_start`,
-        [schema, startDate, endDate],
-      ),
-    );
-    for (const window of cleanupWindows.rows) {
-      await batches(window.start, window.finish, false);
+    if (!options.keepSource) {
+      const cleanupWindows = await phase("find cleanup chunks", () =>
+        pg.query<{ start: string; finish: string }>(
+          `SELECT greatest((range_start AT TIME ZONE 'UTC')::date, $2::date)::text AS start,
+           least((range_end AT TIME ZONE 'UTC')::date - 1, $3::date)::text AS finish
+         FROM timescaledb_information.chunks
+         WHERE hypertable_schema = $1 AND hypertable_name = 'video_daily'
+           AND (range_end AT TIME ZONE 'UTC')::date > $2::date
+           AND (range_start AT TIME ZONE 'UTC')::date <= $3::date
+         ORDER BY range_start`,
+          [schema, startDate, endDate],
+        ),
+      );
+      for (const window of cleanupWindows.rows) {
+        await batches(window.start, window.finish, false);
+      }
     }
     let from = startDate;
     while (from <= endDate) {
@@ -277,6 +292,10 @@ export async function backfillVideoDaily(
         .toISOString()
         .slice(0, 10);
     }
+    if (options.keepSource)
+      options.onProgress?.(
+        `video_daily copy completed for ${startDate} through ${endDate}; source retained; coverage checks keys only, existing PG values preserved`,
+      );
   } finally {
     try {
       await source?.close();

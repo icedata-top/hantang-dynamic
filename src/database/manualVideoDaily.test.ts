@@ -27,6 +27,8 @@ function fixture(
     failInsert = 0,
     failCompression = false,
     failDelete = false,
+    keepSource = false,
+    omitInsertedRow = false,
     size = 1,
     startDate = "2026-04-16",
     endDate = "2026-04-18",
@@ -163,7 +165,7 @@ function fixture(
         const missing = candidates.filter(
           (r) => !targetRows.some((t) => key(t) === key(r)),
         );
-        targetRows.push(...missing);
+        if (!omitInsertedRow) targetRows.push(...missing);
         exists = true;
         return { rows: [], rowCount: missing.length };
       }
@@ -215,7 +217,9 @@ function fixture(
       closed++;
     },
   };
+  const progress: string[] = [];
   return {
+    progress,
     run: async () => {
       const connect = mock.method(
         mysql,
@@ -229,6 +233,8 @@ function fixture(
           schema: "hantang_dynamic",
           today,
           size,
+          keepSource,
+          onProgress: (message) => progress.push(message),
         });
       } finally {
         connect.mock.restore();
@@ -392,4 +398,42 @@ test("one native delete per window includes noncontiguous complete dates without
     row("2026-04-18", "1"),
   ]);
   assert.equal(f.closed(), 1);
+});
+
+test("keep-source copies missing keys across dates and today while retaining source and existing PG values", async () => {
+  const source = [
+    row("2026-04-16", "1"),
+    row("2026-04-17", "1", 99),
+    row("2026-04-17", "2"),
+    row("2026-04-18", "2"),
+  ];
+  const f = fixture(
+    source,
+    [row("2026-04-16", "1"), row("2026-04-17", "1", 3)],
+    {
+      keepSource: true,
+    },
+  );
+  await f.run();
+  assert.deepEqual(f.source(), source);
+  assert.deepEqual(f.target(), [
+    row("2026-04-16", "1"),
+    row("2026-04-17", "1", 3),
+    row("2026-04-17", "2"),
+    row("2026-04-18", "2"),
+  ]);
+  assert.match(
+    f.progress[f.progress.length - 1] ?? "",
+    /copy completed.*source retained/,
+  );
+});
+
+test("keep-source reports incomplete postcommit key coverage", async () => {
+  const source = [row("2026-04-16", "1")];
+  const f = fixture(source, [], { keepSource: true, omitInsertedRow: true });
+  await assert.rejects(
+    f.run(),
+    /incomplete target coverage for dates 2026-04-16; source retained/,
+  );
+  assert.deepEqual(f.source(), source);
 });
