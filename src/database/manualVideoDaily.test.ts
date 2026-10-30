@@ -33,6 +33,7 @@ function fixture(
     targetRows = [...target],
     batch: Row[] = [];
   let snapshot: Row[] | undefined;
+  let cursor: string[] | undefined;
   let exists = !missingChunk,
     inserts = 0,
     compressions = 0;
@@ -64,9 +65,19 @@ function fixture(
           ],
         };
       }
-      if (sql.startsWith("SELECT aid FROM")) {
+      if (sql.startsWith("DECLARE manual_daily_aids")) {
+        assert.equal(
+          cursor,
+          undefined,
+          "previous window cursor must be closed",
+        );
+        assert.equal(
+          snapshot,
+          undefined,
+          "held cursor is prepared in autocommit",
+        );
         windows.push(args.slice(0, 2));
-        const aids = [
+        cursor = [
           ...new Set(
             sourceRows
               .filter(
@@ -79,14 +90,22 @@ function fixture(
               .map((r) => r.aid),
           ),
         ];
-        return { rows: aids.slice(0, Number(args[3])).map((aid) => ({ aid })) };
+        return { rows: [] };
+      }
+      if (sql.startsWith("FETCH FORWARD")) {
+        assert.ok(cursor, "held cursor survives batch commits");
+        const count = Number(sql.split(" ")[2]);
+        return { rows: cursor.splice(0, count).map((aid) => ({ aid })) };
+      }
+      if (sql === "CLOSE manual_daily_aids") {
+        assert.ok(cursor);
+        cursor = undefined;
       }
       if (sql.startsWith("INSERT INTO pg_temp.manual_daily_batch")) {
-        const [from, through, after, last] = args;
+        const [after, last, ...dates] = args;
         batch = sourceRows.filter(
           (r) =>
-            r.record_date >= from &&
-            r.record_date <= through &&
+            dates.includes(r.record_date) &&
             BigInt(r.aid) > BigInt(after) &&
             BigInt(r.aid) <= BigInt(last),
         );
@@ -116,6 +135,11 @@ function fixture(
           "whole date must exist in committed PG before deletion",
         );
         assert.equal(snapshot, undefined);
+        assert.equal(
+          cursor,
+          undefined,
+          "close the source cursor before deleting",
+        );
         if (failDelete) throw new Error("delete failed");
         sourceRows = sourceRows.filter((r) => r.record_date !== args[0]);
         deleted.push(args[0]);
@@ -149,6 +173,12 @@ function fixture(
         exists = true;
         return { rows: [], rowCount: missing.length };
       }
+      if (sql.startsWith("DROP TABLE"))
+        assert.equal(
+          cursor,
+          undefined,
+          "release held cursor on success and failure",
+        );
       if (sql.startsWith("CALL convert_to_columnstore")) {
         if (failCompression) throw new Error("compression failed");
         compressions++;
@@ -210,6 +240,9 @@ test("failure after one committed aid retains the entire incomplete date", async
   assert.deepEqual(f.target(), [row("2026-04-16", "1")]);
   assert.equal(f.source().length, 2);
   assert.deepEqual(f.deleted(), []);
+  await f.run();
+  assert.equal(f.target().length, 2);
+  assert.deepEqual(f.source(), []);
 });
 
 test("source delete failure can be retried without duplicate inserts", async () => {
@@ -281,4 +314,20 @@ test("an aid batch spanning more than 1000 source rows preserves coverage across
   assert.deepEqual(new Set(f.target().map(key)), new Set(source.map(key)));
   assert.deepEqual(new Set(f.deleted()), new Set(["2026-04-16", "2026-04-17"]));
   assert.deepEqual(f.source(), [source[source.length - 1]]);
+});
+
+test("worker rejects unsafe fetch sizes before opening a source cursor", async () => {
+  for (const size of [
+    0,
+    -1,
+    1.5,
+    Infinity,
+    2147483648,
+    "1; SELECT 1" as unknown as number,
+  ]) {
+    await assert.rejects(
+      fixture([], [], { size }).run(),
+      /positive PostgreSQL integer/,
+    );
+  }
 });

@@ -14,6 +14,11 @@ const columns = [
 const quoted = columns.map((column) => `"${column}"`).join(",");
 const identifier = (value: string) => `"${value.replace(/"/g, '""')}"`;
 
+function validateAidBatchSize(size: number): void {
+  if (!Number.isSafeInteger(size) || size < 1 || size > 2147483647)
+    throw new Error("--aid-batch-size must be a positive PostgreSQL integer");
+}
+
 export async function syncVideoDailyRange(
   pool: Pool,
   options: {
@@ -37,8 +42,7 @@ export async function syncVideoDailyRange(
   if (startDate > endDate)
     throw new Error("Start date must not exceed end date");
   const size = options.aidBatchSize ?? 5000;
-  if (!Number.isSafeInteger(size) || size < 1 || size > 2147483647)
-    throw new Error("--aid-batch-size must be a positive PostgreSQL integer");
+  validateAidBatchSize(size);
   const today = new Intl.DateTimeFormat("en-CA", {
     timeZone: options.businessTimezone,
     year: "numeric",
@@ -66,6 +70,7 @@ export async function backfillVideoDaily(
   },
 ): Promise<void> {
   const { startDate, endDate, schema, today, size } = options;
+  validateAidBatchSize(size);
   const target = `${identifier(schema)}.video_daily`;
   const sourceTable = `${identifier(schema)}.mysql_video_daily`;
   let locked = false;
@@ -118,76 +123,98 @@ export async function backfillVideoDaily(
             completeDays.get(row.date) !== false && row.complete,
           );
       }
+      const dates: string[] = [];
+      for (let date = from; date <= through; ) {
+        dates.push(date);
+        date = new Date(Date.parse(date) + 86400000).toISOString().slice(0, 10);
+      }
+      const selected = insert ? quoted : '"record_date","aid"';
+      const stageSql = `INSERT INTO pg_temp.manual_daily_batch (${selected})
+        ${dates
+          .map(
+            (_, i) => `SELECT ${selected} FROM ${sourceTable}
+          WHERE record_date = $${i + 3}::date
+            AND aid > $1::bigint AND aid <= $2::bigint`,
+          )
+          .join(" UNION ALL ")}`;
       let after = "-9223372036854775808";
-      while (true) {
-        const aids = await phase(
-          `aid selection ${from} through ${through}, after ${after}, limit ${size}`,
-          () =>
-            pg.query<{ aid: string }>(
-              `SELECT aid FROM ${sourceTable}
-           WHERE record_date >= $1::date AND record_date <= $2::date
-             AND aid > $3::bigint GROUP BY aid ORDER BY aid LIMIT $4::integer`,
-              [from, through, after, size],
-            ),
-        );
-        if (!aids.rows.length) break;
-        const last = String(aids.rows[aids.rows.length - 1].aid);
-        await pg.query("TRUNCATE pg_temp.manual_daily_batch");
-        const selected = insert ? quoted : '"record_date","aid"';
-        const staged = await phase(
-          `stage ${from} through ${through}, aid (${after}, ${last}]`,
-          () =>
-            pg.query(
-              `INSERT INTO pg_temp.manual_daily_batch (${selected})
-             SELECT ${selected} FROM ${sourceTable}
+      let cursorOpen = false;
+      // WITH HOLD materializes distinct aids once and survives batch commits.
+      try {
+        await phase(
+          `aid cursor preparation ${from} through ${through}`,
+          async () => {
+            await pg.query(
+              `DECLARE manual_daily_aids NO SCROLL CURSOR WITH HOLD FOR
+             SELECT aid FROM ${sourceTable}
              WHERE record_date >= $1::date AND record_date <= $2::date
-               AND aid > $3::bigint AND aid <= $4::bigint`,
-              [from, through, after, last],
-            ),
+               AND aid > $3::bigint GROUP BY aid ORDER BY aid`,
+              [from, through, after],
+            );
+            cursorOpen = true;
+          },
         );
-        options.onProgress?.(
-          `video_daily staged ${staged.rowCount ?? 0} rows for ${aids.rows.length} aids`,
-        );
-        await phase("analyze staged rows", () =>
-          pg.query("ANALYZE pg_temp.manual_daily_batch"),
-        );
-        if (insert) {
-          await pg.query("BEGIN");
-          let inserted = 0;
-          try {
-            const result = await phase(
-              `insert ${from} through ${through}, aid (${after}, ${last}]`,
-              () =>
-                pg.query(
-                  `INSERT INTO ${target} (${quoted}) SELECT ${quoted} FROM pg_temp.manual_daily_batch b
+        while (true) {
+          const aids = await phase(
+            `aid cursor fetch ${from} through ${through}, after ${after}, limit ${size}`,
+            () =>
+              pg.query<{ aid: string }>(
+                `FETCH FORWARD ${size} FROM manual_daily_aids`,
+              ),
+          );
+          if (!aids.rows.length) break;
+          const last = String(aids.rows[aids.rows.length - 1].aid);
+          await pg.query("TRUNCATE pg_temp.manual_daily_batch");
+          const staged = await phase(
+            `stage ${from} through ${through}, aid (${after}, ${last}]`,
+            () => pg.query(stageSql, [after, last, ...dates]),
+          );
+          options.onProgress?.(
+            `video_daily staged ${staged.rowCount ?? 0} rows for ${aids.rows.length} aids`,
+          );
+          await phase("analyze staged rows", () =>
+            pg.query("ANALYZE pg_temp.manual_daily_batch"),
+          );
+          if (insert) {
+            await pg.query("BEGIN");
+            let inserted = 0;
+            try {
+              const result = await phase(
+                `insert ${from} through ${through}, aid (${after}, ${last}]`,
+                () =>
+                  pg.query(
+                    `INSERT INTO ${target} (${quoted}) SELECT ${quoted} FROM pg_temp.manual_daily_batch b
                WHERE NOT EXISTS (SELECT 1 FROM ${target} t
                  WHERE t.record_date >= $1::date AND t.record_date <= $2::date
                    AND t.aid > $3::bigint AND t.aid <= $4::bigint
                    AND (t.record_date,t.aid)=(b.record_date,b.aid))`,
-                  [from, through, after, last],
-                ),
-            );
-            inserted = result.rowCount ?? 0;
-            await pg.query("COMMIT");
-            options.onProgress?.(
-              `video_daily committed ${inserted} inserted rows`,
-            );
-          } catch (error) {
-            await pg.query("ROLLBACK");
-            throw error;
+                    [from, through, after, last],
+                  ),
+              );
+              inserted = result.rowCount ?? 0;
+              await pg.query("COMMIT");
+              options.onProgress?.(
+                `video_daily committed ${inserted} inserted rows`,
+              );
+            } catch (error) {
+              await pg.query("ROLLBACK");
+              throw error;
+            }
+            if (inserted && compressedChunk)
+              await phase(`compression ${compressedChunk}`, () =>
+                pg.query("CALL convert_to_columnstore($1::regclass)", [
+                  compressedChunk,
+                ]),
+              );
           }
-          if (inserted && compressedChunk)
-            await phase(`compression ${compressedChunk}`, () =>
-              pg.query("CALL convert_to_columnstore($1::regclass)", [
-                compressedChunk,
-              ]),
-            );
+          await recordCoverage(after, last);
+          options.onProgress?.(
+            `video_daily ${insert ? "insert" : "cleanup"}: ${from} through ${through}, aid ${last}`,
+          );
+          after = last;
         }
-        await recordCoverage(after, last);
-        options.onProgress?.(
-          `video_daily ${insert ? "insert" : "cleanup"}: ${from} through ${through}, aid ${last}`,
-        );
-        after = last;
+      } finally {
+        if (cursorOpen) await pg.query("CLOSE manual_daily_aids");
       }
       // Source history is immutable. Delete only after every aid in the window
       // has been checked; mysql_fdw identifies remote deletions by record_date.
