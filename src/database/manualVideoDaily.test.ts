@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { mock } from "node:test";
+import mysql from "mysql2/promise";
 import type { PoolClient } from "pg";
 import { backfillVideoDaily } from "./manualVideoDaily";
 
@@ -27,6 +28,9 @@ function fixture(
     failCompression = false,
     failDelete = false,
     size = 1,
+    startDate = "2026-04-16",
+    endDate = "2026-04-18",
+    today = "2026-04-18",
   } = {},
 ) {
   let sourceRows = [...source],
@@ -41,6 +45,20 @@ function fixture(
   let sourceAtFirstInsert: Row[] | undefined;
   const pg = {
     async query(sql: string, args: string[] = []) {
+      if (sql.includes("FROM pg_catalog.pg_foreign_table"))
+        return {
+          rows: [
+            {
+              local_schema: "hantang_dynamic",
+              local_table: "mysql_video_daily",
+              fdw: "mysql_fdw",
+              server_options: ["host=127.0.0.1"],
+              table_options: ["dbname=hantang", "table_name=video_daily"],
+              mapping_id: 1,
+              mapping_options: ["username=fake"],
+            },
+          ],
+        };
       if (sql.includes("FROM timescaledb_information.chunks")) {
         if (!exists) return { rows: [] };
         if (sql.includes("AS start,"))
@@ -50,7 +68,7 @@ function fixture(
                   { start: "2026-04-16", finish: "2026-04-16" },
                   { start: "2026-04-17", finish: "2026-04-18" },
                 ]
-              : [{ start: "2026-04-16", finish: "2026-04-18" }],
+              : [{ start: startDate, finish: endDate }],
           };
         return {
           rows: [
@@ -120,28 +138,6 @@ function fixture(
           })),
         };
       }
-      if (sql.startsWith('DELETE FROM "hantang_dynamic".mysql_video_daily')) {
-        assert.match(
-          sql,
-          /WHERE record_date = \$1::date AND record_date < \$2::date/,
-        );
-        assert.ok(args[0] < args[1]);
-        assert.ok(
-          sourceRows
-            .filter((r) => r.record_date === args[0])
-            .every((r) => targetRows.some((t) => key(t) === key(r))),
-          "whole date must exist in committed PG before deletion",
-        );
-        assert.equal(snapshot, undefined);
-        assert.equal(
-          cursor,
-          undefined,
-          "close the source cursor before deleting",
-        );
-        if (failDelete) throw new Error("delete failed");
-        sourceRows = sourceRows.filter((r) => r.record_date !== args[0]);
-        deleted.push(args[0]);
-      }
       if (sql.startsWith("SELECT record_date::text,aid::text"))
         return {
           rows: sourceRows
@@ -184,15 +180,62 @@ function fixture(
       return { rows: [], rowCount: 0 };
     },
   } as unknown as PoolClient;
+  const deletes: string[][] = [];
+  let closed = 0;
+  const connection = {
+    async execute(sql: string, args: string[]) {
+      if (sql.startsWith("SET SESSION")) return [{ affectedRows: 0 }];
+      assert.match(
+        sql,
+        /^DELETE FROM `hantang`\.`video_daily` WHERE record_date IN \(\?(?:,\?)*\) AND record_date < \?$/,
+      );
+      const dates = args.slice(0, -1);
+      assert.ok(dates.every((date) => date < args[args.length - 1]));
+      assert.ok(
+        sourceRows
+          .filter((r) => dates.includes(r.record_date))
+          .every((r) => targetRows.some((t) => key(t) === key(r))),
+        "whole dates must exist in committed PG before deletion",
+      );
+      assert.equal(snapshot, undefined);
+      assert.equal(
+        cursor,
+        undefined,
+        "close the source cursor before deleting",
+      );
+      deletes.push(dates);
+      if (failDelete) throw new Error("delete failed");
+      const before = sourceRows.length;
+      sourceRows = sourceRows.filter((r) => !dates.includes(r.record_date));
+      deleted.push(...dates);
+      return [{ affectedRows: before - sourceRows.length }];
+    },
+    async commit() {},
+    async end() {
+      closed++;
+    },
+  };
   return {
-    run: () =>
-      backfillVideoDaily(pg, {
-        startDate: "2026-04-16",
-        endDate: "2026-04-18",
-        schema: "hantang_dynamic",
-        today: "2026-04-18",
-        size,
-      }),
+    run: async () => {
+      const connect = mock.method(
+        mysql,
+        "createConnection",
+        async () => connection,
+      );
+      try {
+        await backfillVideoDaily(pg, {
+          startDate,
+          endDate,
+          schema: "hantang_dynamic",
+          today,
+          size,
+        });
+      } finally {
+        connect.mock.restore();
+      }
+    },
+    deletes: () => deletes,
+    closed: () => closed,
     source: () => sourceRows,
     target: () => targetRows,
     deleted: () => deleted,
@@ -250,6 +293,7 @@ test("source delete failure can be retried without duplicate inserts", async () 
   await assert.rejects(f.run(), /delete failed/);
   assert.equal(f.target().length, 2);
   assert.equal(f.source().length, 2);
+  assert.equal(f.closed(), 1);
   f.allowDelete();
   await f.run();
   assert.equal(f.target().length, 2);
@@ -328,4 +372,24 @@ test("worker rejects unsafe fetch sizes before opening a source cursor", async (
       /positive PostgreSQL integer/,
     );
   }
+});
+
+test("one native delete per window includes noncontiguous complete dates without deleting an incomplete gap", async () => {
+  const f = fixture(
+    [
+      row("2026-04-15", "1"),
+      row("2026-04-16", "1"),
+      row("2026-04-17", "1"),
+      row("2026-04-18", "1"),
+    ],
+    [row("2026-04-15", "1"), row("2026-04-17", "1"), row("2026-04-18", "1")],
+    { startDate: "2026-04-15", failInsert: 1 },
+  );
+  await assert.rejects(f.run(), /insert failed/);
+  assert.deepEqual(f.deletes(), [["2026-04-15", "2026-04-17"]]);
+  assert.deepEqual(f.source(), [
+    row("2026-04-16", "1"),
+    row("2026-04-18", "1"),
+  ]);
+  assert.equal(f.closed(), 1);
 });

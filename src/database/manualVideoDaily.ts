@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from "pg";
+import { videoDailySource } from "./videoDailySource";
 
 const columns = [
   "record_date",
@@ -74,6 +75,7 @@ export async function backfillVideoDaily(
   const target = `${identifier(schema)}.video_daily`;
   const sourceTable = `${identifier(schema)}.mysql_video_daily`;
   let locked = false;
+  let source: Awaited<ReturnType<typeof videoDailySource>> | undefined;
   async function phase<T>(name: string, work: () => Promise<T>): Promise<T> {
     options.onProgress?.(`video_daily ${name}: started`);
     const started = Date.now();
@@ -91,6 +93,8 @@ export async function backfillVideoDaily(
       );
       locked = true;
     });
+    source = await videoDailySource(pg, schema);
+    const remote = source;
     async function batches(
       from: string,
       through: string,
@@ -201,18 +205,19 @@ export async function backfillVideoDaily(
       } finally {
         if (cursorOpen) await pg.query("CLOSE manual_daily_aids");
       }
-      // Source history is immutable. Delete only after every aid in the window
-      // has been checked; mysql_fdw identifies remote deletions by record_date.
-      for (const [date, complete] of completeDays) {
-        if (!complete || date >= today) continue;
-        await phase(`delete complete date ${date}`, () =>
-          pg.query(
-            `DELETE FROM ${sourceTable} WHERE record_date = $1::date AND record_date < $2::date`,
-            [date, today],
-          ),
+      // Source history is immutable. Check every aid before deleting complete
+      // dates in one native statement; incomplete gaps must remain untouched.
+      const completeDates = [...completeDays]
+        .filter(([date, complete]) => complete && date < today)
+        .map(([date]) => date)
+        .sort();
+      if (completeDates.length) {
+        const deleted = await phase(
+          `delete complete dates ${completeDates.join(", ")}`,
+          () => remote.deleteDates(completeDates, today),
         );
         options.onProgress?.(
-          `video_daily cleanup: deleted complete date ${date}`,
+          `video_daily cleanup: deleted ${deleted} source rows for complete dates ${completeDates.join(", ")}`,
         );
       }
     }
@@ -273,10 +278,14 @@ export async function backfillVideoDaily(
         .slice(0, 10);
     }
   } finally {
-    if (locked)
-      await pg.query(
-        "SELECT pg_advisory_unlock(hashtextextended($1 || '.video_daily_mysql_sync', 0))",
-        [schema],
-      );
+    try {
+      await source?.close();
+    } finally {
+      if (locked)
+        await pg.query(
+          "SELECT pg_advisory_unlock(hashtextextended($1 || '.video_daily_mysql_sync', 0))",
+          [schema],
+        );
+    }
   }
 }
