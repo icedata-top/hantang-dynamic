@@ -26,6 +26,7 @@ function fixture(
     failInsert = 0,
     failCompression = false,
     failDelete = false,
+    size = 1,
   } = {},
 ) {
   let sourceRows = [...source],
@@ -80,22 +81,16 @@ function fixture(
         ];
         return { rows: aids.slice(0, Number(args[3])).map((aid) => ({ aid })) };
       }
-      if (sql.startsWith("WITH page AS")) {
-        const [from, through, after, last, aid, date] = args;
-        const page = sourceRows
-          .filter(
-            (r) =>
-              r.record_date >= from &&
-              r.record_date <= through &&
-              BigInt(r.aid) > BigInt(after) &&
-              BigInt(r.aid) <= BigInt(last) &&
-              (BigInt(r.aid) > BigInt(aid) ||
-                (r.aid === aid && r.record_date > date)),
-          )
-          .sort(compare)
-          .slice(0, 1000);
-        batch.push(...page);
-        return { rows: page };
+      if (sql.startsWith("INSERT INTO pg_temp.manual_daily_batch")) {
+        const [from, through, after, last] = args;
+        batch = sourceRows.filter(
+          (r) =>
+            r.record_date >= from &&
+            r.record_date <= through &&
+            BigInt(r.aid) > BigInt(after) &&
+            BigInt(r.aid) <= BigInt(last),
+        );
+        return { rows: [], rowCount: batch.length };
       }
       if (sql.startsWith("SELECT b.record_date")) {
         const dates = [...new Set(batch.map((r) => r.record_date))];
@@ -168,7 +163,7 @@ function fixture(
         endDate: "2026-04-18",
         schema: "hantang_dynamic",
         today: "2026-04-18",
-        size: 1,
+        size,
       }),
     source: () => sourceRows,
     target: () => targetRows,
@@ -270,4 +265,20 @@ test("every chunk is cleaned before inserts and both passes preserve chunk local
       ),
   );
   assert.deepEqual(f.deleted(), ["2026-04-16", "2026-04-17"]);
+});
+
+test("an aid batch spanning more than 1000 source rows preserves coverage across dates and batches", async () => {
+  const source = Array.from({ length: 1200 }, (_, i) =>
+    row(
+      i % 2 ? "2026-04-16" : "2026-04-17",
+      String(9007199254740993n + BigInt(i)),
+    ),
+  );
+  source.push(row("2026-04-18", source[0].aid));
+  const f = fixture(source, [source[0]], { size: 1100 });
+  await f.run();
+  assert.equal(f.target().length, source.length);
+  assert.deepEqual(new Set(f.target().map(key)), new Set(source.map(key)));
+  assert.deepEqual(new Set(f.deleted()), new Set(["2026-04-16", "2026-04-17"]));
+  assert.deepEqual(f.source(), [source[source.length - 1]]);
 });
