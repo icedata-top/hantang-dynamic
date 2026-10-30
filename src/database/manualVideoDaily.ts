@@ -91,9 +91,6 @@ export async function backfillVideoDaily(
       );
       locked = true;
     });
-    await pg.query(
-      `CREATE TEMP TABLE manual_daily_batch (LIKE ${target} INCLUDING DEFAULTS, PRIMARY KEY(record_date,aid)) ON COMMIT PRESERVE ROWS`,
-    );
     async function batches(
       from: string,
       through: string,
@@ -101,6 +98,19 @@ export async function backfillVideoDaily(
       compressedChunk?: string,
     ): Promise<void> {
       const completeDays = new Map<string, boolean>();
+      const dates: string[] = [];
+      for (let date = from; date <= through; ) {
+        dates.push(date);
+        date = new Date(Date.parse(date) + 86400000).toISOString().slice(0, 10);
+      }
+      const sourceSql = (selected: string) =>
+        dates
+          .map(
+            (_, i) => `SELECT ${selected} FROM ${sourceTable}
+          WHERE record_date = $${i + 5}::date
+            AND aid > $3::bigint AND aid <= $4::bigint`,
+          )
+          .join(" UNION ALL ");
       async function recordCoverage(after: string, last: string) {
         const coverage = await phase(
           `coverage ${from} through ${through}, aid (${after}, ${last}]`,
@@ -108,13 +118,13 @@ export async function backfillVideoDaily(
             pg.query<{ date: string; complete: boolean }>(
               `SELECT b.record_date::text AS date,
                bool_and(t.aid IS NOT NULL) AS complete
-             FROM pg_temp.manual_daily_batch b
+             FROM (${sourceSql('"record_date","aid"')}) b
              LEFT JOIN ${target} t
                ON t.record_date >= $1::date AND t.record_date <= $2::date
                  AND t.aid > $3::bigint AND t.aid <= $4::bigint
                  AND (t.record_date,t.aid)=(b.record_date,b.aid)
              GROUP BY b.record_date`,
-              [from, through, after, last],
+              [from, through, after, last, ...dates],
             ),
         );
         for (const row of coverage.rows)
@@ -123,20 +133,6 @@ export async function backfillVideoDaily(
             completeDays.get(row.date) !== false && row.complete,
           );
       }
-      const dates: string[] = [];
-      for (let date = from; date <= through; ) {
-        dates.push(date);
-        date = new Date(Date.parse(date) + 86400000).toISOString().slice(0, 10);
-      }
-      const selected = insert ? quoted : '"record_date","aid"';
-      const stageSql = `INSERT INTO pg_temp.manual_daily_batch (${selected})
-        ${dates
-          .map(
-            (_, i) => `SELECT ${selected} FROM ${sourceTable}
-          WHERE record_date = $${i + 3}::date
-            AND aid > $1::bigint AND aid <= $2::bigint`,
-          )
-          .join(" UNION ALL ")}`;
       let after = "-9223372036854775808";
       let cursorOpen = false;
       // WITH HOLD materializes distinct aids once and survives batch commits.
@@ -164,17 +160,6 @@ export async function backfillVideoDaily(
           );
           if (!aids.rows.length) break;
           const last = String(aids.rows[aids.rows.length - 1].aid);
-          await pg.query("TRUNCATE pg_temp.manual_daily_batch");
-          const staged = await phase(
-            `stage ${from} through ${through}, aid (${after}, ${last}]`,
-            () => pg.query(stageSql, [after, last, ...dates]),
-          );
-          options.onProgress?.(
-            `video_daily staged ${staged.rowCount ?? 0} rows for ${aids.rows.length} aids`,
-          );
-          await phase("analyze staged rows", () =>
-            pg.query("ANALYZE pg_temp.manual_daily_batch"),
-          );
           if (insert) {
             await pg.query("BEGIN");
             let inserted = 0;
@@ -183,12 +168,12 @@ export async function backfillVideoDaily(
                 `insert ${from} through ${through}, aid (${after}, ${last}]`,
                 () =>
                   pg.query(
-                    `INSERT INTO ${target} (${quoted}) SELECT ${quoted} FROM pg_temp.manual_daily_batch b
+                    `INSERT INTO ${target} (${quoted}) SELECT ${quoted} FROM (${sourceSql(quoted)}) b
                WHERE NOT EXISTS (SELECT 1 FROM ${target} t
                  WHERE t.record_date >= $1::date AND t.record_date <= $2::date
                    AND t.aid > $3::bigint AND t.aid <= $4::bigint
                    AND (t.record_date,t.aid)=(b.record_date,b.aid))`,
-                    [from, through, after, last],
+                    [from, through, after, last, ...dates],
                   ),
               );
               inserted = result.rowCount ?? 0;
@@ -288,15 +273,10 @@ export async function backfillVideoDaily(
         .slice(0, 10);
     }
   } finally {
-    if (locked) {
-      try {
-        await pg.query("DROP TABLE IF EXISTS pg_temp.manual_daily_batch");
-      } finally {
-        await pg.query(
-          "SELECT pg_advisory_unlock(hashtextextended($1 || '.video_daily_mysql_sync', 0))",
-          [schema],
-        );
-      }
-    }
+    if (locked)
+      await pg.query(
+        "SELECT pg_advisory_unlock(hashtextextended($1 || '.video_daily_mysql_sync', 0))",
+        [schema],
+      );
   }
 }

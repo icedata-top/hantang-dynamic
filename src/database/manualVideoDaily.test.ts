@@ -30,8 +30,7 @@ function fixture(
   } = {},
 ) {
   let sourceRows = [...source],
-    targetRows = [...target],
-    batch: Row[] = [];
+    targetRows = [...target];
   let snapshot: Row[] | undefined;
   let cursor: string[] | undefined;
   let exists = !missingChunk,
@@ -42,7 +41,6 @@ function fixture(
   let sourceAtFirstInsert: Row[] | undefined;
   const pg = {
     async query(sql: string, args: string[] = []) {
-      if (sql.startsWith("TRUNCATE")) batch = [];
       if (sql.includes("FROM timescaledb_information.chunks")) {
         if (!exists) return { rows: [] };
         if (sql.includes("AS start,"))
@@ -101,17 +99,17 @@ function fixture(
         assert.ok(cursor);
         cursor = undefined;
       }
-      if (sql.startsWith("INSERT INTO pg_temp.manual_daily_batch")) {
-        const [after, last, ...dates] = args;
-        batch = sourceRows.filter(
+      const sourceBatch = () => {
+        const [, , after, last, ...dates] = args;
+        return sourceRows.filter(
           (r) =>
             dates.includes(r.record_date) &&
             BigInt(r.aid) > BigInt(after) &&
             BigInt(r.aid) <= BigInt(last),
         );
-        return { rows: [], rowCount: batch.length };
-      }
+      };
       if (sql.startsWith("SELECT b.record_date")) {
+        const batch = sourceBatch();
         const dates = [...new Set(batch.map((r) => r.record_date))];
         return {
           rows: dates.map((date) => ({
@@ -163,8 +161,8 @@ function fixture(
       if (sql.startsWith('INSERT INTO "hantang_dynamic".video_daily')) {
         sourceAtFirstInsert ??= [...sourceRows];
         if (++inserts === failInsert) throw new Error("insert failed");
-        const candidates = sql.includes("FROM pg_temp")
-          ? batch
+        const candidates = sql.includes("FROM (SELECT")
+          ? sourceBatch()
           : [row(args[0], args[1], Number(args[2]))];
         const missing = candidates.filter(
           (r) => !targetRows.some((t) => key(t) === key(r)),
@@ -173,7 +171,7 @@ function fixture(
         exists = true;
         return { rows: [], rowCount: missing.length };
       }
-      if (sql.startsWith("DROP TABLE"))
+      if (sql.startsWith("SELECT pg_advisory_unlock"))
         assert.equal(
           cursor,
           undefined,
