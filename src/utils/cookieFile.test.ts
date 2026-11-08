@@ -123,6 +123,31 @@ test("writeCookieJarToNetscape refuses to overwrite auth cookies missing from th
   });
 });
 
+test("writeCookieJarToNetscape also keeps host-only auth cookies on other bilibili hosts as session cookies", () => {
+  withCookieFile("", (path) => {
+    const jar = createCookieJarFromNetscape([]);
+    const future = new Date(Date.now() + 86_400_000).toUTCString();
+    jar.setCookieSync(
+      `SESSDATA=passport; Path=/; Expires=${future}`,
+      "https://passport.bilibili.com/",
+    );
+    jar.setCookieSync(
+      `bili_jct=api; Path=/; Expires=${future}`,
+      "https://api.bilibili.com/",
+    );
+    // Non-auth cookies keep their own expiry.
+    jar.setCookieSync(
+      `buvid3=x; Domain=bilibili.com; Path=/; Expires=${future}`,
+      "https://www.bilibili.com/",
+    );
+    writeCookieJarToNetscape(jar, path);
+    const persisted = readFileSync(path, "utf-8");
+    assert.match(persisted, /passport\.bilibili\.com\t.*\t0\tSESSDATA\t/);
+    assert.match(persisted, /api\.bilibili\.com\t.*\t0\tbili_jct\t/);
+    assert.doesNotMatch(persisted, /\t0\tbuvid3\t/);
+  });
+});
+
 test("writeCookieJarToNetscape persists auth cookies as session cookies", () => {
   withCookieFile("", (path) => {
     const jar = createCookieJarFromNetscape([]);

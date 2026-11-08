@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import { CookieJar } from "tough-cookie";
+import { type Cookie, CookieJar } from "tough-cookie";
 import { logger } from "./logger";
 
 /**
@@ -348,14 +348,23 @@ export function createCookieJarFromNetscape(
  * set mid-run; Bilibili validates the values server-side.
  */
 function keepAuthCookiesAsSession(jar: CookieJar): void {
-  for (const cookie of jar.getCookiesSync("https://www.bilibili.com/", {
-    allPaths: true,
-  })) {
-    if (!AUTH_COOKIE_NAMES.has(cookie.key) || cookie.expires === "Infinity") {
+  // Walk the whole store rather than querying one URL, so host-only cookies on
+  // passport.bilibili.com (and any other host) are covered too. The default
+  // MemoryCookieStore invokes the callback synchronously.
+  let stored: Cookie[] = [];
+  jar.store.getAllCookies((_error, cookies) => {
+    stored = cookies ?? [];
+  });
+  for (const cookie of stored) {
+    if (
+      !AUTH_COOKIE_NAMES.has(cookie.key) ||
+      cookie.expires === "Infinity" ||
+      !cookie.domain
+    ) {
       continue;
     }
     cookie.expires = "Infinity";
-    jar.setCookieSync(cookie, "https://www.bilibili.com/");
+    jar.setCookieSync(cookie, `https://${cookie.domain}${cookie.path ?? "/"}`);
   }
 }
 
