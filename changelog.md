@@ -1,5 +1,53 @@
 # Changelog
 
+## 5.10.0
+
+Refreshes Bilibili login cookies automatically, adds QR login onboarding,
+hardens cookie-file handling, and reworks the `video_daily` MySQL backfill and
+nightly sync.
+
+Upgrade notes:
+
+- `--backfill-video-daily` no longer accepts `--batch-size`; it fails with a
+  message pointing to `--aid-batch-size` (distinct aids per batch, default
+  5000).
+- The nightly `sync_video_daily_from_mysql` job now empties the
+  `mysql_video_daily` foreign table after a verified copy. It needs `mysql_fdw`
+  with `TRUNCATE` support (PostgreSQL 14+) and a MySQL user that may empty the
+  table. Re-run `pnpm init-schema` to install the updated job. See
+  `docs/config/database.md`.
+- API error logs and notifications are no longer redacted, so they can contain
+  the request config, including cookies. Treat them as sensitive.
+
+Changes:
+
+- Refreshes Bilibili cookies through the official passport flow every six hours
+  for accounts that have a `<cookie file>.refresh_token` sidecar holding the
+  browser `ac_time_value`. New cookies and the rotated token are written back,
+  and the old token is confirmed only after they are persisted. Accounts
+  without the sidecar behave as before.
+- Adds `pnpm login-qr [account]`, which signs in by scanning a QR code with the
+  Bilibili app, writes the cookie file and refresh-token sidecar together, and
+  adds the cookie file to `config.toml` (`--no-config` skips that edit).
+- Keeps authentication cookies session-scoped on every Bilibili host so
+  tough-cookie cannot purge them mid-run when a stale expiry passes.
+- Trusts the expiry embedded in the `SESSDATA` token over the cookie-file
+  column, fails account loading with a clear error when it has expired, warns
+  about missing or expired authentication cookies, and refuses to overwrite a
+  cookie file with a jar that lost them. An invalid global cookie file no longer
+  stops startup.
+- Disables an account's authenticated tasks and notifies once when Bilibili
+  reports the account as not logged in.
+- Treats `MISS_*_DATA` responses as deleted or private content instead of
+  retrying them, remembers unresolvable forward IDs so they are warned about
+  once, and includes failure reasons in API endpoint error alerts.
+- Backfills `video_daily` through the existing MySQL foreign server in complete
+  aid batches, cleaning only fully copied historical dates. `--keep-source`
+  retains the MySQL rows, and the backfill waits on the shared advisory lock
+  and logs the duration of failed phases.
+- Makes the daily `video_daily` cron job insert-only, since source history is
+  append-only.
+
 ## 5.9.1
 
 Upgrades to TypeScript 7 while keeping the bundled output unchanged.
