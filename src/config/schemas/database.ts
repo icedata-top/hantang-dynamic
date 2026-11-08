@@ -1,10 +1,16 @@
 import { z } from "zod";
 
+const configBoolean = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+}, z.boolean());
+
 // Database configuration for PostgreSQL
 export const databaseSchema = z.object({
   url: z.string(),
   schema: z.string().default("public"),
   poolSize: z.coerce.number().int().min(1).default(20),
+  pruneVideoDailySource: configBoolean.default(false),
 });
 
 export type DatabaseConfig = z.infer<typeof databaseSchema>;
@@ -30,6 +36,11 @@ export function createDatabaseConfig(
       ["database", "pool_size"],
       "DATABASE_POOL_SIZE",
       20,
+    ),
+    pruneVideoDailySource: getConfigValue(
+      ["database", "prune_video_daily_source"],
+      "DATABASE_PRUNE_VIDEO_DAILY_SOURCE",
+      false,
     ),
   };
 }
