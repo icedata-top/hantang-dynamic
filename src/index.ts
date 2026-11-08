@@ -148,6 +148,11 @@ async function main() {
     return;
   }
 
+  if (
+    args.includes("--keep-source") &&
+    !args.includes("--backfill-video-daily")
+  )
+    throw new Error("--keep-source requires --backfill-video-daily");
   if (args.includes("--backfill-video-daily")) {
     const startDate = argumentValue(args, "--from");
     const endDate = argumentValue(args, "--through");

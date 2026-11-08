@@ -29,6 +29,7 @@ function fixture(
     failDelete = false,
     keepSource = false,
     omitInsertedRow = false,
+    lockBusy = false,
     size = 1,
     startDate = "2026-04-16",
     endDate = "2026-04-18",
@@ -169,6 +170,9 @@ function fixture(
         exists = true;
         return { rows: [], rowCount: missing.length };
       }
+      if (sql.startsWith("SELECT pg_try_advisory_lock"))
+        return { rows: [{ locked: !lockBusy }] };
+      if (sql.startsWith("SELECT pg_advisory_lock")) lockBusy = false;
       if (sql.startsWith("SELECT pg_advisory_unlock"))
         assert.equal(
           cursor,
@@ -436,4 +440,19 @@ test("keep-source reports incomplete postcommit key coverage", async () => {
     /incomplete target coverage for dates 2026-04-16; source retained/,
   );
   assert.deepEqual(f.source(), source);
+});
+
+test("a busy sync lock is reported and awaited instead of hanging silently", async () => {
+  const f = fixture([row("2026-04-16", "1")], [], { lockBusy: true });
+  await f.run();
+  assert.ok(f.progress.some((m) => m.includes("held by another sync")));
+});
+
+test("failed phases log their duration", async () => {
+  const f = fixture([row("2026-04-16", "1")], [], {
+    failInsert: 1,
+    keepSource: true,
+  });
+  await assert.rejects(f.run(), /insert failed/);
+  assert.ok(f.progress.some((m) => /insert .*: failed after \d+ms/.test(m)));
 });

@@ -92,7 +92,7 @@ export async function videoDailySource(pg: PoolClient, schema: string) {
     async deleteDates(dates: string[], today: string): Promise<number> {
       if (!dates.length) return 0;
       if (!connection) {
-        connection = await mysql.createConnection({
+        const opened = await mysql.createConnection({
           host,
           port,
           user,
@@ -102,16 +102,19 @@ export async function videoDailySource(pg: PoolClient, schema: string) {
         });
         try {
           const init = server.get("init_command");
-          if (init) await connection.query(init);
-          await connection.execute("SET SESSION sql_mode = ?", [
+          if (init) await opened.query(init);
+          await opened.execute("SET SESSION sql_mode = ?", [
             server.get("sql_mode") ?? "ANSI_QUOTES",
           ]);
         } catch {
-          // init_command can contain secrets; driver errors include its SQL.
+          // Never cache a half-initialized session. init_command can contain
+          // secrets and driver errors include its SQL, so drop the cause.
+          await opened.end().catch(() => undefined);
           throw new Error(
             "Failed to initialize native mysql_fdw source session",
           );
         }
+        connection = opened;
       }
       const [result] = await connection.execute<ResultSetHeader>(
         `DELETE FROM ${source} WHERE record_date IN (${dates.map(() => "?").join(",")}) AND record_date < ?`,

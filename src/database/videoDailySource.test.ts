@@ -140,3 +140,43 @@ test("server-local connection files fail without exposing their values", async (
     );
   }
 });
+
+test("a failed session init closes the connection and is not cached", async () => {
+  let ended = 0;
+  let opened = 0;
+  const connect = mock.method(mysql, "createConnection", async () => {
+    opened++;
+    return {
+      async query() {
+        throw new Error("init_command secret");
+      },
+      async execute() {
+        return [{ affectedRows: 0 }];
+      },
+      async commit() {},
+      async end() {
+        ended++;
+      },
+    };
+  });
+  try {
+    const source = await videoDailySource(
+      pg({
+        ...metadata,
+        server_options: [...metadata.server_options, "init_command=SELECT 1"],
+      }),
+      "local",
+    );
+    for (let attempt = 1; attempt <= 2; attempt++)
+      await assert.rejects(
+        source.deleteDates(["2026-04-15"], "2026-04-18"),
+        (error: Error) =>
+          /Failed to initialize/.test(error.message) &&
+          !error.message.includes("secret"),
+      );
+    assert.equal(opened, 2);
+    assert.equal(ended, 2);
+  } finally {
+    connect.mock.restore();
+  }
+});
