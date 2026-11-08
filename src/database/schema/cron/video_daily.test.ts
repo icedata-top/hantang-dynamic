@@ -31,7 +31,7 @@ test("daily sync inserts missing keys only, one fixed-date TimescaleDB chunk at 
   );
   assert.match(
     queries[3] ?? "",
-    /sync_video_daily_from_mysql\([\s\S]*?50000,\s*false\s*\)/,
+    /sync_video_daily_from_mysql\([\s\S]*?50000,\s*true\s*\)/,
   );
   const insertSql = procedureSql.match(
     /EXECUTE \$sync_insert\$([\s\S]*?)\$sync_insert\$ USING v_record_date;/,

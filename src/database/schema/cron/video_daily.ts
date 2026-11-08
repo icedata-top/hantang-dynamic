@@ -5,9 +5,9 @@ import { VIDEO_DAILY_SYNC_BATCH_SIZE } from "../../videoDaily.js";
 
 // every day at UTC 21:30 (Beijing 05:30)
 // Insert-only: copies keys missing from video_daily and never updates existing
-// rows, matching the manual --backfill-video-daily worker. With
-// database.prune_video_daily_source the whole source is copied and then
-// truncated once its row count is unchanged since the pre-copy snapshot.
+// rows, matching the manual --backfill-video-daily worker. The scheduled run
+// copies the whole source and truncates it once its row count is unchanged
+// since the pre-copy snapshot.
 export async function initCronVideoDaily(
   pool: Pool,
   schema: string,
@@ -19,7 +19,6 @@ export async function initCronVideoDaily(
 
   // CREATE OR REPLACE cannot change the argument list: drop the old signature
   // so a three-argument CALL stays unambiguous.
-  const prune = config.database.pruneVideoDailySource ? "true" : "false";
   await pool.query(
     `DROP PROCEDURE IF EXISTS "${schema}".sync_video_daily_from_mysql(date, date, integer)`,
   );
@@ -275,7 +274,7 @@ export async function initCronVideoDaily(
           (CURRENT_TIMESTAMP AT TIME ZONE '${businessTimezone}')::date - 2,
           (CURRENT_TIMESTAMP AT TIME ZONE '${businessTimezone}')::date,
           ${VIDEO_DAILY_SYNC_BATCH_SIZE},
-          ${prune}
+          true
         )
         $$
       )
