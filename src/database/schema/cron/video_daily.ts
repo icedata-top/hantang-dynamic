@@ -4,6 +4,8 @@ import { logger } from "../../../utils/logger.js";
 import { VIDEO_DAILY_SYNC_BATCH_SIZE } from "../../videoDaily.js";
 
 // every day at UTC 21:30 (Beijing 05:30)
+// Insert-only: copies keys missing from video_daily and never updates existing
+// rows, matching the manual --backfill-video-daily worker.
 export async function initCronVideoDaily(
   pool: Pool,
   schema: string,
@@ -27,7 +29,6 @@ export async function initCronVideoDaily(
       v_batch_first_aid bigint;
       v_batch_rows integer;
       v_staged_rows integer;
-      v_updated_rows integer;
       v_inserted_rows integer;
     BEGIN
       IF p_start_date IS NULL OR p_end_date IS NULL THEN
@@ -125,34 +126,9 @@ export async function initCronVideoDaily(
           INTO v_batch_first_aid, v_last_aid
           FROM pg_temp.video_daily_sync_batch;
 
-          -- Plan each date separately so TimescaleDB prunes historical chunks
-          -- before applying the hypertable UPDATE.
-          EXECUTE $sync_update$
-            UPDATE "${schema}".video_daily AS target
-            SET
-              coin = source.coin,
-              favorite = source.favorite,
-              danmaku = source.danmaku,
-              "view" = source."view",
-              reply = source.reply,
-              share = source.share,
-              "like" = source."like"
-            FROM pg_temp.video_daily_sync_batch AS source
-            WHERE target.record_date = $1
-              AND source.record_date = $1
-              AND target.aid = source.aid
-              AND target.record_date = source.record_date
-              AND ROW(
-                target.coin, target.favorite, target.danmaku, target."view",
-                target.reply, target.share, target."like"
-              ) IS DISTINCT FROM ROW(
-                source.coin, source.favorite, source.danmaku, source."view",
-                source.reply, source.share, source."like"
-              )
-          $sync_update$ USING v_record_date;
-
-          GET DIAGNOSTICS v_updated_rows = ROW_COUNT;
-
+          -- Source history is append-only, so existing keys are never
+          -- rewritten. Plan each date separately so TimescaleDB prunes
+          -- historical chunks before applying the hypertable INSERT.
           EXECUTE $sync_insert$
             INSERT INTO "${schema}".video_daily (
               record_date, aid, coin, favorite, danmaku, "view", reply, share, "like"
@@ -182,9 +158,9 @@ export async function initCronVideoDaily(
           GET DIAGNOSTICS v_inserted_rows = ROW_COUNT;
 
           COMMIT;
-          RAISE NOTICE 'video_daily sync: completed date %, aids %..%, batch rows %, updated %, inserted %',
+          RAISE NOTICE 'video_daily sync: completed date %, aids %..%, batch rows %, inserted %',
             v_record_date, v_batch_first_aid, v_last_aid, v_batch_rows,
-            v_updated_rows, v_inserted_rows;
+            v_inserted_rows;
         END LOOP;
 
         v_record_date := v_record_date + 1;
