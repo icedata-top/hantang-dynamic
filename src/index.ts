@@ -3,6 +3,7 @@ import { loadAccounts } from "./core/account";
 import { Database } from "./database";
 import { initializeBuildInfo } from "./metrics/registry";
 import { startMetricsServer, stopMetricsServer } from "./metrics/server";
+import { startCookieRefresh } from "./services/cookieRefresh.service";
 import { MinuteHandler } from "./services/minute/minuteHandler";
 import { SubtitleService } from "./services/subtitle.service";
 import { DynamicTracker } from "./services/tracker";
@@ -53,6 +54,8 @@ async function runTracker() {
     `Loaded ${accounts.length} account(s): ${accounts.map((a) => a.uid).join(", ")}`,
   );
 
+  const stopCookieRefresh = await startCookieRefresh(accounts);
+
   const trackers = accounts.map((account) => new DynamicTracker(account));
   const subtitleService =
     config.subtitle.enabled && accounts.length > 0
@@ -66,6 +69,7 @@ async function runTracker() {
     for (const tracker of trackers) {
       tracker.stop();
     }
+    stopCookieRefresh();
     if (minuteHandler) await minuteHandler.stop();
     if (subtitleService) await subtitleService.stop();
     await stopMetricsServer();
@@ -144,16 +148,30 @@ async function main() {
     return;
   }
 
+  if (
+    args.includes("--keep-source") &&
+    !args.includes("--backfill-video-daily")
+  )
+    throw new Error("--keep-source requires --backfill-video-daily");
   if (args.includes("--backfill-video-daily")) {
     const startDate = argumentValue(args, "--from");
     const endDate = argumentValue(args, "--through");
-    const batchSizeValue = argumentValue(args, "--batch-size");
+    if (
+      args.some(
+        (arg) => arg === "--batch-size" || arg.startsWith("--batch-size="),
+      )
+    ) {
+      throw new Error(
+        "--batch-size was replaced by --aid-batch-size (distinct aids, default 5000)",
+      );
+    }
+    const batchSizeValue = argumentValue(args, "--aid-batch-size");
     if (!startDate || !endDate) {
       throw new Error(
         "--backfill-video-daily requires --from and --through dates",
       );
     }
-    const { syncVideoDailyRange } = await import("./database/videoDaily");
+    const { syncVideoDailyRange } = await import("./database/manualVideoDaily");
     const batchSize =
       batchSizeValue === undefined ? undefined : Number(batchSizeValue);
     const db = Database.getInstance();
@@ -163,7 +181,9 @@ async function main() {
         startDate,
         endDate,
         schema: config.database.schema,
-        batchSize,
+        aidBatchSize: batchSize,
+        keepSource: args.includes("--keep-source"),
+        businessTimezone: config.minute.collectionBusinessTimezone,
         onProgress: (message) => logger.info(message),
       });
     } finally {

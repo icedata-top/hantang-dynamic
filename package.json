@@ -20,7 +20,8 @@
     "upgrade-video-history": "tsx src/index.ts --upgrade-video-history",
     "relation": "tsx src/index.ts --relation",
     "repair": "tsx src/index.ts --repair",
-    "update-info": "tsx src/index.ts --update-info"
+    "update-info": "tsx src/index.ts --update-info",
+    "login-qr": "tsx src/scripts/login-qr.ts"
   },
   "dependencies": {
     "@ahmedrangel/rand-user-agent": "^2.0.23",
@@ -32,6 +33,7 @@
     "mysql2": "^3.24.6",
     "nodemailer": "^10.1.2",
     "pg": "^8.23.1",
+    "qrcode-terminal": "^0.12.0",
     "smol-toml": "^1.9.1",
     "tough-cookie": "^6.0.2",
     "zod": "^4.6.7"
@@ -43,6 +45,7 @@
     "@types/node": "^26.6.5",
     "@types/nodemailer": "^8.0.2",
     "@types/pg": "^8.23.1",
+    "@types/qrcode-terminal": "^0.12.2",
     "@types/tough-cookie": "^4.0.5",
     "@vercel/ncc": "^0.45.0",
     "@yao-pkg/pkg": "^6.23.0",

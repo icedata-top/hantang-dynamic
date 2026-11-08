@@ -54,6 +54,61 @@ access_key = ""
 `csrf_token` maps to the `BILI_JCT` cookie and is needed for user relation
 operations. `access_key` maps to app authentication.
 
+## QR onboarding
+
+Create or renew an account without exporting cookies by hand:
+
+```bash
+pnpm login-qr [account] [--config config.toml]
+```
+
+The command prints a QR code and waits for the Bilibili app. If `account` is
+omitted, it uses the logged-in profile name (falling back to the numeric uid);
+if that uid already exists in a configured cookie file, that file is reused.
+It then writes:
+
+```text
+./.cookies.<account>.txt
+./.cookies.<account>.txt.refresh_token
+```
+
+It also adds the cookie file to `[bilibili]` in `config.toml`, converting
+`cookie_file` to `cookie_files` when the account is added alongside another one.
+Use `--no-config` to skip the config edit.
+
+## Cookie refresh
+
+Bilibili rotates `SESSDATA` and `bili_jct` through its passport cookie-refresh
+flow. To let the app refresh an account automatically, put the browser
+`localStorage` value `ac_time_value` in a sidecar file next to its cookie file:
+
+```text
+./.cookies_account1.txt            # cookies
+./.cookies_account1.txt.refresh_token  # ac_time_value, one line
+```
+
+The sidecar is optional. When present, the app checks Bilibili every six hours
+and reuses the official refresh flow when Bilibili reports `refresh: true`. New
+cookies are written back to the cookie file and the rotated refresh token is
+written to the sidecar. If the sidecar is absent or the refresh fails, the
+account keeps using its current cookies.
+
+`ac_time_value` is not part of the Netscape cookie file; copy it from the
+devtools Local Storage entry for `https://www.bilibili.com`. It must come from
+the same login session as the exported cookies.
+
+The refresh is Bilibili's four-step passport flow:
+
+1. `GET /x/passport-login/web/cookie/info` for `refresh` and the server timestamp
+2. `GET https://www.bilibili.com/correspond/1/<RSA-OAEP correspondPath>` for `refresh_csrf`
+3. `POST /x/passport-login/web/cookie/refresh` for new cookies and a new refresh token
+4. `POST /x/passport-login/web/confirm/refresh` to invalidate the old token
+
+The confirmation invalidates the old cookie/refresh-token pair. Do not keep using
+the original browser session for the same account after the app rotates it, and
+do not export the cookie file from a browser that is still actively visiting
+Bilibili: either side rotating the pair makes the other copy stale.
+
 ## Watch-later minute sampling
 
 Set `enable_watch_later = true` on a cookie-file entry to sample that loaded
