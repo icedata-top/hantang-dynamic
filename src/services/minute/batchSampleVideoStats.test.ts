@@ -499,3 +499,131 @@ test("a stale UID is not queried when current health is empty and falls back in 
   assert.equal(staleUidCalls, 0);
   assert.deepEqual(fallbackBatches, [aids]);
 });
+
+test("favorite fallback reports omitted AIDs with the Watch Later account whose list lacked them", async () => {
+  const reported: Array<{
+    aid: bigint;
+    absentFromToViewAccountId: bigint | null;
+  }>[] = [];
+  const samples = await batchSampleVideoStats([1n, 2n, 3n, 4n], {
+    toViewAccounts: [
+      {
+        uid: "7",
+        toViewClient: {
+          async get() {
+            // Account 7 lists aid 1 only; aid 2 was dropped from it.
+            return { data: toViewResponse(1) };
+          },
+        },
+      },
+      {
+        uid: "9",
+        toViewClient: {
+          async get() {
+            return { data: { code: -702 } };
+          },
+        },
+      },
+    ],
+    observedWatchLaterAccountIdsByAid: new Map([
+      ["1", [7n]],
+      ["2", [7n]],
+      ["3", []],
+      ["4", [9n]],
+    ]),
+    healthyWatchLaterAccountIds: new Set([7n, 9n]),
+    onFavoriteFallbackMissing(missing) {
+      reported.push(missing);
+    },
+    dependencies: {
+      // The favorite endpoint answers for aid 4 only.
+      async fetchStatsBatch() {
+        return favoriteResponse([4n]);
+      },
+    },
+  });
+
+  assert.deepEqual(
+    samples.map((sample) => sample.aid),
+    [1n, 4n],
+  );
+  assert.deepEqual(reported, [
+    [
+      // Dropped from account 7's complete list.
+      { aid: 2n, absentFromToViewAccountId: 7n },
+      // Never in a Watch Later list.
+      { aid: 3n, absentFromToViewAccountId: null },
+    ],
+  ]);
+});
+
+test("a failed To View account does not imply its AIDs were removed", async () => {
+  const reported: Array<{
+    aid: bigint;
+    absentFromToViewAccountId: bigint | null;
+  }>[] = [];
+  await batchSampleVideoStats([1n], {
+    toViewAccounts: [
+      {
+        uid: "7",
+        toViewClient: {
+          async get() {
+            throw new Error("network down");
+          },
+        },
+      },
+    ],
+    observedWatchLaterAccountIdsByAid: new Map([["1", [7n]]]),
+    healthyWatchLaterAccountIds: new Set([7n]),
+    onFavoriteFallbackMissing(missing) {
+      reported.push(missing);
+    },
+    dependencies: {
+      async fetchStatsBatch() {
+        return favoriteResponse([]);
+      },
+    },
+  });
+
+  assert.deepEqual(reported, [[{ aid: 1n, absentFromToViewAccountId: null }]]);
+});
+
+test("favorite fallback failures and malformed tuples are not reported as missing", async () => {
+  const reported: unknown[] = [];
+  const onFavoriteFallbackMissing = (missing: unknown) => {
+    reported.push(missing);
+  };
+
+  await batchSampleVideoStats([1n], {
+    onFavoriteFallbackMissing,
+    dependencies: {
+      async fetchStatsBatch() {
+        return { code: -412 };
+      },
+    },
+  });
+  await batchSampleVideoStats([1n], {
+    onFavoriteFallbackMissing,
+    dependencies: {
+      async fetchStatsBatch() {
+        return { code: 0, data: { not: "an array" } };
+      },
+    },
+  });
+  await batchSampleVideoStats([1n, 2n], {
+    onFavoriteFallbackMissing,
+    dependencies: {
+      async fetchStatsBatch() {
+        return {
+          code: 0,
+          data: [
+            { id: 1, cnt_info: { collect: 1 } },
+            { id: 2, cnt_info: { play: 4 } },
+          ],
+        };
+      },
+    },
+  });
+
+  assert.deepEqual(reported, []);
+});

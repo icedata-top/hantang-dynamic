@@ -11,15 +11,24 @@ import type {
   PersistableVideoMinuteSample,
   VideoMinuteSample,
 } from "../../types/models/minute";
+import { sharedRecommendationApiRateLimiter } from "../../utils/apiRateLimiter";
 import { logger } from "../../utils/logger";
 import { DetailsService } from "../details.service";
 import {
   RecommendationRefreshService,
   type RecommendationSource,
 } from "../recommendation-refresh.service";
-import { batchSampleVideoStats } from "./batchSampleVideoStats";
+import {
+  batchSampleVideoStats,
+  type FavoriteFallbackMissingAid,
+} from "./batchSampleVideoStats";
 import { isPersistableVideoMinuteSample } from "./completeSample";
+import { resolveMissingVideo } from "./missingVideoResolution";
 import { shouldPersistMinuteSample } from "./persistencePolicy";
+import {
+  mutateWatchLater,
+  WatchLaterMutationPrePostAbortError,
+} from "./watchLaterApi";
 import { runAutomaticWatchLaterManagement } from "./watchLaterReconciliation";
 
 const MAX_SLEEP_MS = 60_000;
@@ -29,6 +38,9 @@ const BATCH_TIMEOUT_MS = 30_000;
 export const WATCH_LATER_RATE_LIMIT_COOLDOWN_MS = 30 * 60_000;
 const RECOMMENDATION_REFRESH_BATCH_SIZE = 100;
 const MAX_PENDING_RECOMMENDATION_SOURCES = 200;
+/** A video the favorite endpoint omitted is re-checked at most this often. */
+const MISSING_VIDEO_RECHECK_MS = 10 * 60_000;
+const MAX_PENDING_MISSING_VIDEOS = 200;
 
 export type MinuteDatabase = Pick<
   Database,
@@ -40,6 +52,7 @@ export type MinuteDatabase = Pick<
   | "getNextMinuteDueAt"
   | "insertVideoMinuteSamples"
   | "insertVideoMinuteSamplesWithGateCrossings"
+  | "markVideoDeleted"
   | "getProcessedVideoAids"
   | "markVideosProcessedWithCollectionState"
   | "refreshProcessedVideosFromRecommendations"
@@ -56,6 +69,9 @@ export interface MinuteHandlerDependencies {
     RecommendationRefreshService,
     "collectForAids"
   >;
+  /** Resolves `null` when Bilibili answers 404 for the video. */
+  fetchVideoDetail?: (aid: bigint) => Promise<unknown | null>;
+  mutateWatchLater?: typeof mutateWatchLater;
 }
 
 function cancellableSleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -77,10 +93,18 @@ export class MinuteHandler {
   private readonly accounts: typeof loadAccounts;
   private readonly sampleVideoStats: typeof batchSampleVideoStats;
   private readonly runWatchLaterManagement: typeof runAutomaticWatchLaterManagement;
+  private readonly fetchVideoDetail: (aid: bigint) => Promise<unknown | null>;
+  private readonly mutateWatchLater: typeof mutateWatchLater;
   private readonly recommendationRefreshService: Pick<
     RecommendationRefreshService,
     "collectForAids"
   >;
+  private readonly pendingMissingVideos = new Map<
+    string,
+    FavoriteFallbackMissingAid
+  >();
+  private readonly missingVideoCheckedAt = new Map<string, number>();
+  private missingVideoPromise: Promise<void> | null = null;
   private recommendationSources: RecommendationSource[] = [];
   private readonly recommendationSpaceWaiters = new Set<() => void>();
   private recommendationRefreshPromise: Promise<void> | null = null;
@@ -102,6 +126,17 @@ export class MinuteHandler {
       dependencies.sampleVideoStats ?? batchSampleVideoStats;
     this.runWatchLaterManagement =
       dependencies.runWatchLaterManagement ?? runAutomaticWatchLaterManagement;
+    this.mutateWatchLater = dependencies.mutateWatchLater ?? mutateWatchLater;
+    this.fetchVideoDetail =
+      dependencies.fetchVideoDetail ??
+      (async (aid) => {
+        const release = await sharedRecommendationApiRateLimiter.acquire();
+        try {
+          return await fetchVideoFullDetail({ aid: Number(aid) });
+        } finally {
+          release();
+        }
+      });
     this.recommendationRefreshService =
       dependencies.recommendationRefreshService ??
       new RecommendationRefreshService({
@@ -141,6 +176,10 @@ export class MinuteHandler {
     if (this.recommendationRefreshPromise) {
       await this.recommendationRefreshPromise;
     }
+    if (this.missingVideoPromise) {
+      await this.missingVideoPromise;
+    }
+    this.pendingMissingVideos.clear();
     this.abortController = null;
     logger.info("Adaptive minute handler stopped");
   }
@@ -196,6 +235,110 @@ export class MinuteHandler {
       this.recommendationRefreshPromise = null;
       this.releaseRecommendationSpaceWaiters();
     }
+  }
+
+  /**
+   * Queue videos the favorite endpoint returned nothing for. They are checked
+   * in the background so a slow detail endpoint never stalls minute sampling.
+   */
+  private enqueueMissingVideos(items: FavoriteFallbackMissingAid[]): void {
+    const now = Date.now();
+    for (const item of items) {
+      const key = item.aid.toString();
+      const checkedAt = this.missingVideoCheckedAt.get(key);
+      if (
+        checkedAt !== undefined &&
+        now - checkedAt < MISSING_VIDEO_RECHECK_MS
+      ) {
+        continue;
+      }
+      if (
+        !this.pendingMissingVideos.has(key) &&
+        this.pendingMissingVideos.size >= MAX_PENDING_MISSING_VIDEOS
+      ) {
+        continue;
+      }
+      this.pendingMissingVideos.set(key, item);
+    }
+    if (this.pendingMissingVideos.size > 0 && !this.missingVideoPromise) {
+      this.missingVideoPromise = Promise.resolve().then(() =>
+        this.runMissingVideoChecks(),
+      );
+    }
+  }
+
+  private async runMissingVideoChecks(): Promise<void> {
+    try {
+      while (!this.abortController?.signal.aborted) {
+        const next = this.pendingMissingVideos.entries().next();
+        if (next.done) break;
+        const [key, item] = next.value;
+        this.pendingMissingVideos.delete(key);
+        this.rememberMissingVideoCheck(key);
+        try {
+          await resolveMissingVideo(item, {
+            fetchDetail: (aid) => this.fetchVideoDetail(aid),
+            markDeleted: (aid, notes) =>
+              this.db.markVideoDeleted({ type: "aid", aid }, notes),
+            restoreToWatchLater: (aid, accountId) =>
+              this.restoreToWatchLater(aid, accountId),
+          });
+        } catch (error) {
+          logger.error(`Missing video check failed for av${item.aid}:`, error);
+        }
+      }
+    } finally {
+      this.missingVideoPromise = null;
+    }
+  }
+
+  private rememberMissingVideoCheck(key: string): void {
+    const now = Date.now();
+    for (const [other, checkedAt] of this.missingVideoCheckedAt) {
+      if (now - checkedAt >= MISSING_VIDEO_RECHECK_MS) {
+        this.missingVideoCheckedAt.delete(other);
+      }
+    }
+    this.missingVideoCheckedAt.set(key, now);
+  }
+
+  /** Put a video the user dropped from Watch Later back into that list. */
+  private async restoreToWatchLater(
+    aid: bigint,
+    accountId: bigint,
+  ): Promise<boolean> {
+    if (this.isWatchLaterAccountRateLimited(accountId)) return false;
+    const account = this.accounts().find(
+      (candidate) =>
+        candidate.enableWatchLater &&
+        /^\d+$/.test(candidate.uid) &&
+        BigInt(candidate.uid) === accountId,
+    );
+    if (!account) return false;
+    const signal = this.abortController?.signal;
+    try {
+      const code = await this.mutateWatchLater(account, aid, "add", {
+        beforePost: async () => {
+          if (signal?.aborted) return "stopped";
+          if (this.isWatchLaterAccountRateLimited(accountId)) {
+            return "rate_limited";
+          }
+          return undefined;
+        },
+      });
+      if (code === 0) return true;
+      if (code === -702) this.recordWatchLaterRateLimit(accountId);
+      logger.warn(
+        `Could not add av${aid} back to Watch Later account ${accountId} (code ${code})`,
+      );
+    } catch (error) {
+      if (error instanceof WatchLaterMutationPrePostAbortError) return false;
+      logger.warn(
+        `Could not add av${aid} back to Watch Later account ${accountId}:`,
+        error,
+      );
+    }
+    return false;
   }
 
   /**
@@ -361,6 +504,7 @@ export class MinuteHandler {
 
     const aids = due.map((d) => d.aid);
     let samples: VideoMinuteSample[] = [];
+    const missingFromFavorite: FavoriteFallbackMissingAid[] = [];
     try {
       const accounts = this.accounts();
       const observedWatchLaterAccountIdsByAid = new Map(
@@ -380,6 +524,9 @@ export class MinuteHandler {
           },
           onWatchLaterToViewAccountRateLimit: (accountId) => {
             this.recordWatchLaterRateLimit(accountId);
+          },
+          onFavoriteFallbackMissing: (missing) => {
+            missingFromFavorite.push(...missing);
           },
         });
       } catch (error) {
@@ -484,6 +631,7 @@ export class MinuteHandler {
         await this.db.advanceFailedMinuteVideos(failedAids, attemptStartedAt);
       }
 
+      this.enqueueMissingVideos(missingFromFavorite);
       return aids.length;
     } finally {
       endBatch();

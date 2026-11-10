@@ -44,6 +44,16 @@ export interface BiliFavoriteResponse {
   data?: unknown;
 }
 
+/**
+ * A requested AID that a *successful* favorite fallback response left out.
+ * `absentFromToViewAccountId` is set when the AID was routed to a Watch Later
+ * account whose complete To View list was read and did not contain it.
+ */
+export interface FavoriteFallbackMissingAid {
+  aid: bigint;
+  absentFromToViewAccountId: bigint | null;
+}
+
 export interface BatchSampleDependencies {
   fetchStatsBatch(aids: bigint[]): Promise<BiliFavoriteResponse>;
   favoriteClient: FavoriteRequestClient;
@@ -209,6 +219,12 @@ export async function batchSampleVideoStats(
     healthyWatchLaterAccountIds?: ReadonlySet<bigint>;
     onWatchLaterToViewAccountFailure?(accountId: bigint): void;
     onWatchLaterToViewAccountRateLimit?(accountId: bigint): void;
+    /**
+     * Called once per favorite fallback request whose response was valid but
+     * omitted requested AIDs. Not called when the request itself failed, so
+     * an outage is never mistaken for a missing video.
+     */
+    onFavoriteFallbackMissing?(missing: FavoriteFallbackMissingAid[]): void;
     dependencies?: Partial<BatchSampleDependencies>;
   },
 ): Promise<VideoMinuteSample[]> {
@@ -217,6 +233,7 @@ export async function batchSampleVideoStats(
   const requestedAids = new Set(aids.map((aid) => aid.toString()));
   const samplesByAid = new Map<string, VideoMinuteSample>();
   const toViewSamples: VideoMinuteSample[] = [];
+  const absentFromToViewAccountByAid = new Map<string, bigint>();
 
   const routing = selectWatchLaterRouting(
     aids,
@@ -234,14 +251,23 @@ export async function batchSampleVideoStats(
       options.onWatchLaterToViewAccountFailure?.(accountId);
     }
     for (const [accountId, accountAids] of routing) {
-      const accountSamples =
-        toViewResult.samplesByAccountId.get(accountId) ?? [];
+      const fetchedSamples = toViewResult.samplesByAccountId.get(accountId);
       const accountAidKeys = new Set(accountAids.map((aid) => aid.toString()));
-      toViewSamples.push(
-        ...accountSamples.filter((sample) =>
-          accountAidKeys.has(sample.aid.toString()),
-        ),
+      const routedSamples = (fetchedSamples ?? []).filter((sample) =>
+        accountAidKeys.has(sample.aid.toString()),
       );
+      toViewSamples.push(...routedSamples);
+      if (fetchedSamples === undefined) continue;
+      // The account's complete list was read; AIDs it lacks are no longer
+      // in that Watch Later list.
+      const presentKeys = new Set(
+        routedSamples.map((sample) => sample.aid.toString()),
+      );
+      for (const key of accountAidKeys) {
+        if (!presentKeys.has(key)) {
+          absentFromToViewAccountByAid.set(key, accountId);
+        }
+      }
     }
   }
 
@@ -326,6 +352,15 @@ export async function batchSampleVideoStats(
           `Minute stats favorite fallback missed ${missingCount} requested aid(s)`,
         );
         recordFallbackResponseMiss("missing_response_item", missingCount);
+        options?.onFavoriteFallbackMissing?.(
+          aidBatch
+            .filter((aid) => !seenAids.has(aid.toString()))
+            .map((aid) => ({
+              aid,
+              absentFromToViewAccountId:
+                absentFromToViewAccountByAid.get(aid.toString()) ?? null,
+            })),
+        );
       }
       if (invalidAids.size > 0) {
         logger.warn(

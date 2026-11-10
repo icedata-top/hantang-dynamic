@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { AccountContext } from "../../core/account";
 import { minuteSamplesTotal } from "../../metrics/registry";
+import type { batchSampleVideoStats } from "./batchSampleVideoStats";
 import type { MinuteDatabase } from "./minuteHandler";
 import {
   MinuteHandler,
@@ -45,6 +47,9 @@ function database(onSelect: () => void): MinuteDatabase {
     },
     async insertVideoMinuteSamplesWithGateCrossings() {
       return { inserted: 0, gateCrossings: [] };
+    },
+    async markVideoDeleted() {
+      return 0n;
     },
     async getProcessedVideoAids() {
       return new Set();
@@ -788,4 +793,204 @@ test("repeated -702 retries on the next cycle, then cools the account for 30 min
   }
 
   assert.deepEqual(routedAccountIds, [[7n], [], [7n], [], [7n]]);
+});
+
+type SampleOptions = Parameters<typeof batchSampleVideoStats>[1];
+
+function watchLaterAccount(uid: string): AccountContext {
+  return { uid, enableWatchLater: true } as unknown as AccountContext;
+}
+
+/** Sampler stand-in whose favorite endpoint answered but omitted `aids`. */
+function favoriteOmits(
+  missing: { aid: bigint; absentFromToViewAccountId: bigint | null }[],
+) {
+  return async (_aids: bigint[], options?: SampleOptions) => {
+    options?.onFavoriteFallbackMissing?.(missing);
+    return [];
+  };
+}
+
+interface MissingVideoHarness {
+  handler: MinuteHandler;
+  deleted: { identity: unknown; notes: unknown }[];
+  advanced: bigint[];
+  detailLookups: bigint[];
+  additions: { uid: string; aid: bigint; action: string }[];
+}
+
+function missingVideoHarness(options: {
+  missing: { aid: bigint; absentFromToViewAccountId: bigint | null }[];
+  detail: (aid: bigint) => Promise<unknown | null>;
+  accounts?: AccountContext[];
+  addCode?: number;
+}): MissingVideoHarness {
+  const deleted: MissingVideoHarness["deleted"] = [];
+  const advanced: bigint[] = [];
+  const detailLookups: bigint[] = [];
+  const additions: MissingVideoHarness["additions"] = [];
+  const handler = new MinuteHandler({
+    database: {
+      ...database(() => {}),
+      async markVideoDeleted(identity, notes) {
+        deleted.push({ identity, notes });
+        return 0n;
+      },
+      async advanceFailedMinuteVideos(aids) {
+        advanced.push(...aids);
+        return aids.length;
+      },
+    },
+    loadAccounts: () => options.accounts ?? [],
+    sampleVideoStats: favoriteOmits(options.missing),
+    async fetchVideoDetail(aid) {
+      detailLookups.push(aid);
+      return options.detail(aid);
+    },
+    async mutateWatchLater(account, aid, action) {
+      additions.push({ uid: account.uid, aid, action });
+      return options.addCode ?? 0;
+    },
+  });
+  return { handler, deleted, advanced, detailLookups, additions };
+}
+
+function dueVideo(aid: bigint, watchLaterManagedAccountIds: bigint[] = []) {
+  return { aid, lastView: null, watchLaterManagedAccountIds };
+}
+
+test("a video Bilibili reports deleted is marked deleted instead of resampled", async () => {
+  const harness = missingVideoHarness({
+    missing: [{ aid: 5n, absentFromToViewAccountId: null }],
+    detail: async () => null,
+  });
+
+  await harness.handler.processBatch([dueVideo(5n)]);
+  await harness.handler.stop();
+
+  assert.deepEqual(harness.deleted, [
+    { identity: { type: "aid", aid: 5n }, notes: undefined },
+  ]);
+  assert.deepEqual(harness.additions, []);
+  assert.deepEqual(harness.advanced, [5n]);
+});
+
+test("an unavailable video is marked deleted with its API code", async () => {
+  const harness = missingVideoHarness({
+    missing: [{ aid: 5n, absentFromToViewAccountId: 7n }],
+    accounts: [watchLaterAccount("7")],
+    async detail(aid) {
+      throw new Error(`VIDEO_UNAVAILABLE:${aid}:62012:private: only owner`);
+    },
+  });
+
+  await harness.handler.processBatch([dueVideo(5n, [7n])]);
+  await harness.handler.stop();
+
+  assert.deepEqual(harness.deleted, [
+    {
+      identity: { type: "aid", aid: 5n },
+      notes: { api_code: 62012, api_message: "private: only owner" },
+    },
+  ]);
+  assert.deepEqual(harness.additions, []);
+});
+
+test("an existing video missing from its Watch Later list is added back", async () => {
+  const harness = missingVideoHarness({
+    missing: [{ aid: 5n, absentFromToViewAccountId: 7n }],
+    accounts: [watchLaterAccount("3"), watchLaterAccount("7")],
+    detail: async () => ({ data: {} }),
+  });
+
+  await harness.handler.processBatch([dueVideo(5n, [7n])]);
+  await harness.handler.stop();
+
+  assert.deepEqual(harness.additions, [{ uid: "7", aid: 5n, action: "add" }]);
+  assert.deepEqual(harness.deleted, []);
+});
+
+test("an existing video that was in no Watch Later list is left alone", async () => {
+  const harness = missingVideoHarness({
+    missing: [{ aid: 5n, absentFromToViewAccountId: null }],
+    accounts: [watchLaterAccount("7")],
+    detail: async () => ({ data: {} }),
+  });
+
+  await harness.handler.processBatch([dueVideo(5n)]);
+  await harness.handler.stop();
+
+  assert.deepEqual(harness.detailLookups, [5n]);
+  assert.deepEqual(harness.additions, []);
+  assert.deepEqual(harness.deleted, []);
+});
+
+test("a failed detail lookup neither deletes nor re-adds the video", async () => {
+  const harness = missingVideoHarness({
+    missing: [{ aid: 5n, absentFromToViewAccountId: 7n }],
+    accounts: [watchLaterAccount("7")],
+    async detail() {
+      throw new Error("API Error: Fetch video full detail failed");
+    },
+  });
+
+  await harness.handler.processBatch([dueVideo(5n, [7n])]);
+  await harness.handler.stop();
+
+  assert.deepEqual(harness.deleted, []);
+  assert.deepEqual(harness.additions, []);
+  assert.deepEqual(harness.advanced, [5n]);
+});
+
+test("a video is not re-checked within ten minutes", async () => {
+  const harness = missingVideoHarness({
+    missing: [{ aid: 5n, absentFromToViewAccountId: null }],
+    detail: async () => ({ data: {} }),
+  });
+
+  await harness.handler.processBatch([dueVideo(5n)]);
+  await harness.handler.stop();
+  await harness.handler.processBatch([dueVideo(5n)]);
+  await harness.handler.stop();
+
+  assert.deepEqual(harness.detailLookups, [5n]);
+});
+
+test("a rate-limited add stops further additions for that account", async () => {
+  const harness = missingVideoHarness({
+    missing: [
+      { aid: 5n, absentFromToViewAccountId: 7n },
+      { aid: 6n, absentFromToViewAccountId: 7n },
+    ],
+    accounts: [watchLaterAccount("7")],
+    detail: async () => ({ data: {} }),
+    addCode: -702,
+  });
+
+  await harness.handler.processBatch([dueVideo(5n, [7n]), dueVideo(6n, [7n])]);
+  await harness.handler.stop();
+
+  assert.deepEqual(harness.additions, [{ uid: "7", aid: 5n, action: "add" }]);
+  assert.deepEqual(harness.deleted, []);
+});
+
+test("videos that were sampled successfully are never checked", async () => {
+  const detailLookups: bigint[] = [];
+  const sampledAt = new Date("2026-08-18T00:01:00.000Z");
+  const handler = new MinuteHandler({
+    database: database(() => {}),
+    loadAccounts: () => [],
+    async sampleVideoStats() {
+      return [{ aid: 1n, time: sampledAt, favorite: 1, view: 100 }];
+    },
+    async fetchVideoDetail(aid) {
+      detailLookups.push(aid);
+      return null;
+    },
+  });
+
+  await handler.processBatch([dueVideo(1n)]);
+  await handler.stop();
+
+  assert.deepEqual(detailLookups, []);
 });
