@@ -1,5 +1,22 @@
 # Changelog
 
+## 5.10.2
+
+Stops minute sampling from requesting deleted videos forever and puts videos
+back into Watch Later when they were dropped from it.
+
+- When the favorite fallback answers but omits a requested video, checks the
+  video's detail in the background. A video Bilibili reports as deleted (404) or
+  unavailable (62002, 62004, 62012) is marked deleted and its collection state
+  disabled, so it is no longer sampled. Previously it was requested again every
+  sampling interval and logged a "missed" warning each time.
+- Adds a video that still exists back to its Watch Later account when that
+  account's complete To View list no longer contains it. Videos assigned to no
+  account, and accounts whose list could not be read, are never deleted or
+  re-added on that basis.
+- Skips the check when the favorite request itself fails, runs it off the
+  sampling loop, and repeats it for the same video at most every ten minutes.
+
 ## 5.10.1
 
 Fixes duplicate account loading when a cookie file is configured twice.
