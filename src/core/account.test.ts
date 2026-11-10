@@ -3,7 +3,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { loadCookieFileAccount } from "./account";
+import {
+  type AccountContext,
+  dedupeAccountsByUid,
+  dedupeCookieFiles,
+  loadCookieFileAccount,
+} from "./account";
 
 function writeCookieFile(contents: string): {
   directory: string;
@@ -61,4 +66,44 @@ test("a single cookie file may use the configured numeric uid", () => {
   } finally {
     rmSync(cookie.directory, { recursive: true, force: true });
   }
+});
+
+test("cookie files listed under different spellings of one path load once", () => {
+  assert.deepEqual(
+    dedupeCookieFiles([
+      { path: ".cookies.a.txt", enableWatchLater: false },
+      { path: ".cookies.b.txt", enableWatchLater: false },
+      { path: "./.cookies.a.txt", enableWatchLater: true },
+      { path: "./.cookies.b.txt", enableWatchLater: false },
+      { path: "./.cookies.c.txt", enableWatchLater: false },
+    ]),
+    [
+      { path: ".cookies.a.txt", enableWatchLater: true },
+      { path: ".cookies.b.txt", enableWatchLater: false },
+      { path: "./.cookies.c.txt", enableWatchLater: false },
+    ],
+  );
+});
+
+test("accounts sharing a uid across different cookie files collapse to one", () => {
+  const account = (uid: string, file: string, watchLater = false) =>
+    ({
+      uid,
+      cookieFilePath: file,
+      enableWatchLater: watchLater,
+    }) as AccountContext;
+
+  const accounts = dedupeAccountsByUid([
+    account("1", "a.txt"),
+    account("2", "b.txt"),
+    account("1", "a-copy.txt", true),
+  ]);
+
+  assert.deepEqual(
+    accounts.map((a) => [a.uid, a.cookieFilePath, a.enableWatchLater]),
+    [
+      ["1", "a.txt", true],
+      ["2", "b.txt", false],
+    ],
+  );
 });

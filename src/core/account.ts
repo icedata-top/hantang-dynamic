@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { AxiosInstance } from "axios";
 import type { CookieJar } from "tough-cookie";
 import {
@@ -124,6 +125,57 @@ export function loadCookieFileAccount(
   }
 }
 
+interface CookieFileEntry {
+  path: string;
+  enableWatchLater: boolean;
+}
+
+/**
+ * Collapse cookie file entries that point at the same file under different
+ * spellings (e.g. `.cookies.a.txt` vs `./.cookies.a.txt`). The first spelling
+ * is kept; Watch Later sampling is enabled if any duplicate asked for it.
+ */
+export function dedupeCookieFiles(
+  cookieFiles: CookieFileEntry[],
+): CookieFileEntry[] {
+  const byResolvedPath = new Map<string, CookieFileEntry>();
+  for (const cookieFile of cookieFiles) {
+    const key = resolve(cookieFile.path);
+    const existing = byResolvedPath.get(key);
+    if (!existing) {
+      byResolvedPath.set(key, { ...cookieFile });
+      continue;
+    }
+    logger.warn(
+      `Cookie file ${cookieFile.path} is configured more than once (same file as ${existing.path}); ignoring the duplicate.`,
+    );
+    existing.enableWatchLater ||= cookieFile.enableWatchLater;
+  }
+  return [...byResolvedPath.values()];
+}
+
+/**
+ * Keep one context per uid. Two contexts for the same account would run
+ * duplicate trackers against one state file and race on refresh-token rotation.
+ */
+export function dedupeAccountsByUid(
+  accounts: AccountContext[],
+): AccountContext[] {
+  const byUid = new Map<string, AccountContext>();
+  for (const account of accounts) {
+    const existing = byUid.get(account.uid);
+    if (!existing) {
+      byUid.set(account.uid, account);
+      continue;
+    }
+    logger.warn(
+      `uid=${account.uid} is loaded from both ${existing.cookieFilePath} and ${account.cookieFilePath}; ignoring ${account.cookieFilePath}.`,
+    );
+    existing.enableWatchLater ||= account.enableWatchLater;
+  }
+  return [...byUid.values()];
+}
+
 /**
  * Load all configured accounts.
  *
@@ -138,17 +190,19 @@ export function loadCookieFileAccount(
 export function loadAccounts(): AccountContext[] {
   if (_accounts) return _accounts;
 
-  const cookieFiles = config.bilibili.cookieFiles;
+  const cookieFiles = dedupeCookieFiles(config.bilibili.cookieFiles);
 
   if (cookieFiles.length > 0) {
-    _accounts = cookieFiles
-      .map((cookieFile) =>
-        loadCookieFileAccount(
-          cookieFile,
-          cookieFiles.length === 1 ? config.bilibili.uid : undefined,
-        ),
-      )
-      .filter((account): account is AccountContext => account !== null);
+    _accounts = dedupeAccountsByUid(
+      cookieFiles
+        .map((cookieFile) =>
+          loadCookieFileAccount(
+            cookieFile,
+            cookieFiles.length === 1 ? config.bilibili.uid : undefined,
+          ),
+        )
+        .filter((account): account is AccountContext => account !== null),
+    );
 
     if (_accounts.length === 0) {
       logger.warn(
