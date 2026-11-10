@@ -1,5 +1,18 @@
 # Changelog
 
+## 5.10.1
+
+Fixes duplicate account loading when a cookie file is configured twice.
+
+- Loads each cookie file once even when `cookie_files` lists it under different
+  spellings of the same path (for example `.cookies.a.txt` and
+  `./.cookies.a.txt`). Previously the account got two trackers, two
+  cookie-refresh loops, and one shared `state_<uid>.json`, and the competing
+  refresh loops could invalidate each other's rotated refresh token.
+- Keeps a single context per uid when different cookie files belong to the
+  same account, and logs a warning for each ignored duplicate. Watch Later
+  sampling stays enabled if any duplicate entry enabled it.
+
 ## 5.10.0
 
 Refreshes Bilibili login cookies automatically, adds QR login onboarding,
