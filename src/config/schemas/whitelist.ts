@@ -29,6 +29,7 @@ export const legacyWhitelistPaths = [
 export const whitelistSchema = z.object({
   video: z.object({
     typeIds: numberList.default([]),
+    tidV2: numberList.default([]),
     copyrightTypes: numberList.default([]),
     contentKeywords: z.array(z.string().trim().min(1)).default([]),
   }),
@@ -80,6 +81,10 @@ export function createWhitelistConfig(
           "TYPE_ID_WHITE_LIST",
           [],
         ),
+      ),
+      // TOML only: the empty environment key never matches a variable.
+      tidV2: numberListValue(
+        getConfigValue(["whitelist", "video", "tid_v2"], "", []),
       ),
       copyrightTypes: numberListValue(
         getConfigValue(

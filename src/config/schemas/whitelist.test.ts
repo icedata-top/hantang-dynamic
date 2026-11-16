@@ -7,6 +7,7 @@ test("whitelist sections use TOML before environment values", () => {
     ["whitelist.video.type_ids", [28]],
     ["whitelist.video.copyright_types", [1]],
     ["whitelist.video.content_keywords", ["music"]],
+    ["whitelist.video.tid_v2", [2022, 2061]],
     ["whitelist.recommendation.pid_v2", [7]],
     ["whitelist.minute_bootstrap.label_content_types", ["vocaloid"]],
     ["whitelist.minute_bootstrap.label_origin", "rule"],
@@ -15,7 +16,12 @@ test("whitelist sections use TOML before environment values", () => {
   ]);
   const result = createWhitelistConfig((path) => toml.get(path.join(".")));
   assert.deepEqual(result, {
-    video: { typeIds: [28], copyrightTypes: [1], contentKeywords: ["music"] },
+    video: {
+      typeIds: [28],
+      tidV2: [2022, 2061],
+      copyrightTypes: [1],
+      contentKeywords: ["music"],
+    },
     recommendation: { pidV2: [7] },
     minuteBootstrap: {
       labelContentTypes: ["vocaloid"],
@@ -39,6 +45,7 @@ test("whitelist environment lists parse and defaults retain minute admission", (
   const result = createWhitelistConfig((_path, key) => env.get(key));
   assert.deepEqual(result.video, {
     typeIds: [28, 30],
+    tidV2: [],
     copyrightTypes: [1, 2],
     contentKeywords: ["music", "dance"],
   });
@@ -74,5 +81,22 @@ test("content keywords reject blank entries from environment and TOML", () => {
           : undefined,
       ),
     /contentKeywords/,
+  );
+});
+
+test("whitelist.video.tid_v2 defaults to empty and is not read from the environment", () => {
+  assert.deepEqual(createWhitelistConfig(() => undefined).video.tidV2, []);
+  const keys: string[] = [];
+  createWhitelistConfig((path, key, defaultValue) => {
+    if (path.join(".") === "whitelist.video.tid_v2") keys.push(key);
+    return defaultValue;
+  });
+  assert.deepEqual(keys, [""]);
+  assert.throws(
+    () =>
+      createWhitelistConfig((path) =>
+        path.join(".") === "whitelist.video.tid_v2" ? ["x"] : undefined,
+      ),
+    /tidV2/,
   );
 });

@@ -125,3 +125,58 @@ test("an empty tid_v2 list leaves the type check on type_ids for any tid_v2", as
     );
   }
 });
+
+test("tid_v2 list: a positive tid_v2 is judged by the list, not type_ids", async () => {
+  const rules = { typeIds: [30], tidV2: [2022] };
+  assert.equal(
+    await passes(rules, makeVideo({ tid_v2: 2022, type_id: 999 })),
+    true,
+  );
+  assert.equal(
+    await passes(rules, makeVideo({ tid_v2: 2037, type_id: 30 })),
+    false,
+  );
+});
+
+test("tid_v2 list applies even when the type list is empty", async () => {
+  const rules = { tidV2: [2022] };
+  assert.equal(await passes(rules, makeVideo({ tid_v2: 2022 })), true);
+  assert.equal(await passes(rules, makeVideo({ tid_v2: 2037 })), false);
+});
+
+test("tid_v2 list: a zero or missing tid_v2 falls back to type_ids", async () => {
+  const rules = { typeIds: [30], tidV2: [2022] };
+  for (const tid_v2 of [0, undefined]) {
+    assert.equal(await passes(rules, makeVideo({ type_id: 30, tid_v2 })), true);
+    assert.equal(
+      await passes(rules, makeVideo({ type_id: 999, tid_v2 })),
+      false,
+    );
+  }
+});
+
+test("tid_v2 list: a content keyword admits an unlisted tid_v2", async () => {
+  const rules = { typeIds: [30], tidV2: [2022], contentKeywords: ["miku"] };
+  assert.equal(
+    await passes(rules, makeVideo({ tid_v2: 2037, title: "miku" })),
+    true,
+  );
+  assert.equal(await passes(rules, makeVideo({ tid_v2: 2037 })), false);
+});
+
+test("tid_v2 list: copyright and blacklist still apply after the type check", async () => {
+  const rules = {
+    tidV2: [2022],
+    copyrightTypes: [1],
+    contentBlacklist: ["spam"],
+  };
+  assert.equal(await passes(rules, makeVideo({ tid_v2: 2022 })), true);
+  assert.equal(
+    await passes(rules, makeVideo({ tid_v2: 2022, copyright: 2 })),
+    false,
+  );
+  assert.equal(
+    await passes(rules, makeVideo({ tid_v2: 2022, title: "spam" })),
+    false,
+  );
+});

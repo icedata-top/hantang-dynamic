@@ -112,6 +112,7 @@ content_blacklist = []         # Array of content blacklist keywords
 [whitelist.video]
 # type_ids also seeds the tid_v1 list of collection_whitelist when init-schema first creates it; edit that table instead
 type_ids = []                  # Video type IDs to include (e.g., [28, 30, 130])
+# tid_v2 = [2022, 2061]        # tid_v2 values to include; used instead of type_ids for videos that have a tid_v2 (empty: use type_ids)
 copyright_types = []          # Copyright types to include (1: Original, 2: Repost)
 content_keywords = []         # Keywords that bypass type and copyright checks
 

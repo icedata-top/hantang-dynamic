@@ -45,6 +45,7 @@ comma-separated. Empty TOML arrays explicitly disable a list.
 ```toml
 [whitelist.video]
 type_ids = []
+tid_v2 = []
 copyright_types = []
 content_keywords = []
 ```
@@ -52,12 +53,20 @@ content_keywords = []
 | TOML key | Environment variable | Default | Effect |
 | --- | --- | --- | --- |
 | `whitelist.video.type_ids` | `TYPE_ID_WHITE_LIST` | `[]` | Video types admitted by the type check. The same values also seed the monitoring `tid_v1` fallback list once, when the collection whitelist table is first created; later runs do not re-seed it. |
+| `whitelist.video.tid_v2` | none (TOML only) | `[]` | `tid_v2` values admitted by the type check for videos that have a `tid_v2`. |
 | `whitelist.video.copyright_types` | `COPYRIGHT_WHITE_LIST` | `[]` | Copyright types admitted by the copyright check. |
 | `whitelist.video.content_keywords` | `CONTENT_WHITE_LIST` | `[]` | Keywords that bypass the type and copyright checks. Blank keywords are invalid. |
 
 An empty video type or copyright list disables that check. A matching content
 keyword bypasses those checks, while `processing.filtering.content_blacklist`
 still excludes matching videos.
+
+When `whitelist.video.tid_v2` is not empty, a video with a `tid_v2` above 0 is
+checked against that list instead of `type_ids`; a content keyword still
+bypasses the check. A video whose `tid_v2` is 0 or missing, and every video
+while the list is empty, is checked against `type_ids` as before. The filter
+runs when a video is stored or fully refetched; changing the list does not
+re-evaluate videos already stored.
 
 The `pid_v2` whitelist that admits related videos is **not** a TOML setting. It
 lives in the database table `collection_whitelist` (kind `pid_v2`), together

@@ -44,6 +44,11 @@ Changes:
   collection run, so edits apply without a restart.
 - Adds `fn_reevaluate_collection_whitelist()` to apply whitelist edits to
   stored videos on demand.
+- Adds `whitelist.video.tid_v2` (TOML only, default empty). When set, a video
+  with a `tid_v2` is admitted by that list instead of `whitelist.video.type_ids`;
+  videos without a `tid_v2`, and every video while the list is empty, are
+  checked against `type_ids` as before. Content keywords, copyright and the
+  blacklist are unchanged, and videos already stored are not re-evaluated.
 
 ## 5.10.2
 
