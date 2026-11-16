@@ -101,7 +101,7 @@ gets corrected. A v1 mismatch never removes a video; only a v2 verdict does.
 are stored at all.
 
 `pnpm init-schema` creates the table and seeds it once from the deprecated
-`whitelist.minute_bootstrap.tid_v2` (default `[2022, 2061]`) and
+`whitelist.minute_bootstrap.tid_v2` (default `[2022, 2061, 4215]`) and
 `whitelist.recommendation.pid_v2` (default `[]`) values. `tid_v1` starts empty.
 Later runs never re-seed, so a value you delete stays deleted.
 

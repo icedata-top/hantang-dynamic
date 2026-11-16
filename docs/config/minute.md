@@ -133,7 +133,7 @@ Bootstrap eligibility is configured under `[whitelist.minute_bootstrap]`:
 label_content_types = ["vocaloid", "maybe_vocaloid"]
 label_origin = "rule"
 label_writers = ["classification_apply", "classification_trigger"]
-tid_v2 = [2022, 2061]
+tid_v2 = [2022, 2061, 4215]
 ```
 
 | TOML key | Environment variable | Default | Effect |
@@ -141,7 +141,7 @@ tid_v2 = [2022, 2061]
 | `label_content_types` | `MINUTE_BOOTSTRAP_LABEL_CONTENT_TYPES` | `["vocaloid", "maybe_vocaloid"]` | Eligible formal label types. |
 | `label_origin` | `MINUTE_BOOTSTRAP_LABEL_ORIGIN` | `rule` | Required label origin. |
 | `label_writers` | `MINUTE_BOOTSTRAP_LABEL_WRITERS` | `["classification_apply", "classification_trigger"]` | Eligible label writers. |
-| `tid_v2` | `MINUTE_BOOTSTRAP_TID_V2_ALLOWLIST` | `[2022, 2061]` | **Deprecated.** Only seeds `collection_whitelist` when `init-schema` first creates it. Edit that table instead. |
+| `tid_v2` | `MINUTE_BOOTSTRAP_TID_V2_ALLOWLIST` | `[2022, 2061, 4215]` | **Deprecated.** Only seeds `collection_whitelist` when `init-schema` first creates it. Edit that table instead. |
 
 On startup, the app automatically moves these former TOML keys in `config.toml`
 to their current locations:

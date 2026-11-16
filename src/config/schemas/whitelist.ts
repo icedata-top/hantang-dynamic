@@ -42,7 +42,7 @@ export const whitelistSchema = z.object({
       "classification_apply",
       "classification_trigger",
     ]),
-    tidV2: z.array(z.coerce.number().int()).default([2022, 2061]),
+    tidV2: z.array(z.coerce.number().int()).default([2022, 2061, 4215]),
   }),
 });
 
@@ -129,7 +129,7 @@ export function createWhitelistConfig(
         getConfigValue(
           ["whitelist", "minute_bootstrap", "tid_v2"],
           "MINUTE_BOOTSTRAP_TID_V2_ALLOWLIST",
-          [2022, 2061],
+          [2022, 2061, 4215],
         ),
       ),
     },
