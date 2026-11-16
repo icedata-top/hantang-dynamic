@@ -116,7 +116,7 @@ test("a fetch that omits tid_v2 or pid_v2 keeps the stored values", async () => 
   assert.equal(calls[1]?.values?.[11], null);
   assert.match(
     calls[1]?.sql ?? "",
-    /tid_v2 = COALESCE\(EXCLUDED\.tid_v2, processed_videos\.tid_v2\)/,
+    /tid_v2 = CASE\s+WHEN COALESCE\(EXCLUDED\.tid_v2, 0\) > 0 THEN EXCLUDED\.tid_v2\s+WHEN COALESCE\(processed_videos\.tid_v2, 0\) > 0 THEN processed_videos\.tid_v2\s+ELSE COALESCE\(EXCLUDED\.tid_v2, processed_videos\.tid_v2\)\s+END/,
   );
   assert.match(
     calls[1]?.sql ?? "",
@@ -618,11 +618,11 @@ test("full-detail batch writes once per database phase and keeps the final dupli
   assert.equal(calls.length, 4);
   assert.match(
     calls[1]?.sql ?? "",
-    /tid_v2 = COALESCE\(EXCLUDED\.tid_v2, video\.tid_v2\)/,
+    /tid_v2 = CASE\s+WHEN COALESCE\(EXCLUDED\.tid_v2, 0\) > 0 THEN EXCLUDED\.tid_v2\s+WHEN COALESCE\(video\.tid_v2, 0\) > 0 THEN video\.tid_v2\s+ELSE COALESCE\(EXCLUDED\.tid_v2, video\.tid_v2\)\s+END/,
   );
   assert.match(
     calls[1]?.sql ?? "",
-    /\(EXCLUDED\.tid_v2 IS NOT NULL AND video\.tid_v2 IS DISTINCT FROM EXCLUDED\.tid_v2\)/,
+    /video\.tid_v2 IS DISTINCT FROM \(\s+CASE\s+WHEN COALESCE\(EXCLUDED\.tid_v2, 0\) > 0 THEN EXCLUDED\.tid_v2\s+WHEN COALESCE\(video\.tid_v2, 0\) > 0 THEN video\.tid_v2\s+ELSE COALESCE\(EXCLUDED\.tid_v2, video\.tid_v2\)\s+END\s+\)/,
   );
 });
 

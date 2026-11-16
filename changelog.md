@@ -37,6 +37,9 @@ Changes:
   disabled.
 - A fetch that omits `tid_v2` now keeps the stored value instead of overwriting
   it with NULL, matching `pid_v2`.
+- A fetch that reports `tid_v2` as 0 no longer overwrites a stored non-zero
+  `tid_v2`; a non-zero value still replaces the stored one, and 0 is still
+  recorded for a video with no stored value.
 - The related-video `pid_v2` whitelist is read from the database for each
   collection run, so edits apply without a restart.
 - Adds `fn_reevaluate_collection_whitelist()` to apply whitelist edits to

@@ -306,7 +306,11 @@ export async function markVideoProcessed(
       user_id = EXCLUDED.user_id,
       is_filtered = EXCLUDED.is_filtered,
       staff = EXCLUDED.staff,
-      tid_v2 = COALESCE(EXCLUDED.tid_v2, processed_videos.tid_v2),
+      tid_v2 = CASE
+        WHEN COALESCE(EXCLUDED.tid_v2, 0) > 0 THEN EXCLUDED.tid_v2
+        WHEN COALESCE(processed_videos.tid_v2, 0) > 0 THEN processed_videos.tid_v2
+        ELSE COALESCE(EXCLUDED.tid_v2, processed_videos.tid_v2)
+      END,
       dynamic = EXCLUDED.dynamic,
       tag_new = CASE
         WHEN $25::boolean THEN EXCLUDED.tag_new
@@ -466,7 +470,11 @@ export async function markVideosProcessedWithCollectionState(
          user_id = EXCLUDED.user_id,
          is_filtered = EXCLUDED.is_filtered,
          staff = EXCLUDED.staff,
-         tid_v2 = COALESCE(EXCLUDED.tid_v2, video.tid_v2),
+         tid_v2 = CASE
+           WHEN COALESCE(EXCLUDED.tid_v2, 0) > 0 THEN EXCLUDED.tid_v2
+           WHEN COALESCE(video.tid_v2, 0) > 0 THEN video.tid_v2
+           ELSE COALESCE(EXCLUDED.tid_v2, video.tid_v2)
+         END,
          dynamic = EXCLUDED.dynamic,
          tag_new = COALESCE(EXCLUDED.tag_new, video.tag_new),
          tag_ids = COALESCE(EXCLUDED.tag_ids, video.tag_ids),
@@ -490,7 +498,13 @@ export async function markVideosProcessedWithCollectionState(
           OR video.user_id IS DISTINCT FROM EXCLUDED.user_id
           OR video.is_filtered IS DISTINCT FROM EXCLUDED.is_filtered
           OR video.staff IS DISTINCT FROM EXCLUDED.staff
-          OR (EXCLUDED.tid_v2 IS NOT NULL AND video.tid_v2 IS DISTINCT FROM EXCLUDED.tid_v2)
+          OR video.tid_v2 IS DISTINCT FROM (
+            CASE
+              WHEN COALESCE(EXCLUDED.tid_v2, 0) > 0 THEN EXCLUDED.tid_v2
+              WHEN COALESCE(video.tid_v2, 0) > 0 THEN video.tid_v2
+              ELSE COALESCE(EXCLUDED.tid_v2, video.tid_v2)
+            END
+          )
           OR video.dynamic IS DISTINCT FROM EXCLUDED.dynamic
           OR (EXCLUDED.tag_new IS NOT NULL AND video.tag_new IS DISTINCT FROM EXCLUDED.tag_new)
           OR (EXCLUDED.tag_ids IS NOT NULL AND video.tag_ids IS DISTINCT FROM EXCLUDED.tag_ids)
