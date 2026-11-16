@@ -82,9 +82,12 @@ export function createWhitelistConfig(
           [],
         ),
       ),
-      // TOML only: the empty environment key never matches a variable.
       tidV2: numberListValue(
-        getConfigValue(["whitelist", "video", "tid_v2"], "", []),
+        getConfigValue(
+          ["whitelist", "video", "tid_v2"],
+          "TID_V2_WHITE_LIST",
+          [],
+        ),
       ),
       copyrightTypes: numberListValue(
         getConfigValue(

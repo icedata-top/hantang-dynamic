@@ -101,6 +101,11 @@ test("copyright check: an unlisted copyright is blocked unless a keyword matches
   );
 });
 
+test("copyright check: an empty copyright list admits every copyright", async () => {
+  assert.equal(await passes({}, makeVideo({ copyright: 2 })), true);
+  assert.equal(await passes({}, makeVideo({ copyright: 99 })), true);
+});
+
 test("blacklist: a matching keyword blocks even when every allowlist passes", async () => {
   const rules = {
     typeIds: [30],

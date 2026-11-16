@@ -36,6 +36,7 @@ test("whitelist sections use TOML before environment values", () => {
 test("whitelist environment lists parse and defaults retain minute admission", () => {
   const env = new Map([
     ["TYPE_ID_WHITE_LIST", "28, 30"],
+    ["TID_V2_WHITE_LIST", "2022, 2061"],
     ["COPYRIGHT_WHITE_LIST", "1, 2"],
     ["CONTENT_WHITE_LIST", "music, dance"],
     ["UPDATE_INFO_PID_V2_WHITELIST", "7, 11"],
@@ -45,7 +46,7 @@ test("whitelist environment lists parse and defaults retain minute admission", (
   const result = createWhitelistConfig((_path, key) => env.get(key));
   assert.deepEqual(result.video, {
     typeIds: [28, 30],
-    tidV2: [],
+    tidV2: [2022, 2061],
     copyrightTypes: [1, 2],
     contentKeywords: ["music", "dance"],
   });
@@ -84,19 +85,30 @@ test("content keywords reject blank entries from environment and TOML", () => {
   );
 });
 
-test("whitelist.video.tid_v2 defaults to empty and is not read from the environment", () => {
+test("whitelist.video.tid_v2 reads TOML, then the environment, and defaults to empty", () => {
   assert.deepEqual(createWhitelistConfig(() => undefined).video.tidV2, []);
-  const keys: string[] = [];
-  createWhitelistConfig((path, key, defaultValue) => {
-    if (path.join(".") === "whitelist.video.tid_v2") keys.push(key);
-    return defaultValue;
-  });
-  assert.deepEqual(keys, [""]);
-  assert.throws(
-    () =>
-      createWhitelistConfig((path) =>
-        path.join(".") === "whitelist.video.tid_v2" ? ["x"] : undefined,
-      ),
-    /tidV2/,
+  const env = (value: string) => (_path: string[], key: string) =>
+    key === "TID_V2_WHITE_LIST" ? value : undefined;
+  assert.deepEqual(
+    createWhitelistConfig(env("2022,2061")).video.tidV2,
+    [2022, 2061],
   );
+  assert.deepEqual(
+    createWhitelistConfig((path, key) =>
+      path.join(".") === "whitelist.video.tid_v2"
+        ? [2037]
+        : key === "TID_V2_WHITE_LIST"
+          ? "2022"
+          : undefined,
+    ).video.tidV2,
+    [2037],
+  );
+  assert.deepEqual(
+    createWhitelistConfig((path) =>
+      path.join(".") === "whitelist.video.tid_v2" ? [] : undefined,
+    ).video.tidV2,
+    [],
+  );
+  assert.throws(() => createWhitelistConfig(env("2022,x")), /tidV2/);
+  assert.throws(() => createWhitelistConfig(env("2022,,2061")), /tidV2/);
 });

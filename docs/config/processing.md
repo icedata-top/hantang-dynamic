@@ -53,7 +53,7 @@ content_keywords = []
 | TOML key | Environment variable | Default | Effect |
 | --- | --- | --- | --- |
 | `whitelist.video.type_ids` | `TYPE_ID_WHITE_LIST` | `[]` | Video types admitted by the type check. The same values also seed the monitoring `tid_v1` fallback list once, when the collection whitelist table is first created; later runs do not re-seed it. |
-| `whitelist.video.tid_v2` | none (TOML only) | `[]` | `tid_v2` values admitted by the type check for videos that have a `tid_v2`. |
+| `whitelist.video.tid_v2` | `TID_V2_WHITE_LIST` | `[]` | `tid_v2` values admitted by the type check for videos that have a `tid_v2`. |
 | `whitelist.video.copyright_types` | `COPYRIGHT_WHITE_LIST` | `[]` | Copyright types admitted by the copyright check. |
 | `whitelist.video.content_keywords` | `CONTENT_WHITE_LIST` | `[]` | Keywords that bypass the type and copyright checks. Blank keywords are invalid. |
 
