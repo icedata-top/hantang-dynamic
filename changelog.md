@@ -29,6 +29,9 @@ Changes:
 - Adds a `tid_v1` whitelist for the legacy tid (`type_id`), which is always
   present but less reliable. It admits a video only until a `tid_v2` or `pid_v2`
   arrives, after which v2 decides alone; a v1 mismatch never removes a video.
+- The `tid_v1` list is seeded from `whitelist.video.type_ids` the first time
+  `collection_whitelist` is created, alongside the `tid_v2` and `pid_v2` seeds.
+  Changing that key later does not change the list; edit the table instead.
 - Videos added to `video_collection_state` by hand are marked `manual` and are
   never pulled out by the whitelist. Deleted or filtered-out videos are still
   disabled.

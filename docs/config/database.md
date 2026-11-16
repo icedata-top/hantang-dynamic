@@ -97,13 +97,15 @@ it only decides while the video has neither a `tid_v2` nor a `pid_v2`: a
 `tid_v1` match then admits it. Once either v2 value arrives, v2 alone decides and
 a v1 match no longer counts. That is how a video admitted on a wrong v1 value
 gets corrected. A v1 mismatch never removes a video; only a v2 verdict does.
-`tid_v1` is separate from `whitelist.video.type_ids`, which filters which videos
-are stored at all.
+`whitelist.video.type_ids`, which also filters which videos are stored at all,
+seeds the `tid_v1` list once (see below). Later changes to that key do not
+change the table.
 
-`pnpm init-schema` creates the table and seeds it once from the deprecated
+`pnpm init-schema` creates the table and seeds it once from
+`whitelist.video.type_ids` (the `tid_v1` values), the deprecated
 `whitelist.minute_bootstrap.tid_v2` (default `[2022, 2061, 4215]`) and
-`whitelist.recommendation.pid_v2` (default `[]`) values. `tid_v1` starts empty.
-Later runs never re-seed, so a value you delete stays deleted.
+`whitelist.recommendation.pid_v2` (default `[]`) values. Later runs never
+re-seed, so a value you delete stays deleted.
 
 ```sql
 INSERT INTO collection_whitelist (kind, value) VALUES ('pid_v2', 1234)

@@ -32,16 +32,19 @@ function createPool(options: { tableExists: boolean }) {
 }
 
 async function withSeedConfig<T>(
-  seeds: { tidV2: number[]; pidV2: number[] },
+  seeds: { typeIds?: number[]; tidV2: number[]; pidV2: number[] },
   run: () => Promise<T>,
 ): Promise<T> {
+  const originalTypeIds = config.whitelist.video.typeIds;
   const originalTid = config.whitelist.minuteBootstrap.tidV2;
   const originalPid = config.whitelist.recommendation.pidV2;
+  config.whitelist.video.typeIds = seeds.typeIds ?? [];
   config.whitelist.minuteBootstrap.tidV2 = seeds.tidV2;
   config.whitelist.recommendation.pidV2 = seeds.pidV2;
   try {
     return await run();
   } finally {
+    config.whitelist.video.typeIds = originalTypeIds;
     config.whitelist.minuteBootstrap.tidV2 = originalTid;
     config.whitelist.recommendation.pidV2 = originalPid;
   }
@@ -56,11 +59,14 @@ function inserts(calls: Call[]): unknown[][] {
 test("a newly created whitelist is seeded once from the legacy config values", async () => {
   const { pool, calls } = createPool({ tableExists: false });
 
-  await withSeedConfig({ tidV2: [2022, 2061], pidV2: [7] }, () =>
-    initCollectionWhitelistSchema(pool),
+  await withSeedConfig(
+    { typeIds: [28, 30], tidV2: [2022, 2061], pidV2: [7] },
+    () => initCollectionWhitelistSchema(pool),
   );
 
   assert.deepEqual(inserts(calls), [
+    ["tid_v1", 28],
+    ["tid_v1", 30],
     ["tid_v2", 2022],
     ["tid_v2", 2061],
     ["pid_v2", 7],
@@ -73,8 +79,9 @@ test("a newly created whitelist is seeded once from the legacy config values", a
 test("an existing whitelist is never re-seeded, so removed values stay removed", async () => {
   const { pool, calls } = createPool({ tableExists: true });
 
-  await withSeedConfig({ tidV2: [2022, 2061], pidV2: [7] }, () =>
-    initCollectionWhitelistSchema(pool),
+  await withSeedConfig(
+    { typeIds: [28, 30], tidV2: [2022, 2061], pidV2: [7] },
+    () => initCollectionWhitelistSchema(pool),
   );
 
   assert.deepEqual(inserts(calls), []);

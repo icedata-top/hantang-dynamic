@@ -22,9 +22,10 @@ export type CollectionWhitelistKind =
  * of truth: edit it with plain SQL, then run fn_reevaluate_collection_whitelist()
  * to apply the change to videos that are already stored.
  *
- * The TOML/env values (`whitelist.minute_bootstrap.tid_v2`,
- * `whitelist.recommendation.pid_v2`) are read only once, to seed the table the
- * first time it is created. Later changes to those keys have no effect.
+ * The TOML/env values (`whitelist.video.type_ids`,
+ * `whitelist.minute_bootstrap.tid_v2`, `whitelist.recommendation.pid_v2`) are
+ * read only once, to seed the table the first time it is created. Later changes
+ * to those keys have no effect.
  */
 export async function initCollectionWhitelistSchema(pool: Pool): Promise<void> {
   const existing = await pool.query<{ present: boolean }>(
@@ -56,6 +57,9 @@ export async function initCollectionWhitelistSchema(pool: Pool): Promise<void> {
 
   if (!alreadyCreated) {
     const seeds: Array<[CollectionWhitelistKind, number]> = [
+      ...config.whitelist.video.typeIds.map(
+        (value): [CollectionWhitelistKind, number] => ["tid_v1", value],
+      ),
       ...config.whitelist.minuteBootstrap.tidV2.map(
         (value): [CollectionWhitelistKind, number] => ["tid_v2", value],
       ),
