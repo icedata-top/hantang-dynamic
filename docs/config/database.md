@@ -87,16 +87,17 @@ listed value:
 
 | `kind` | Matched against | Role |
 | --- | --- | --- |
-| `tid_v2` | `processed_videos.tid_v2` | Authoritative when the video has a `tid_v2`. |
-| `pid_v2` | `processed_videos.pid_v2` | Authoritative when the video has a `pid_v2`. Also admits related videos. |
-| `tid_v1` | `processed_videos.type_id` (the legacy tid) | Stand-in until a `tid_v2` or `pid_v2` is known. |
+| `tid_v2` | `processed_videos.tid_v2` | Decides when the video has a non-zero `tid_v2`. |
+| `pid_v2` | `processed_videos.pid_v2` | Does not decide monitoring. Only pre-selects which related-video cards get their details fetched. |
+| `tid_v1` | `processed_videos.type_id` (the legacy tid) | Stand-in while `tid_v2` is unknown. |
 
-A video qualifies when its `tid_v2` is listed under `tid_v2` **or** its `pid_v2`
-is listed under `pid_v2`. The legacy tid is always present but less reliable, so
-it only decides while the video has neither a `tid_v2` nor a `pid_v2`: a
-`tid_v1` match then admits it. Once either v2 value arrives, v2 alone decides and
-a v1 match no longer counts. That is how a video admitted on a wrong v1 value
-gets corrected. A v1 mismatch never removes a video; only a v2 verdict does.
+A video qualifies when its `tid_v2` is listed under `tid_v2`. A `tid_v2` of `0`
+(or none) means unknown, and `pid_v2` plays no part. The legacy tid is always
+present but less reliable, so it only decides while `tid_v2` is unknown: a
+`tid_v1` match then admits the video. Once a non-zero `tid_v2` arrives, it alone
+decides and a v1 match no longer counts. That is how a video admitted on a wrong
+v1 value gets corrected. A v1 mismatch never removes a video; only a `tid_v2`
+verdict does.
 `whitelist.video.type_ids`, which also filters which videos are stored at all,
 seeds the `tid_v1` list once (see below). Later changes to that key do not
 change the table.
@@ -123,34 +124,72 @@ The application no longer writes monitoring state itself.
 
 | Situation | Result |
 | --- | --- |
-| `tid_v2` or `pid_v2` is whitelisted | The video enters `video_collection_state` (bootstrap if new, daily-driven if it has history). |
-| It has a `tid_v2` or `pid_v2`, but neither is whitelisted | A monitored video is pulled out: priority `-1`, `monitor_source = 'whitelist_excluded'`. A video never monitored gets no row. |
-| It has neither v2 value, and `type_id` is listed under `tid_v1` | The video enters monitoring until a v2 value arrives. |
-| It has neither v2 value, and `type_id` is not listed | Left alone. |
-| A fetch omits `tid_v2` or `pid_v2` | The stored value is kept, so a missing field never changes the result. |
+| A non-zero `tid_v2` is whitelisted | The video enters `video_collection_state` (bootstrap if new, daily-driven if it has history). |
+| A non-zero `tid_v2` is not whitelisted | A monitored video is pulled out: priority `-1`, `monitor_source = 'whitelist_excluded'`, unless its source protects it (below). A video never monitored gets no row. |
+| `tid_v2` is `0` or missing, and `type_id` is listed under `tid_v1` | The video enters monitoring until a non-zero `tid_v2` arrives. |
+| `tid_v2` is `0` or missing, and `type_id` is not listed | Left alone, whatever its `pid_v2`. |
+| A fetch omits `tid_v2` | The stored value is kept, so a missing field never changes the result. |
 | Deleted, or filtered out | Disabled as before, and not revived by the whitelist. |
 
 Only rows the whitelist itself excluded (`monitor_source = 'whitelist_excluded'`)
 can come back, and only when the whitelist later admits them. Rows disabled for
 other reasons stay disabled.
 
-### Manually added videos
+### Formal labels come before the whitelist
 
-The whitelist never pulls out a row whose `monitor_source` is `manual` or
-`label`. A row you insert into `video_collection_state` by hand gets `manual`
-automatically, because that is the column default; the application's own inserts
-always name their source (`whitelist`, `label` or `daily`). Rows written before
-this column existed have no source and are treated as ordinary, so they can be
-pulled out. Pin the ones you want to keep **before** running the re-evaluation
-below:
+If an external classifier has added `label_content_type`, `label_origin` and
+`labeled_by` to `processed_videos`, the trigger and
+`fn_reevaluate_collection_whitelist` pass a row's label on when all three are
+set. Without those columns, or with only some of them set, the label counts as
+absent and the whitelist decides. Nothing in this schema adds the columns.
+
+| Complete label | Result |
+| --- | --- |
+| Passes (`whitelist.minute_bootstrap.label_content_types`, `label_origin`, `label_writers`) | Admitted or kept with `monitor_source = 'label'`, whatever the whitelist says. |
+| Does not pass | Demoted to priority `-1` with no source, which is final, unless its source protects it (below). A video never monitored gets no row. |
+
+Changing only the label columns does not fire the trigger. Re-evaluate the
+affected videos afterwards to apply the new labels.
+
+### Which rows are protected
+
+| `monitor_source` | Pulled out by a `tid_v2` mismatch? | Demoted by a failing label? |
+| --- | --- | --- |
+| `whitelist`, `whitelist_excluded` | Yes | Yes |
+| `label` | No | Yes |
+| `manual` | No | No: reported as `label_demotion_blocked_protected` |
+| `daily` | No: reported as `pull_out_blocked_protected` | No: reported as `label_demotion_blocked_protected` |
+| none (written before this column existed) | No: reported as `pull_out_blocked_protected` | No: reported as `label_demotion_blocked_protected` |
+
+A protected row is left exactly as it is. A row you insert into
+`video_collection_state` by hand gets `manual` automatically, because that is
+the column default; the application's own inserts always name their source
+(`whitelist`, `label` or `daily`). When the whitelist or a passing label admits a
+row with no source or the `daily` source, the row takes the source `whitelist`
+or `label`, and from then on it is no longer protected.
+
+To give up the protection for a reviewed set of rows, either change their
+source to `whitelist`:
 
 ```sql
-UPDATE video_collection_state SET monitor_source = 'manual'
+UPDATE video_collection_state SET monitor_source = 'whitelist'
 WHERE aid = ANY(ARRAY[1, 2, 3]::bigint[]);
 ```
 
-`manual` protects against the whitelist only. A video that is deleted, or
-filtered out by the content filters, is still disabled.
+or evaluate them inside a transaction that sets the release settings. Each
+setting only lasts until the end of its transaction, and the trigger never sets
+them:
+
+```sql
+BEGIN;
+SET LOCAL hantang.allow_pull_legacy = on;     -- tid_v2 mismatch may pull out rows with no source or 'daily'
+SET LOCAL hantang.allow_label_demotion = on;  -- a failing label may demote rows with no source, 'daily' or 'manual'
+SELECT * FROM fn_reevaluate_collection_whitelist(ARRAY[1, 2, 3]::bigint[]);
+COMMIT;
+```
+
+None of this keeps a deleted video, or one filtered out by the content filters,
+from being disabled.
 
 ### Applying a whitelist change to stored videos
 

@@ -101,17 +101,18 @@ test("an existing whitelist is never re-seeded, so removed values stay removed",
   );
 });
 
-test("the match function qualifies a video by tid_v2 or by pid_v2", async () => {
+test("the match function qualifies a video by tid_v2 only", async () => {
   const { pool, calls } = createPool({ tableExists: true });
 
   await initCollectionWhitelistSchema(pool);
 
   const sql =
-    calls.find((call) => call.sql.includes("fn_collection_whitelist_match"))
+    calls.find((call) => call.sql.includes("fn_collection_whitelist_match("))
       ?.sql ?? "";
   assert.match(sql, /kind = 'tid_v2' AND value = p_tid_v2/);
-  assert.match(sql, /kind = 'pid_v2' AND value = p_pid_v2/);
-  assert.match(sql, /\bOR\b/);
+  assert.doesNotMatch(sql, /kind = 'pid_v2'/);
+  // The two-argument signature stays so existing callers still bind.
+  assert.match(sql, /p_tid_v2 integer,\s+p_pid_v2 integer/);
 });
 
 test("the legacy tid whitelist is a separate kind matched on type_id", async () => {
@@ -226,21 +227,15 @@ test("the upsert drags non-whitelisted videos out, protects label and manual row
   // A -1 row is final unless the whitelist itself excluded it.
   assert.match(
     sql,
-    /existing_priority = -1\s+AND existing_source IS DISTINCT FROM 'whitelist_excluded'/,
+    /\(p_existing_priority\) = -1\s+AND \(p_existing_source\) IS DISTINCT FROM 'whitelist_excluded'/,
   );
-  // Demotion needs a tid_v2/pid_v2 to judge, never touches label rows, and is reversible.
+  // Label and manual rows are never pulled out by the whitelist.
   assert.match(
     sql,
-    /v2_known := effective_tid IS NOT NULL OR stored_pid IS NOT NULL/,
-  );
-  assert.match(
-    sql,
-    /existing_priority <> -1\s+AND COALESCE\(existing_source, ''\) NOT IN \('label', 'manual'\)/,
+    /OR \(p_existing_source\) IN \('label', 'manual'\) THEN 'ignored_not_whitelisted'/,
   );
   assert.match(sql, /monitor_source = 'whitelist_excluded'/);
-  assert.match(sql, /RETURN 'disabled_not_whitelisted'/);
-  // A missing caller tid_v2 falls back to the stored one.
-  assert.match(sql, /effective_tid := COALESCE\(p_tid_v2, stored_tid\)/);
+  assert.match(sql, /outcome = 'disabled_not_whitelisted' THEN/);
   // The static allowlist argument no longer decides anything.
   assert.doesNotMatch(sql, /p_tid_v2 = ANY\(p_bootstrap_tid_v2_allowlist\)/);
   // monitor_source is constrained to the known values.
@@ -248,6 +243,85 @@ test("the upsert drags non-whitelisted videos out, protects label and manual row
     sql,
     /monitor_source IN \(\s*'label', 'whitelist', 'whitelist_excluded', 'manual', 'daily'\s*\)/,
   );
+});
+
+test("the decision is a stable SQL function the upsert calls", async () => {
+  const { pool, calls } = createPool({ tableExists: true });
+
+  await initCollectionStateSchema(pool);
+
+  const decision =
+    calls.find((call) =>
+      call.sql.includes(
+        "CREATE OR REPLACE FUNCTION fn_collection_state_decision(",
+      ),
+    )?.sql ?? "";
+  assert.match(decision, /\$\$ LANGUAGE sql STABLE/);
+  assert.doesNotMatch(decision, /\b(INSERT|UPDATE|DELETE)\b/);
+  const upsert =
+    calls.find((call) =>
+      call.sql.includes(
+        "CREATE OR REPLACE FUNCTION fn_upsert_collection_state_from_processed_video(\n      p_aid bigint,\n      p_pubdate bigint DEFAULT NULL",
+      ),
+    )?.sql ?? "";
+  assert.match(upsert, /outcome := fn_collection_state_decision\(/);
+});
+
+test("rows of unknown, daily or manual source are protected unless a transaction releases them", async () => {
+  const { pool, calls } = createPool({ tableExists: true });
+
+  await initCollectionStateSchema(pool);
+
+  const sql = calls.map((call) => call.sql).join("\n");
+  assert.match(
+    sql,
+    /WHEN \(p_existing_source\) IS NULL OR \(p_existing_source\) = 'daily' THEN\s+CASE WHEN COALESCE\(NULLIF\(current_setting\('hantang\.allow_pull_legacy', true\), ''\)::boolean, false\) THEN 'disabled_not_whitelisted'\s+ELSE 'pull_out_blocked_protected' END/,
+  );
+  assert.match(
+    sql,
+    /WHEN \(p_existing_source\) IS NULL OR \(p_existing_source\) IN \('daily', 'manual'\) THEN\s+CASE WHEN COALESCE\(NULLIF\(current_setting\('hantang\.allow_label_demotion', true\), ''\)::boolean, false\) THEN 'disabled_label_demotion'\s+ELSE 'label_demotion_blocked_protected' END/,
+  );
+  // Neither the trigger nor the re-evaluation ever releases the protection.
+  for (const name of [
+    "CREATE OR REPLACE FUNCTION fn_processed_video_collection_state",
+    "CREATE OR REPLACE FUNCTION fn_reevaluate_collection_whitelist",
+  ]) {
+    const body = calls.find((call) => call.sql.includes(name))?.sql ?? "";
+    assert.ok(body.length > 0, name);
+    assert.doesNotMatch(body, /SET LOCAL|set_config\(|hantang\./);
+  }
+});
+
+test("trigger and re-evaluation pass the row's formal label only when it is complete", async () => {
+  const { pool, calls } = createPool({ tableExists: true });
+
+  await initCollectionStateSchema(pool);
+
+  const trigger =
+    calls.find((call) =>
+      call.sql.includes(
+        "CREATE OR REPLACE FUNCTION fn_processed_video_collection_state",
+      ),
+    )?.sql ?? "";
+  const reevaluate =
+    calls.find((call) =>
+      call.sql.includes(
+        "CREATE OR REPLACE FUNCTION fn_reevaluate_collection_whitelist",
+      ),
+    )?.sql ?? "";
+  assert.match(trigger, /row_data jsonb := to_jsonb\(NEW\)/);
+  for (const [sql, row] of [
+    [trigger, "row_data"],
+    [reevaluate, "to_jsonb\\(video\\)"],
+  ] as const) {
+    const complete = `${row} ->> 'label_content_type' IS NOT NULL AND ${row} ->> 'label_origin' IS NOT NULL AND ${row} ->> 'labeled_by' IS NOT NULL`;
+    for (const column of ["label_content_type", "label_origin", "labeled_by"]) {
+      assert.match(
+        sql,
+        new RegExp(`CASE WHEN ${complete} THEN ${row} ->> '${column}' END`),
+      );
+    }
+  }
 });
 
 test("schema initialization creates the whitelist table before the collection state functions use it", async () => {
@@ -266,7 +340,7 @@ test("schema initialization creates the whitelist table before the collection st
   assert.ok(whitelist < trigger);
 });
 
-test("v1 type_id only stands in until a tid_v2 or pid_v2 is known, and never demotes", async () => {
+test("a zero tid_v2 is unknown: v1 type_id stands in, pid_v2 is ignored, and a v1 mismatch never demotes", async () => {
   const { pool, calls } = createPool({ tableExists: true });
 
   await initCollectionStateSchema(pool);
@@ -274,10 +348,24 @@ test("v1 type_id only stands in until a tid_v2 or pid_v2 is known, and never dem
   const sql = calls.map((call) => call.sql).join("\n");
   assert.match(
     sql,
-    /WHEN v2_known THEN fn_collection_whitelist_match\(effective_tid, stored_pid\)\s+ELSE fn_collection_whitelist_match_v1\(stored_type\)/,
+    /CASE WHEN \(p_incoming_tid_v2\) > 0 THEN \(p_incoming_tid_v2\) END,\s+CASE WHEN \(p_stored_tid_v2\) > 0 THEN \(p_stored_tid_v2\) END/,
   );
-  // Demotion is gated on v2 being known, so a v1 mismatch cannot reach it.
-  assert.match(sql, /IF NOT has_formal_label_input AND v2_known THEN/);
+  assert.match(
+    sql,
+    /THEN COALESCE\([\s\S]*?= ANY\(p_tid_v2_list\), false\)\s+ELSE COALESCE\(\(p_type_id\) = ANY\(p_tid_v1_list\), false\)/,
+  );
+  // Without a known tid_v2 a mismatch only leaves the row alone.
+  assert.match(
+    sql,
+    /WHEN \(\(p_label_content_type\) IS NOT NULL OR \(p_label_origin\) IS NOT NULL OR \(p_labeled_by\) IS NOT NULL\) OR NOT \(COALESCE\([\s\S]*?\) IS NOT NULL\) THEN 'ignored_label_not_ready'/,
+  );
+  const decision =
+    calls.find((call) =>
+      call.sql.includes(
+        "CREATE OR REPLACE FUNCTION fn_collection_state_decision(",
+      ),
+    )?.sql ?? "";
+  assert.doesNotMatch(decision, /pid_v2/);
 });
 
 test("rows inserted by hand are manual, and the codebase's own inserts name their source", async () => {

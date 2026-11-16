@@ -14,11 +14,12 @@ export type CollectionWhitelistKind =
  * Create the database-resident whitelist that decides which videos are
  * monitored (and which related videos are admitted).
  *
- * A video qualifies when its tid_v2 is listed under kind 'tid_v2' or its
- * pid_v2 is listed under kind 'pid_v2'. Kind 'tid_v1' lists legacy type_id
- * values. They are always present but less reliable, so they only decide while
- * a video has neither tid_v2 nor pid_v2; once either arrives, v2 is
- * authoritative and a v1 match no longer counts. The table is the single source
+ * A video qualifies when its tid_v2 is listed under kind 'tid_v2'. A tid_v2 of
+ * 0 (or none) means unknown. Kind 'tid_v1' lists legacy type_id values. They
+ * are always present but less reliable, so they only decide while tid_v2 is
+ * unknown; once a tid_v2 arrives, it alone decides and a v1 match no longer
+ * counts. Kind 'pid_v2' does not decide monitoring: it only pre-selects which
+ * related-video cards get their details fetched. The table is the single source
  * of truth: edit it with plain SQL, then run fn_reevaluate_collection_whitelist()
  * to apply the change to videos that are already stored.
  *
@@ -80,6 +81,8 @@ export async function initCollectionWhitelistSchema(pool: Pool): Promise<void> {
     );
   }
 
+  // Monitoring is decided by tid_v2 alone. p_pid_v2 is ignored and kept only
+  // so existing callers still bind.
   await pool.query(`
     CREATE OR REPLACE FUNCTION fn_collection_whitelist_match(
       p_tid_v2 integer,
@@ -88,8 +91,7 @@ export async function initCollectionWhitelistSchema(pool: Pool): Promise<void> {
       SELECT EXISTS (
         SELECT 1
         FROM collection_whitelist
-        WHERE (kind = 'tid_v2' AND value = p_tid_v2)
-           OR (kind = 'pid_v2' AND value = p_pid_v2)
+        WHERE kind = 'tid_v2' AND value = p_tid_v2
       )
     $$ LANGUAGE sql STABLE
   `);
