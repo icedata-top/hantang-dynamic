@@ -5,10 +5,12 @@ import type { CompleteVideoMinuteTuple } from "../../types/models/minute";
 const safeAid = z.number().int().safe().positive();
 const counter = z.number().int().min(0).max(2_147_483_647);
 const pidV2 = z.number().int().positive().max(2_147_483_647);
+const tidV2 = z.number().int().positive().max(2_147_483_647);
 
 const toViewItemSchema = z.object({
   aid: safeAid,
   pid_v2: z.unknown().optional(),
+  tidv2: z.unknown().optional(),
   stat: z.object({
     aid: safeAid,
     coin: counter,
@@ -39,6 +41,7 @@ export interface ToViewValidationResult {
   invalidItemCount: number;
   invalidPidV2Count: number;
   pidV2Metadata: Array<{ aid: bigint; pidV2: number }>;
+  tidV2Metadata: Array<{ aid: bigint; tidV2: number }>;
   responseCode: number | null;
 }
 
@@ -71,6 +74,7 @@ export function validateToViewResponse(
       invalidItemCount: 1,
       invalidPidV2Count: 0,
       pidV2Metadata: [],
+      tidV2Metadata: [],
       responseCode: null,
     };
   }
@@ -83,12 +87,14 @@ export function validateToViewResponse(
       invalidItemCount: 0,
       invalidPidV2Count: 0,
       pidV2Metadata: [],
+      tidV2Metadata: [],
       responseCode: response.code,
     };
   }
 
   const samples: CompleteVideoMinuteTuple[] = [];
   const pidV2Metadata: Array<{ aid: bigint; pidV2: number }> = [];
+  const tidV2Metadata: Array<{ aid: bigint; tidV2: number }> = [];
   const seenAids = new Set<number>();
   let invalidItemCount = 0;
   let invalidPidV2Count = 0;
@@ -110,6 +116,15 @@ export function validateToViewResponse(
 
     seenAids.add(itemResult.data.aid);
     samples.push(toSample(itemResult.data, sampledAt));
+
+    const parsedTidV2 = tidV2.safeParse(itemResult.data.tidv2);
+    if (parsedTidV2.success) {
+      tidV2Metadata.push({
+        aid: BigInt(itemResult.data.aid),
+        tidV2: parsedTidV2.data,
+      });
+    }
+
     const pidV2Value = itemResult.data.pid_v2;
     if (pidV2Value == null) {
       continue;
@@ -134,6 +149,7 @@ export function validateToViewResponse(
     invalidItemCount,
     invalidPidV2Count,
     pidV2Metadata,
+    tidV2Metadata,
     responseCode: response.code,
   };
 }

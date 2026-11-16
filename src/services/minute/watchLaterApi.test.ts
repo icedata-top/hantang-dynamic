@@ -121,6 +121,7 @@ test("Watch Later snapshot uses complete To View validation and preserves metada
               {
                 aid: 1,
                 pid_v2: 9,
+                tidv2: 2022,
                 stat: {
                   aid: 1,
                   coin: 1,
@@ -146,6 +147,7 @@ test("Watch Later snapshot uses complete To View validation and preserves metada
 
   assert.deepEqual(valid?.aids, new Set(["1"]));
   assert.deepEqual(valid?.pidV2Metadata, [{ aid: 1n, pidV2: 9 }]);
+  assert.deepEqual(valid?.tidV2Metadata, [{ aid: 1n, tidV2: 2022 }]);
   assert.equal(missing, null);
 });
 

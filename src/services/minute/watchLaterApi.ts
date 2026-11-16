@@ -40,6 +40,7 @@ export interface WatchLaterAccountContext extends ToViewAccountIdentity {
 export interface WatchLaterSnapshot {
   aids: Set<string>;
   pidV2Metadata: Array<{ aid: bigint; pidV2: number }>;
+  tidV2Metadata: Array<{ aid: bigint; tidV2: number }>;
 }
 
 const WATCH_LATER_MEMBERSHIP_CAPACITY = 1_000;
@@ -111,6 +112,7 @@ export async function fetchWatchLaterSnapshot(
   return {
     aids: new Set(snapshot.samples.map((sample) => sample.aid.toString())),
     pidV2Metadata: snapshot.pidV2Metadata,
+    tidV2Metadata: snapshot.tidV2Metadata,
   };
 }
 
