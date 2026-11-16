@@ -519,6 +519,7 @@ test("supplemental metadata updates changed fields and merges duplicate related 
     ["1", "2"],
     [22, null],
     ["https://cover/1", "https://cover/�😀\\u0000"],
+    [null, null],
   ]);
   assert.match(calls[0]?.sql ?? "", /video\.aid = metadata\.aid/);
   assert.match(calls[0]?.sql ?? "", /video\.aid = ANY\(\$1::bigint\[\]\)/);
@@ -529,6 +530,38 @@ test("supplemental metadata updates changed fields and merges duplicate related 
   assert.match(
     calls[0]?.sql ?? "",
     /video\.cover43 IS DISTINCT FROM metadata\.cover43/,
+  );
+});
+
+test("supplemental metadata writes tid_v2 only over a missing or zero stored value", async () => {
+  const calls: QueryCall[] = [];
+  const query = {
+    async query(sql: string, values?: unknown[]) {
+      calls.push({ sql, values });
+      return { rows: [], rowCount: 2 };
+    },
+  };
+
+  await updateProcessedVideoMetadata(query as unknown as Pool, [
+    { aid: 1n, tidV2: 2022 },
+    { aid: 2n, pidV2: 22 },
+    { aid: 2n, tidV2: 2023 },
+  ]);
+
+  assert.deepEqual(calls[0]?.values, [
+    ["1", "2"],
+    [null, 22],
+    [null, null],
+    [2022, 2023],
+  ]);
+  const sql = calls[0]?.sql ?? "";
+  assert.match(
+    sql,
+    /tid_v2 = CASE\s+WHEN metadata\.tid_v2 IS NOT NULL AND COALESCE\(video\.tid_v2, 0\) = 0\s+THEN metadata\.tid_v2\s+ELSE video\.tid_v2\s+END/,
+  );
+  assert.match(
+    sql,
+    /OR metadata\.tid_v2 IS NOT NULL\s+AND COALESCE\(video\.tid_v2, 0\) = 0/,
   );
 });
 

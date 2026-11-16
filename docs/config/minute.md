@@ -62,7 +62,9 @@ favorite/history fallback until all enabled accounts have completed their
 snapshot-health scan. A snapshot is healthy only when the To View response is
 complete and valid and contains at most 1,000 items. Healthy snapshots update
 the observed account membership and available `pid_v2` metadata before the
-healthy account set is published to minute sampling.
+healthy account set is published to minute sampling. A listed video's `tid_v2`
+is filled from the response only while the stored value is missing or 0; a
+stored non-zero `tid_v2` is kept.
 
 The client assigns at most 980 target videos to each healthy account, leaving
 20 Watch Later slots free. Reconciliation first deletes non-target items from

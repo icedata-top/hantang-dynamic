@@ -30,9 +30,13 @@ test("desired sets use deterministic 600/400 pools for one through three account
 
 test("complete snapshots synchronize one UID without creating remote-only state", async () => {
   const queries: string[] = [];
+  const enrichmentValues: unknown[][] = [];
   const client = {
-    async query(sql: string) {
+    async query(sql: string, values?: unknown[]) {
       queries.push(sql);
+      if (sql.includes("UPDATE processed_videos") && values) {
+        enrichmentValues.push(values);
+      }
       return { rowCount: 1, rows: [] };
     },
     release() {},
@@ -46,7 +50,9 @@ test("complete snapshots synchronize one UID without creating remote-only state"
     7n,
     [1n],
     [{ aid: 1n, pidV2: 22 }],
+    [{ aid: 1n, tidV2: 2022 }],
   );
+  assert.deepEqual(enrichmentValues, [[["1"], [22], [null], [2022]]]);
   const enrichmentIndex = queries.findIndex((sql) =>
     sql.includes("UPDATE processed_videos"),
   );
@@ -83,6 +89,7 @@ test("snapshot synchronization adds and removes only the observed account UID", 
     } as Pool,
     7n,
     [1n, 2n],
+    [],
     [],
   );
   const membership =

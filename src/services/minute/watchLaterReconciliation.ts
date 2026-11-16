@@ -25,6 +25,7 @@ export interface WatchLaterDatabase {
     accountId: bigint,
     aids: bigint[],
     pidV2Metadata: ReadonlyArray<{ aid: bigint; pidV2: number }>,
+    tidV2Metadata: ReadonlyArray<{ aid: bigint; tidV2: number }>,
   ): Promise<number>;
 }
 
@@ -212,6 +213,7 @@ export async function runAutomaticWatchLaterManagement(
           id,
           [...snapshot.aids].map(BigInt),
           snapshot.pidV2Metadata,
+          snapshot.tidV2Metadata,
         );
         options.onAccountRecovered?.(id);
         healthy.push({ accountId: id, account, snapshot });

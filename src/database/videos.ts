@@ -538,6 +538,7 @@ export async function markVideosProcessedWithCollectionState(
 export interface ProcessedVideoMetadata {
   aid: bigint;
   pidV2?: number;
+  tidV2?: number;
   cover43?: string;
 }
 
@@ -614,8 +615,10 @@ export async function updateProcessedVideoMetadata(
     byAid.set(item.aid, {
       aid: item.aid,
       ...(existing?.pidV2 !== undefined ? { pidV2: existing.pidV2 } : {}),
+      ...(existing?.tidV2 !== undefined ? { tidV2: existing.tidV2 } : {}),
       ...(existing?.cover43 !== undefined ? { cover43: existing.cover43 } : {}),
       ...(item.pidV2 !== undefined ? { pidV2: item.pidV2 } : {}),
+      ...(item.tidV2 !== undefined ? { tidV2: item.tidV2 } : {}),
       ...(item.cover43 !== undefined && item.cover43.length > 0
         ? { cover43: item.cover43 }
         : {}),
@@ -623,18 +626,26 @@ export async function updateProcessedVideoMetadata(
   }
 
   const entries = [...byAid.values()].filter(
-    (item) => item.pidV2 !== undefined || item.cover43 !== undefined,
+    (item) =>
+      item.pidV2 !== undefined ||
+      item.tidV2 !== undefined ||
+      item.cover43 !== undefined,
   );
   if (entries.length === 0) return 0;
 
   const result = await pool.query(
-    `WITH metadata(aid, pid_v2, cover43) AS (
+    `WITH metadata(aid, pid_v2, cover43, tid_v2) AS (
        SELECT *
-       FROM unnest($1::bigint[], $2::integer[], $3::varchar[])
+       FROM unnest($1::bigint[], $2::integer[], $3::varchar[], $4::integer[])
      )
      UPDATE processed_videos AS video
      SET pid_v2 = COALESCE(metadata.pid_v2, video.pid_v2),
          cover43 = COALESCE(metadata.cover43, video.cover43),
+         tid_v2 = CASE
+           WHEN metadata.tid_v2 IS NOT NULL AND COALESCE(video.tid_v2, 0) = 0
+             THEN metadata.tid_v2
+           ELSE video.tid_v2
+         END,
          updated_at = NOW()
      FROM metadata
      WHERE video.aid = metadata.aid
@@ -644,6 +655,8 @@ export async function updateProcessedVideoMetadata(
          AND video.pid_v2 IS DISTINCT FROM metadata.pid_v2
          OR metadata.cover43 IS NOT NULL
          AND video.cover43 IS DISTINCT FROM metadata.cover43
+         OR metadata.tid_v2 IS NOT NULL
+         AND COALESCE(video.tid_v2, 0) = 0
        )`,
     [
       entries.map((item) => item.aid.toString()),
@@ -653,6 +666,7 @@ export async function updateProcessedVideoMetadata(
           ? null
           : sanitizeDatabaseString(item.cover43),
       ),
+      entries.map((item) => item.tidV2 ?? null),
     ],
   );
   return result.rowCount ?? 0;

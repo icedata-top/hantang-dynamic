@@ -658,12 +658,14 @@ export class Database {
     accountId: bigint,
     aids: bigint[],
     pidV2Metadata: ReadonlyArray<{ aid: bigint; pidV2: number }>,
+    tidV2Metadata: ReadonlyArray<{ aid: bigint; tidV2: number }>,
   ): Promise<number> {
     return syncWatchLaterSnapshot(
       this.ensurePool(),
       accountId,
       aids,
       pidV2Metadata,
+      tidV2Metadata,
     );
   }
 
