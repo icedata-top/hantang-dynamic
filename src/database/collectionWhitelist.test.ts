@@ -76,6 +76,16 @@ test("a newly created whitelist is seeded once from the legacy config values", a
   assert.match(sql, /PRIMARY KEY \(kind, value\)/);
 });
 
+test("an empty type list seeds no legacy tid_v1 rows", async () => {
+  const { pool, calls } = createPool({ tableExists: false });
+
+  await withSeedConfig({ typeIds: [], tidV2: [2022], pidV2: [] }, () =>
+    initCollectionWhitelistSchema(pool),
+  );
+
+  assert.deepEqual(inserts(calls), [["tid_v2", 2022]]);
+});
+
 test("an existing whitelist is never re-seeded, so removed values stay removed", async () => {
   const { pool, calls } = createPool({ tableExists: true });
 
