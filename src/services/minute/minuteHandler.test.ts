@@ -30,6 +30,9 @@ function database(onSelect: () => void): MinuteDatabase {
     async advanceSuppressedMinuteSamples() {
       return 0;
     },
+    async getCollectionWhitelist() {
+      return [];
+    },
     async getDesiredWatchLaterSet() {
       return [];
     },

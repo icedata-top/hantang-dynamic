@@ -106,12 +106,12 @@ async function main() {
       parseUpdateInfoPredicateArgument,
       runUpdateInfo,
     } = await import("./scripts/update-info");
-    const whitelistValue =
-      updateInfoWhitelistArgument(args) ??
-      config.whitelist.recommendation.pidV2.join(",");
+    const whitelistValue = updateInfoWhitelistArgument(args);
     const where = parseUpdateInfoPredicateArgument(args);
     await runUpdateInfo({
-      pidV2Whitelist: parsePidV2Whitelist(whitelistValue),
+      ...(whitelistValue === undefined
+        ? {}
+        : { pidV2Whitelist: parsePidV2Whitelist(whitelistValue) }),
       ...(where === undefined ? {} : { where }),
     });
     return;
@@ -119,6 +119,23 @@ async function main() {
 
   if (args.includes("--pid-v2-whitelist")) {
     throw new Error("--pid-v2-whitelist requires --update-info");
+  }
+
+  if (args.includes("--reevaluate-collection")) {
+    const { parseCollectionReevaluationArgs, runCollectionReevaluation } =
+      await import("./scripts/reevaluate-collection");
+    // Parse first: an incomplete command fails before any connection is made.
+    const options = parseCollectionReevaluationArgs(
+      args.filter((argument) => argument !== "--reevaluate-collection"),
+    );
+    const db = Database.getInstance();
+    try {
+      await db.init();
+      await runCollectionReevaluation(db.getPool(), options);
+    } finally {
+      await db.close();
+    }
+    return;
   }
 
   if (args.includes("--init-schema")) {

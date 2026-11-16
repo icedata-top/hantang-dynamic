@@ -62,7 +62,9 @@ favorite/history fallback until all enabled accounts have completed their
 snapshot-health scan. A snapshot is healthy only when the To View response is
 complete and valid and contains at most 1,000 items. Healthy snapshots update
 the observed account membership and available `pid_v2` metadata before the
-healthy account set is published to minute sampling.
+healthy account set is published to minute sampling. A listed video's `tid_v2`
+is filled from the response only while the stored value is missing or 0; a
+stored non-zero `tid_v2` is kept.
 
 The client assigns at most 980 target videos to each healthy account, leaving
 20 Watch Later slots free. Reconciliation first deletes non-target items from
@@ -133,7 +135,7 @@ Bootstrap eligibility is configured under `[whitelist.minute_bootstrap]`:
 label_content_types = ["vocaloid", "maybe_vocaloid"]
 label_origin = "rule"
 label_writers = ["classification_apply", "classification_trigger"]
-tid_v2 = [2022, 2061]
+tid_v2 = [2022, 2061, 4215]
 ```
 
 | TOML key | Environment variable | Default | Effect |
@@ -141,7 +143,7 @@ tid_v2 = [2022, 2061]
 | `label_content_types` | `MINUTE_BOOTSTRAP_LABEL_CONTENT_TYPES` | `["vocaloid", "maybe_vocaloid"]` | Eligible formal label types. |
 | `label_origin` | `MINUTE_BOOTSTRAP_LABEL_ORIGIN` | `rule` | Required label origin. |
 | `label_writers` | `MINUTE_BOOTSTRAP_LABEL_WRITERS` | `["classification_apply", "classification_trigger"]` | Eligible label writers. |
-| `tid_v2` | `MINUTE_BOOTSTRAP_TID_V2_ALLOWLIST` | `[2022, 2061]` | Fallback values when no formal label exists. |
+| `tid_v2` | `MINUTE_BOOTSTRAP_TID_V2_ALLOWLIST` | `[2022, 2061, 4215]` | **Deprecated.** Only seeds `collection_whitelist` when `init-schema` first creates it. Edit that table instead. |
 
 On startup, the app automatically moves these former TOML keys in `config.toml`
 to their current locations:
@@ -153,11 +155,20 @@ to their current locations:
 | `minute.bootstrap_label_writers` | `whitelist.minute_bootstrap.label_writers` |
 | `minute.bootstrap_tid_v2_allowlist` | `whitelist.minute_bootstrap.tid_v2` |
 
-Existing environment variable names remain valid. After changing
-minute-bootstrap values, run `pnpm init-schema` against the database so stored
-SQL function defaults use the new values, then restart the application. Without
-schema initialization, calls that rely on the stored SQL defaults can continue
-using the previously installed bootstrap values.
+Existing environment variable names remain valid.
+
+Without a formal label, whether a video is minute-monitored is decided by the
+database-resident `collection_whitelist`, not by TOML: a video qualifies when
+its `tid_v2` or its `pid_v2` is listed, and the legacy tid (`tid_v1`) stands in
+until either of those is known. A database trigger on `processed_videos`
+applies it, including pulling non-whitelisted videos back out, except videos
+added by hand. See [Monitoring whitelist](database.md#monitoring-whitelist).
+
+`label_content_types`, `label_origin`, `label_writers` and the
+`[minute]` bootstrap settings are still baked into the stored SQL function
+defaults. After changing them, run `pnpm init-schema` against the database and
+restart the application. Without schema initialization, the trigger keeps using
+the previously installed values.
 
 ## Metrics
 

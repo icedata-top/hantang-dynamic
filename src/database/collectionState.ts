@@ -1,20 +1,7 @@
 import type { Pool, PoolClient } from "pg";
-import type {
-  PersistableVideoMinuteSample,
-  ProcessedVideoCollectionInput,
-} from "../types/models/minute.js";
+import type { PersistableVideoMinuteSample } from "../types/models/minute.js";
 
 export type DatabaseQuery = Pick<PoolClient, "query">;
-
-export interface ProcessedVideoCollectionOptions {
-  bootstrapPriority?: number;
-  bootstrapTtlHours?: number;
-  bootstrapLabelContentTypes?: string[];
-  bootstrapLabelOrigin?: string;
-  bootstrapLabelWriters?: string[];
-  bootstrapTidV2Allowlist?: number[];
-  processedBackfillNewVideoAgeDays?: number;
-}
 
 export async function refreshVideoCollectionStateFromDaily(
   pool: Pool,
@@ -54,60 +41,6 @@ export async function refreshVideoCollectionStateFromDaily(
     ],
   );
   return Number(result.rows[0]?.count ?? 0);
-}
-
-export async function upsertCollectionStateFromProcessedVideo(
-  pool: DatabaseQuery,
-  input: ProcessedVideoCollectionInput,
-  now = new Date(),
-  options?: ProcessedVideoCollectionOptions,
-): Promise<string> {
-  const result = await pool.query(
-    `
-    SELECT fn_upsert_collection_state_from_processed_video(
-      $1::bigint,
-      $2::bigint,
-      $3::bigint,
-      $4::integer,
-      $5::text,
-      $6::text,
-      $7::text,
-      $8::boolean,
-      $9::boolean,
-      $10::timestamptz,
-      $11::integer,
-      $12::integer,
-      $13::text[],
-      $14::text,
-      $15::text[],
-      $16::integer[],
-      $17::integer
-    ) AS result
-  `,
-    [
-      input.aid.toString(),
-      input.pubdate ?? null,
-      input.ctime ?? null,
-      input.tidV2 ?? null,
-      input.labelContentType ?? null,
-      input.labelOrigin ?? null,
-      input.labeledBy ?? null,
-      input.isDeleted ?? false,
-      input.isFiltered ?? null,
-      now,
-      options?.bootstrapPriority ?? 10,
-      options?.bootstrapTtlHours ?? 24,
-      options?.bootstrapLabelContentTypes ?? ["vocaloid", "maybe_vocaloid"],
-      options?.bootstrapLabelOrigin ?? "rule",
-      options?.bootstrapLabelWriters ?? [
-        "classification_apply",
-        "classification_trigger",
-      ],
-      options?.bootstrapTidV2Allowlist ?? [2022, 2061],
-      options?.processedBackfillNewVideoAgeDays ?? 7,
-    ],
-  );
-  return String(result.rows[0]?.result ?? "unknown");
 }
 
 export async function getNextMinuteDueAt(pool: Pool): Promise<Date | null> {

@@ -14,6 +14,171 @@ function sqlIntegerArray(values: number[]): string {
   return values.join(", ");
 }
 
+/**
+ * Transaction-local settings (`SET LOCAL <name> = on`) that release the
+ * protection of rows whose monitoring source is unknown (NULL), 'daily' or
+ * 'manual'. Unset means protected. The processed_videos trigger and
+ * fn_reevaluate_collection_whitelist never set them.
+ */
+export const COLLECTION_PROTECTION_RELEASE_SETTINGS = {
+  /** Lets a tid_v2 mismatch pull out rows whose source is NULL or 'daily'. */
+  pullLegacy: "hantang.allow_pull_legacy",
+  /** Lets a failing formal label demote rows whose source is NULL, 'daily' or 'manual'. */
+  labelDemotion: "hantang.allow_label_demotion",
+} as const;
+
+/** Reads one release setting as a boolean; unset or empty is false. */
+export function protectionReleaseSettingSql(name: string): string {
+  return `COALESCE(NULLIF(current_setting('${sqlText(name)}', true), '')::boolean, false)`;
+}
+
+/**
+ * The inputs of the monitoring decision, each given as a SQL expression.
+ * `existingPriority` is NULL when the video has no video_collection_state row.
+ */
+export interface CollectionDecisionInputs {
+  existingPriority: string;
+  existingSource: string;
+  isDeleted: string;
+  isFiltered: string;
+  /** tid_v2 supplied by the caller; NULL, zero or negative means not supplied. */
+  incomingTidV2: string;
+  /** tid_v2 stored on processed_videos. */
+  storedTidV2: string;
+  typeId: string;
+  labelContentType: string;
+  labelOrigin: string;
+  labeledBy: string;
+  hasDailyHistory: string;
+  pubdate: string;
+  ctime: string;
+  now: string;
+  /** integer[] of whitelisted tid_v2 values. */
+  tidV2List: string;
+  /** integer[] of whitelisted legacy type_id values. */
+  tidV1List: string;
+  passingLabelContentTypes: string;
+  passingLabelOrigin: string;
+  passingLabelWriters: string;
+  newVideoAgeDays: string;
+  allowPullLegacy: string;
+  allowLabelDemotion: string;
+}
+
+type LabelInputs = Pick<
+  CollectionDecisionInputs,
+  | "labelContentType"
+  | "labelOrigin"
+  | "labeledBy"
+  | "passingLabelContentTypes"
+  | "passingLabelOrigin"
+  | "passingLabelWriters"
+>;
+
+function formalLabelPassSql(i: LabelInputs): string {
+  return `COALESCE(
+    (${i.labelContentType}) = ANY(${i.passingLabelContentTypes})
+    AND (${i.labelOrigin}) = (${i.passingLabelOrigin})
+    AND (${i.labeledBy}) = ANY(${i.passingLabelWriters}),
+    false
+  )`;
+}
+
+/** The monitor_source an admitted video gets: 'label' when its formal label passes. */
+export function collectionAdmitSourceSql(i: LabelInputs): string {
+  return `CASE WHEN ${formalLabelPassSql(i)} THEN 'label' ELSE 'whitelist' END`;
+}
+
+/**
+ * The monitoring decision as one side-effect-free SQL expression. It returns
+ * the outcome text that fn_upsert_collection_state_from_processed_video
+ * reports, and the upsert applies exactly that outcome. In order:
+ *
+ * 1. deleted -> disabled; an existing -1 row is final unless the whitelist
+ *    excluded it; filtered out -> disabled.
+ * 2. A complete formal label that does not pass demotes the row, except rows
+ *    whose source is NULL, 'daily' or 'manual' (label_demotion_blocked_protected).
+ * 3. A passing formal label admits. Without any label input, the whitelist
+ *    decides: a positive tid_v2 is matched against the tid_v2 list only; a
+ *    zero, negative or missing tid_v2 is unknown and type_id is matched
+ *    against the tid_v1 list instead. pid_v2 is not consulted.
+ * 4. A known tid_v2 that is not listed pulls the row out, except rows whose
+ *    source is 'label' or 'manual' (left alone) and rows whose source is NULL
+ *    or 'daily' (pull_out_blocked_protected). A v1 mismatch never pulls out.
+ */
+export function collectionDecisionSql(i: CollectionDecisionInputs): string {
+  const hasRow = `((${i.existingPriority}) IS NOT NULL)`;
+  const source = `(${i.existingSource})`;
+  const labelGiven = `((${i.labelContentType}) IS NOT NULL OR (${i.labelOrigin}) IS NOT NULL OR (${i.labeledBy}) IS NOT NULL)`;
+  const labelComplete = `((${i.labelContentType}) IS NOT NULL AND (${i.labelOrigin}) IS NOT NULL AND (${i.labeledBy}) IS NOT NULL)`;
+  const labelPass = formalLabelPassSql(i);
+  const effectiveTid = `COALESCE(
+    CASE WHEN (${i.incomingTidV2}) > 0 THEN (${i.incomingTidV2}) END,
+    CASE WHEN (${i.storedTidV2}) > 0 THEN (${i.storedTidV2}) END
+  )`;
+  const v2Known = `(${effectiveTid} IS NOT NULL)`;
+  const whitelistPass = `(CASE
+    WHEN ${v2Known} THEN COALESCE(${effectiveTid} = ANY(${i.tidV2List}), false)
+    ELSE COALESCE((${i.typeId}) = ANY(${i.tidV1List}), false)
+  END)`;
+  const revived = `(${hasRow} AND (${i.existingPriority}) = -1)`;
+  const isNewVideo = `(to_timestamp(COALESCE(${i.pubdate}, ${i.ctime}, extract(epoch FROM ${i.now})::bigint))
+    >= (${i.now}) - make_interval(days => ${i.newVideoAgeDays}))`;
+  return `(CASE
+    WHEN (${i.isDeleted}) IS TRUE THEN
+      CASE WHEN ${hasRow} THEN 'disabled_deleted' ELSE 'ignored_deleted' END
+    WHEN ${hasRow} AND (${i.existingPriority}) = -1
+      AND ${source} IS DISTINCT FROM 'whitelist_excluded' THEN
+      'ignored_existing_disabled'
+    WHEN (${i.isFiltered}) IS FALSE THEN
+      CASE WHEN ${hasRow} THEN 'disabled_filtered_out' ELSE 'ignored_filtered_out' END
+    WHEN ${labelComplete} AND NOT ${labelPass} THEN
+      CASE
+        WHEN NOT ${hasRow} THEN 'ignored_label_demotion'
+        WHEN ${source} IS NULL OR ${source} IN ('daily', 'manual') THEN
+          CASE WHEN ${i.allowLabelDemotion} THEN 'disabled_label_demotion'
+               ELSE 'label_demotion_blocked_protected' END
+        ELSE 'disabled_label_demotion'
+      END
+    WHEN NOT (${labelPass} OR (NOT ${labelGiven} AND ${whitelistPass})) THEN
+      CASE
+        WHEN ${labelGiven} OR NOT ${v2Known} THEN 'ignored_label_not_ready'
+        WHEN NOT ${hasRow} OR (${i.existingPriority}) = -1
+          OR ${source} IN ('label', 'manual') THEN 'ignored_not_whitelisted'
+        WHEN ${source} IS NULL OR ${source} = 'daily' THEN
+          CASE WHEN ${i.allowPullLegacy} THEN 'disabled_not_whitelisted'
+               ELSE 'pull_out_blocked_protected' END
+        ELSE 'disabled_not_whitelisted'
+      END
+    WHEN (${i.hasDailyHistory}) IS TRUE THEN
+      CASE WHEN ${revived} THEN 'revived_from_daily' ELSE 'refreshed_from_daily' END
+    ELSE
+      CASE WHEN ${revived} THEN 'revived_' ELSE '' END
+      || CASE WHEN ${isNewVideo} THEN 'upserted_bootstrap' ELSE 'upserted_backfill_daily_only' END
+  END)`;
+}
+
+const FORMAL_LABEL_COLUMNS = [
+  "label_content_type",
+  "label_origin",
+  "labeled_by",
+] as const;
+
+/**
+ * The formal label of a processed_videos row, read through `to_jsonb(row)` so
+ * it works whether or not the label columns exist. Only a complete label (all
+ * three values present) is passed on; otherwise all three are NULL, so a
+ * partial label leaves the decision to the whitelist.
+ */
+export function completeFormalLabelSql(rowJson: string): string[] {
+  const complete = FORMAL_LABEL_COLUMNS.map(
+    (column) => `${rowJson} ->> '${column}' IS NOT NULL`,
+  ).join(" AND ");
+  return FORMAL_LABEL_COLUMNS.map(
+    (column) => `CASE WHEN ${complete} THEN ${rowJson} ->> '${column}' END`,
+  );
+}
+
 export async function repairInactiveVideoCollectionStates(
   pool: Pool,
 ): Promise<number> {
@@ -108,6 +273,42 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
   await pool.query(`
     ALTER TABLE video_collection_state
     ADD COLUMN IF NOT EXISTS subtitle_last_error text
+  `);
+
+  // Why a video is (or is not) monitored:
+  //   'whitelist' / 'label'  tracked by collection_whitelist or a formal label
+  //   'daily'                created by the daily refresh from video_daily data
+  //   'manual'               added by hand; never pulled out by the whitelist
+  //   'whitelist_excluded'   dragged out because its tid_v2 is not
+  //                          whitelisted (priority -1, revivable)
+  //   NULL                   written before this column existed
+  // Rows inserted by hand without naming a source become 'manual'. The default
+  // is set after the column exists so it never relabels pre-existing rows; every
+  // insert in this codebase names its source explicitly.
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD COLUMN IF NOT EXISTS monitor_source text
+  `);
+
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ALTER COLUMN monitor_source SET DEFAULT 'manual'
+  `);
+
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    DROP CONSTRAINT IF EXISTS chk_video_collection_monitor_source
+  `);
+
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD CONSTRAINT chk_video_collection_monitor_source
+      CHECK (
+        monitor_source IS NULL
+        OR monitor_source IN (
+          'label', 'whitelist', 'whitelist_excluded', 'manual', 'daily'
+        )
+      )
   `);
 
   await pool.query(`
@@ -398,7 +599,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       INSERT INTO video_collection_state (
         aid, latest_daily_delta, weekly_avg_daily_delta, daily_delta_source,
         priority, next_minute_due_at, last_daily_record_date, last_view,
-        next_gate_value, subtitle_state, updated_at
+        next_gate_value, subtitle_state, monitor_source, updated_at
       )
       SELECT
         c.aid, c.latest_daily_delta, c.weekly_avg_daily_delta, c.daily_delta_source,
@@ -410,6 +611,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         c.last_view,
         c.next_gate_value,
         fn_next_subtitle_state(NULL, c.last_view, c.crossed_gate),
+        'daily',
         p_now
       FROM calculated c
       ORDER BY c.aid
@@ -469,6 +671,87 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     DROP FUNCTION IF EXISTS fn_refresh_video_collection_state_from_daily(bigint[], timestamptz)
   `);
 
+  // The decision itself is a side-effect-free function; the upsert below only
+  // gathers its inputs and applies the verdict.
+  const decisionParameters = {
+    existingPriority: "p_existing_priority",
+    existingSource: "p_existing_source",
+    isDeleted: "p_is_deleted",
+    isFiltered: "p_is_filtered",
+    incomingTidV2: "p_incoming_tid_v2",
+    storedTidV2: "p_stored_tid_v2",
+    typeId: "p_type_id",
+    labelContentType: "p_label_content_type",
+    labelOrigin: "p_label_origin",
+    labeledBy: "p_labeled_by",
+    hasDailyHistory: "p_has_daily_history",
+    pubdate: "p_pubdate",
+    ctime: "p_ctime",
+    now: "p_now",
+    tidV2List: "p_tid_v2_list",
+    tidV1List: "p_tid_v1_list",
+    passingLabelContentTypes: "p_passing_label_content_types",
+    passingLabelOrigin: "p_passing_label_origin",
+    passingLabelWriters: "p_passing_label_writers",
+    newVideoAgeDays: "p_new_video_age_days",
+    allowPullLegacy: protectionReleaseSettingSql(
+      COLLECTION_PROTECTION_RELEASE_SETTINGS.pullLegacy,
+    ),
+    allowLabelDemotion: protectionReleaseSettingSql(
+      COLLECTION_PROTECTION_RELEASE_SETTINGS.labelDemotion,
+    ),
+  } satisfies CollectionDecisionInputs;
+
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_collection_state_decision(
+      p_existing_priority integer,
+      p_existing_source text,
+      p_is_deleted boolean,
+      p_is_filtered boolean,
+      p_incoming_tid_v2 integer,
+      p_stored_tid_v2 integer,
+      p_type_id integer,
+      p_label_content_type text,
+      p_label_origin text,
+      p_labeled_by text,
+      p_has_daily_history boolean,
+      p_pubdate bigint,
+      p_ctime bigint,
+      p_now timestamptz,
+      p_tid_v2_list integer[],
+      p_tid_v1_list integer[],
+      p_passing_label_content_types text[],
+      p_passing_label_origin text,
+      p_passing_label_writers text[],
+      p_new_video_age_days integer
+    ) RETURNS text AS $$
+      SELECT ${collectionDecisionSql(decisionParameters)}
+    $$ LANGUAGE sql STABLE
+  `);
+
+  const upsertDecisionCall = `fn_collection_state_decision(
+        existing_priority,
+        existing_source,
+        p_is_deleted,
+        p_is_filtered,
+        p_tid_v2,
+        stored_tid,
+        stored_type,
+        p_label_content_type,
+        p_label_origin,
+        p_labeled_by,
+        has_daily_history,
+        p_pubdate,
+        p_ctime,
+        p_now,
+        tid_v2_list,
+        tid_v1_list,
+        p_bootstrap_label_content_types,
+        p_bootstrap_label_origin,
+        p_bootstrap_label_writers,
+        p_processed_backfill_new_video_age_days
+      )`;
+
   await pool.query(`
     CREATE OR REPLACE FUNCTION fn_upsert_collection_state_from_processed_video(
       p_aid bigint,
@@ -490,103 +773,117 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       p_processed_backfill_new_video_age_days integer DEFAULT ${config.minute.processedBackfillNewVideoAgeDays}
     ) RETURNS text AS $$
     DECLARE
-      has_existing boolean;
       existing_priority integer;
-      has_daily_history boolean;
-      has_formal_label_input boolean;
-      has_complete_formal_label_input boolean;
-      formal_label_pass boolean;
-      fallback_pass boolean;
-      should_track boolean;
-      video_timestamp timestamptz;
-      is_new_video boolean;
+      existing_source text;
+      stored_tid integer;
+      stored_type integer;
+      tid_v2_list integer[];
+      tid_v1_list integer[];
+      has_daily_history boolean := false;
       refresh_count integer;
+      revived boolean;
+      new_source text;
+      outcome text;
     BEGIN
       IF p_aid IS NULL OR p_aid < 0 THEN
         RETURN 'ignored_invalid_aid';
       END IF;
 
-      SELECT priority
-      INTO existing_priority
+      -- No state row leaves existing_priority NULL, which the decision reads
+      -- as "not monitored yet".
+      SELECT priority, monitor_source
+      INTO existing_priority, existing_source
       FROM video_collection_state
       WHERE aid = p_aid;
-      has_existing := found;
 
-      IF p_is_deleted IS TRUE THEN
-        IF has_existing THEN
-          UPDATE video_collection_state
-          SET priority = -1,
-              next_minute_due_at = NULL,
-              updated_at = p_now
-          WHERE aid = p_aid;
-          RETURN 'disabled_deleted';
-        END IF;
-        RETURN 'ignored_deleted';
-      END IF;
+      -- The caller's tid_v2 wins, but a missing or zero one falls back to the
+      -- stored value. pid_v2 never takes part in the decision.
+      -- (p_bootstrap_tid_v2_allowlist is kept only so existing callers and the
+      -- 10-argument wrapper still bind.)
+      SELECT tid_v2, type_id
+      INTO stored_tid, stored_type
+      FROM processed_videos
+      WHERE aid = p_aid;
 
-      IF has_existing AND existing_priority = -1 THEN
-        RETURN 'ignored_existing_disabled';
-      END IF;
-
-      IF p_is_filtered IS FALSE THEN
-        IF has_existing THEN
-          UPDATE video_collection_state
-          SET priority = -1,
-              next_minute_due_at = NULL,
-              updated_at = p_now
-          WHERE aid = p_aid;
-          RETURN 'disabled_filtered_out';
-        END IF;
-        RETURN 'ignored_filtered_out';
-      END IF;
-
-      has_formal_label_input :=
-        p_label_content_type IS NOT NULL
-        OR p_label_origin IS NOT NULL
-        OR p_labeled_by IS NOT NULL;
-      has_complete_formal_label_input :=
-        p_label_content_type IS NOT NULL
-        AND p_label_origin IS NOT NULL
-        AND p_labeled_by IS NOT NULL;
-      formal_label_pass := COALESCE(
-        p_label_content_type = ANY(p_bootstrap_label_content_types)
-        AND p_label_origin = p_bootstrap_label_origin
-        AND p_labeled_by = ANY(p_bootstrap_label_writers),
-        false
+      tid_v2_list := ARRAY(
+        SELECT value FROM collection_whitelist WHERE kind = 'tid_v2'
       );
-      fallback_pass :=
-        NOT has_formal_label_input
-        AND p_tid_v2 = ANY(p_bootstrap_tid_v2_allowlist);
-      should_track := COALESCE(formal_label_pass OR fallback_pass, false);
+      tid_v1_list := ARRAY(
+        SELECT value FROM collection_whitelist WHERE kind = 'tid_v1'
+      );
 
-      IF has_complete_formal_label_input AND NOT formal_label_pass THEN
-        IF has_existing THEN
-          UPDATE video_collection_state
-          SET priority = -1,
-              next_minute_due_at = NULL,
-              updated_at = p_now
-          WHERE aid = p_aid;
-          RETURN 'disabled_label_demotion';
+      outcome := ${upsertDecisionCall};
+
+      -- Daily history only changes how an admitted video enters, so the
+      -- video_daily lookup is skipped for every other verdict.
+      IF outcome LIKE '%upserted_%' THEN
+        SELECT EXISTS (
+          SELECT 1 FROM video_daily WHERE aid = p_aid
+        ) INTO has_daily_history;
+        IF has_daily_history THEN
+          outcome := ${upsertDecisionCall};
         END IF;
-        RETURN 'ignored_label_demotion';
       END IF;
 
-      IF NOT should_track THEN
-        RETURN 'ignored_label_not_ready';
+      IF outcome IN ('disabled_deleted', 'disabled_filtered_out') THEN
+        UPDATE video_collection_state
+        SET priority = -1,
+            next_minute_due_at = NULL,
+            updated_at = p_now
+        WHERE aid = p_aid;
+      ELSIF outcome = 'disabled_label_demotion' THEN
+        UPDATE video_collection_state
+        SET priority = -1,
+            next_minute_due_at = NULL,
+            monitor_source = NULL,
+            updated_at = p_now
+        WHERE aid = p_aid;
+      ELSIF outcome = 'disabled_not_whitelisted' THEN
+        UPDATE video_collection_state
+        SET priority = -1,
+            next_minute_due_at = NULL,
+            monitor_source = 'whitelist_excluded',
+            updated_at = p_now
+        WHERE aid = p_aid;
       END IF;
 
-      SELECT EXISTS (
-        SELECT 1 FROM video_daily WHERE aid = p_aid
-      ) INTO has_daily_history;
+      IF outcome NOT LIKE '%upserted_%' AND outcome NOT LIKE '%_from_daily' THEN
+        RETURN outcome;
+      END IF;
+
+      new_source := ${collectionAdmitSourceSql({
+        labelContentType: "p_label_content_type",
+        labelOrigin: "p_label_origin",
+        labeledBy: "p_labeled_by",
+        passingLabelContentTypes: "p_bootstrap_label_content_types",
+        passingLabelOrigin: "p_bootstrap_label_origin",
+        passingLabelWriters: "p_bootstrap_label_writers",
+      })};
+      revived := outcome LIKE 'revived_%';
+
+      IF revived THEN
+        -- Only whitelist-excluded rows get here: the whitelist now admits the
+        -- video, so reset the row and let the normal flow re-enter it.
+        UPDATE video_collection_state
+        SET priority = 0,
+            next_minute_due_at = NULL,
+            bootstrap_until = NULL,
+            monitor_source = NULL,
+            updated_at = p_now
+        WHERE aid = p_aid;
+      END IF;
 
       IF has_daily_history THEN
         SELECT fn_refresh_video_collection_state_from_daily(ARRAY[p_aid], p_now)
         INTO refresh_count;
-        RETURN 'refreshed_from_daily';
+        UPDATE video_collection_state
+        SET monitor_source = CASE
+              WHEN monitor_source IN ('label', 'manual') THEN monitor_source
+              ELSE new_source
+            END
+        WHERE aid = p_aid;
+        RETURN outcome;
       END IF;
-
-      video_timestamp := to_timestamp(COALESCE(p_pubdate, p_ctime, extract(epoch FROM p_now)::bigint));
-      is_new_video := video_timestamp >= p_now - make_interval(days => p_processed_backfill_new_video_age_days);
 
       INSERT INTO video_collection_state (
         aid,
@@ -595,21 +892,23 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         bootstrap_until,
         next_minute_due_at,
         subtitle_state,
+        monitor_source,
         updated_at
       )
       VALUES (
         p_aid,
-        CASE WHEN is_new_video THEN 'bootstrap' ELSE 'processed_backfill' END,
-        CASE WHEN is_new_video THEN p_bootstrap_priority ELSE 0 END,
+        CASE WHEN outcome LIKE '%upserted_bootstrap' THEN 'bootstrap' ELSE 'processed_backfill' END,
+        CASE WHEN outcome LIKE '%upserted_bootstrap' THEN p_bootstrap_priority ELSE 0 END,
         CASE
-          WHEN is_new_video THEN p_now + make_interval(hours => least(p_bootstrap_ttl_hours, 24))
+          WHEN outcome LIKE '%upserted_bootstrap' THEN p_now + make_interval(hours => least(p_bootstrap_ttl_hours, 24))
           ELSE NULL
         END,
         CASE
-          WHEN is_new_video THEN fn_video_collection_next_due_at(p_aid, p_bootstrap_priority, p_now)
+          WHEN outcome LIKE '%upserted_bootstrap' THEN fn_video_collection_next_due_at(p_aid, p_bootstrap_priority, p_now)
           ELSE NULL
         END,
         NULL,
+        new_source,
         p_now
       )
       ON CONFLICT (aid) DO UPDATE SET
@@ -621,14 +920,26 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         END,
         priority = CASE
           WHEN video_collection_state.priority = -1 THEN -1
+          WHEN revived THEN EXCLUDED.priority
           ELSE video_collection_state.priority
         END,
-        bootstrap_until = COALESCE(video_collection_state.bootstrap_until, EXCLUDED.bootstrap_until),
-        next_minute_due_at = COALESCE(video_collection_state.next_minute_due_at, EXCLUDED.next_minute_due_at),
+        bootstrap_until = CASE
+          WHEN revived THEN EXCLUDED.bootstrap_until
+          ELSE COALESCE(video_collection_state.bootstrap_until, EXCLUDED.bootstrap_until)
+        END,
+        next_minute_due_at = CASE
+          WHEN revived THEN EXCLUDED.next_minute_due_at
+          ELSE COALESCE(video_collection_state.next_minute_due_at, EXCLUDED.next_minute_due_at)
+        END,
         subtitle_state = video_collection_state.subtitle_state,
+        monitor_source = CASE
+          WHEN video_collection_state.monitor_source IN ('label', 'manual')
+          THEN video_collection_state.monitor_source
+          ELSE EXCLUDED.monitor_source
+        END,
         updated_at = p_now;
 
-      RETURN CASE WHEN is_new_video THEN 'upserted_bootstrap' ELSE 'upserted_backfill_daily_only' END;
+      RETURN outcome;
     END;
     $$ LANGUAGE plpgsql
   `);
@@ -666,6 +977,136 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         ARRAY[${sqlIntegerArray(config.whitelist.minuteBootstrap.tidV2)}]::integer[],
         ${config.minute.processedBackfillNewVideoAgeDays}
       );
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+
+  // The database, not application code, keeps monitoring in step with
+  // processed_videos: a new video, or a change to its type_id, tid_v2, pid_v2,
+  // is_filtered or is_deleted, re-evaluates it against collection_whitelist.
+  // Both functions below call the upsert with nine arguments on purpose: ten
+  // would also match the ten-argument wrapper and be rejected as ambiguous.
+  // They pass the row's formal label when an external classifier added the
+  // label columns and all three are set (see completeFormalLabelSql). They
+  // never set the protection release settings, so legacy, daily and manual
+  // rows stay protected.
+  const triggerLabel = completeFormalLabelSql("row_data");
+  const reevaluateLabel = completeFormalLabelSql("to_jsonb(video)");
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_processed_video_collection_state()
+    RETURNS trigger AS $$
+    DECLARE
+      row_data jsonb := to_jsonb(NEW);
+    BEGIN
+      PERFORM fn_upsert_collection_state_from_processed_video(
+        NEW.aid,
+        NEW.pubdate,
+        NEW.ctime,
+        NEW.tid_v2,
+        ${triggerLabel[0]},
+        ${triggerLabel[1]},
+        ${triggerLabel[2]},
+        COALESCE(NEW.is_deleted, false),
+        NEW.is_filtered
+      );
+      RETURN NULL;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+
+  await pool.query(`
+    DROP TRIGGER IF EXISTS trg_processed_video_collection_state
+    ON processed_videos
+  `);
+
+  await pool.query(`
+    CREATE TRIGGER trg_processed_video_collection_state
+      AFTER INSERT ON processed_videos
+      FOR EACH ROW
+      EXECUTE FUNCTION fn_processed_video_collection_state()
+  `);
+
+  await pool.query(`
+    DROP TRIGGER IF EXISTS trg_processed_video_collection_state_update
+    ON processed_videos
+  `);
+
+  await pool.query(`
+    CREATE TRIGGER trg_processed_video_collection_state_update
+      AFTER UPDATE OF aid, type_id, tid_v2, pid_v2, is_filtered, is_deleted
+      ON processed_videos
+      FOR EACH ROW
+      WHEN (
+        OLD.aid IS DISTINCT FROM NEW.aid
+        OR OLD.type_id IS DISTINCT FROM NEW.type_id
+        OR OLD.tid_v2 IS DISTINCT FROM NEW.tid_v2
+        OR OLD.pid_v2 IS DISTINCT FROM NEW.pid_v2
+        OR OLD.is_filtered IS DISTINCT FROM NEW.is_filtered
+        OR OLD.is_deleted IS DISTINCT FROM NEW.is_deleted
+      )
+      EXECUTE FUNCTION fn_processed_video_collection_state()
+  `);
+
+  // On demand only: applies the current whitelist and labels to the stored
+  // videos in p_aids. Nothing calls it automatically. Use the batched
+  // `pnpm reevaluate-collection` command (dry run first) rather than calling
+  // it directly. Without p_aids it evaluates every row of processed_videos in
+  // one statement and one transaction.
+  //
+  // Each video is read again right before it is evaluated, so a change
+  // committed while a long call runs is not overwritten with older values.
+  // Returns one row per outcome; an admission of a video that had no state row
+  // before is reported with the prefix 'new_'.
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_reevaluate_collection_whitelist(
+      p_aids bigint[] DEFAULT NULL
+    ) RETURNS TABLE (outcome text, videos bigint) AS $$
+    DECLARE
+      video_aid bigint;
+      video processed_videos%ROWTYPE;
+      had_state boolean;
+      result text;
+      counts jsonb := '{}'::jsonb;
+    BEGIN
+      FOR video_aid IN
+        SELECT candidate.aid
+        FROM processed_videos AS candidate
+        WHERE p_aids IS NULL OR candidate.aid = ANY(p_aids)
+        ORDER BY candidate.aid
+      LOOP
+        SELECT * INTO video FROM processed_videos WHERE aid = video_aid;
+        CONTINUE WHEN NOT FOUND;
+
+        had_state := EXISTS (
+          SELECT 1 FROM video_collection_state WHERE aid = video_aid
+        );
+        result := fn_upsert_collection_state_from_processed_video(
+          video.aid,
+          video.pubdate,
+          video.ctime,
+          video.tid_v2,
+          ${reevaluateLabel[0]},
+          ${reevaluateLabel[1]},
+          ${reevaluateLabel[2]},
+          COALESCE(video.is_deleted, false),
+          video.is_filtered
+        );
+        IF NOT had_state AND result IN (
+          'upserted_bootstrap', 'upserted_backfill_daily_only', 'refreshed_from_daily'
+        ) THEN
+          result := 'new_' || result;
+        END IF;
+        counts := jsonb_set(
+          counts,
+          ARRAY[result],
+          to_jsonb(COALESCE((counts ->> result)::bigint, 0) + 1)
+        );
+      END LOOP;
+
+      RETURN QUERY
+      SELECT counted.key, counted.value::bigint
+      FROM jsonb_each_text(counts) AS counted
+      ORDER BY counted.key;
     END;
     $$ LANGUAGE plpgsql
   `);

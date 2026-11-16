@@ -34,15 +34,3 @@ export interface DailyCollectionCandidate {
   lastDailyRecordDate: Date | null;
   lastView: number | null;
 }
-
-export interface ProcessedVideoCollectionInput {
-  aid: bigint;
-  pubdate?: number | null;
-  ctime?: number | null;
-  tidV2?: number | null;
-  labelContentType?: string | null;
-  labelOrigin?: string | null;
-  labeledBy?: string | null;
-  isDeleted?: boolean | null;
-  isFiltered?: boolean | null;
-}

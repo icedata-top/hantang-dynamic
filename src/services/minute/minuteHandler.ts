@@ -46,6 +46,7 @@ export type MinuteDatabase = Pick<
   Database,
   | "advanceFailedMinuteVideos"
   | "advanceSuppressedMinuteSamples"
+  | "getCollectionWhitelist"
   | "getDesiredWatchLaterSet"
   | "syncWatchLaterSnapshot"
   | "getLatestVideoMinuteSamples"
@@ -146,7 +147,8 @@ export class MinuteHandler {
           typeof id === "number"
             ? fetchVideoFullDetail({ aid: id })
             : fetchVideoFullDetail({ bvid: id }),
-        pidV2Whitelist: new Set(config.whitelist.recommendation.pidV2),
+        getPidV2Whitelist: async () =>
+          new Set(await this.db.getCollectionWhitelist("pid_v2")),
       });
   }
 

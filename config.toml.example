@@ -110,18 +110,20 @@ max_recommendation_depth = 1
 content_blacklist = []         # Array of content blacklist keywords
 
 [whitelist.video]
+# type_ids also seeds the tid_v1 list of collection_whitelist when init-schema first creates it; edit that table instead
 type_ids = []                  # Video type IDs to include (e.g., [28, 30, 130])
+# tid_v2 = [2022, 2061]        # tid_v2 values to include; used instead of type_ids for videos that have a tid_v2 (empty: use type_ids); env: TID_V2_WHITE_LIST
 copyright_types = []          # Copyright types to include (1: Original, 2: Repost)
 content_keywords = []         # Keywords that bypass type and copyright checks
 
 [whitelist.recommendation]
-pid_v2 = []                    # Explicit pid_v2 values eligible for recommendation admission
+pid_v2 = []                    # DEPRECATED: only seeds the collection_whitelist table when init-schema first creates it; edit that table instead
 
 [whitelist.minute_bootstrap]
 label_content_types = ["vocaloid", "maybe_vocaloid"]
 label_origin = "rule"
 label_writers = ["classification_apply", "classification_trigger"]
-tid_v2 = [2022, 2061]
+tid_v2 = [2022, 2061, 4215]       # DEPRECATED: only seeds the collection_whitelist table when init-schema first creates it; edit that table instead
 
 [export]
 [export.mysql]

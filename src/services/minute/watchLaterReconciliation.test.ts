@@ -12,10 +12,11 @@ import {
   type WatchLaterDatabase,
 } from "./watchLaterReconciliation";
 
-function item(aid: number, pidV2?: number) {
+function item(aid: number, pidV2?: number, tidV2?: number) {
   return {
     aid,
     ...(pidV2 === undefined ? {} : { pid_v2: pidV2 }),
+    ...(tidV2 === undefined ? {} : { tidv2: tidV2 }),
     stat: {
       aid,
       coin: 1,
@@ -29,12 +30,18 @@ function item(aid: number, pidV2?: number) {
   };
 }
 
-function snapshot(aids: number[], pidV2ByAid: Map<number, number> = new Map()) {
+function snapshot(
+  aids: number[],
+  pidV2ByAid: Map<number, number> = new Map(),
+  tidV2ByAid: Map<number, number> = new Map(),
+) {
   return {
     code: 0,
     data: {
       count: aids.length,
-      list: aids.map((aid) => item(aid, pidV2ByAid.get(aid))),
+      list: aids.map((aid) =>
+        item(aid, pidV2ByAid.get(aid), tidV2ByAid.get(aid)),
+      ),
     },
   };
 }
@@ -116,6 +123,7 @@ test("syncs healthy snapshots, deletes globally before adding, and shares pacing
   const actions: string[] = [];
   const delays: number[] = [];
   const metadata: Array<ReadonlyArray<{ aid: bigint; pidV2: number }>> = [];
+  const tidMetadata: Array<ReadonlyArray<{ aid: bigint; tidV2: number }>> = [];
   let target = 0;
   const result = await runAutomaticWatchLaterManagement(
     database({
@@ -123,13 +131,24 @@ test("syncs healthy snapshots, deletes globally before adding, and shares pacing
         target = requested;
         return [1n, 2n, 3n, 4n];
       },
-      async syncWatchLaterSnapshot(_accountId, _aids, pidV2Metadata) {
+      async syncWatchLaterSnapshot(
+        _accountId,
+        _aids,
+        pidV2Metadata,
+        tidV2Metadata,
+      ) {
         metadata.push(pidV2Metadata);
+        tidMetadata.push(tidV2Metadata);
         return 0;
       },
     }),
     [
-      account([snapshot([90], new Map([[90, 22]]))], [], "7", actions),
+      account(
+        [snapshot([90], new Map([[90, 22]]), new Map([[90, 2022]]))],
+        [],
+        "7",
+        actions,
+      ),
       account([snapshot([91])], [], "8", actions),
     ],
     2,
@@ -141,6 +160,7 @@ test("syncs healthy snapshots, deletes globally before adding, and shares pacing
   );
   assert.equal(target, 4);
   assert.deepEqual(metadata, [[{ aid: 90n, pidV2: 22 }], []]);
+  assert.deepEqual(tidMetadata, [[{ aid: 90n, tidV2: 2022 }], []]);
   assert.deepEqual(actions, [
     "/del:90",
     "/del:91",

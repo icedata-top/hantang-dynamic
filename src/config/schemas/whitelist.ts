@@ -29,6 +29,7 @@ export const legacyWhitelistPaths = [
 export const whitelistSchema = z.object({
   video: z.object({
     typeIds: numberList.default([]),
+    tidV2: numberList.default([]),
     copyrightTypes: numberList.default([]),
     contentKeywords: z.array(z.string().trim().min(1)).default([]),
   }),
@@ -42,7 +43,7 @@ export const whitelistSchema = z.object({
       "classification_apply",
       "classification_trigger",
     ]),
-    tidV2: z.array(z.coerce.number().int()).default([2022, 2061]),
+    tidV2: z.array(z.coerce.number().int()).default([2022, 2061, 4215]),
   }),
 });
 
@@ -78,6 +79,13 @@ export function createWhitelistConfig(
         getConfigValue(
           ["whitelist", "video", "type_ids"],
           "TYPE_ID_WHITE_LIST",
+          [],
+        ),
+      ),
+      tidV2: numberListValue(
+        getConfigValue(
+          ["whitelist", "video", "tid_v2"],
+          "TID_V2_WHITE_LIST",
           [],
         ),
       ),
@@ -129,7 +137,7 @@ export function createWhitelistConfig(
         getConfigValue(
           ["whitelist", "minute_bootstrap", "tid_v2"],
           "MINUTE_BOOTSTRAP_TID_V2_ALLOWLIST",
-          [2022, 2061],
+          [2022, 2061, 4215],
         ),
       ),
     },

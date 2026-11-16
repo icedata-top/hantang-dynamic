@@ -80,8 +80,10 @@ import {
   refreshVideoCollectionStateFromDaily,
   selectDueMinuteVideos,
 } from "./collectionState.js";
+import { getCollectionWhitelist } from "./collectionWhitelist.js";
 import { getCachedForwardBvid, saveDynamic } from "./dynamics.js";
 import { type PidV2Name, upsertPidV2Names } from "./pidV2Names.js";
+import type { CollectionWhitelistKind } from "./schema/collection_whitelist.js";
 import { initializeSchema } from "./schema/index.js";
 import { upgradeVideoHistoryTagIdentitySchema } from "./schema/video_history.js";
 import { getStats } from "./stats.js";
@@ -353,52 +355,31 @@ export class Database {
   }
 
   /**
-   * Persist a processed video and its collection state in one transaction.
+   * Persist a processed video. The processed_videos trigger, not this call,
+   * decides whether the video is monitored.
    */
   public async markVideoProcessedWithCollectionState(
     video: VideoData,
     filtered: boolean,
-    now?: Date,
   ): Promise<void> {
     return markVideoProcessedWithCollectionState(
       this.ensurePool(),
       video,
       filtered,
-      now,
-      {
-        bootstrapPriority: config.minute.bootstrapPriority,
-        bootstrapTtlHours: config.minute.bootstrapTtlHours,
-        bootstrapLabelContentTypes:
-          config.whitelist.minuteBootstrap.labelContentTypes,
-        bootstrapLabelOrigin: config.whitelist.minuteBootstrap.labelOrigin,
-        bootstrapLabelWriters: config.whitelist.minuteBootstrap.labelWriters,
-        bootstrapTidV2Allowlist: config.whitelist.minuteBootstrap.tidV2,
-        processedBackfillNewVideoAgeDays:
-          config.minute.processedBackfillNewVideoAgeDays,
-      },
     );
   }
 
   public async markVideosProcessedWithCollectionState(
     items: ReadonlyArray<ProcessedVideoBatchItem>,
-    now?: Date,
   ): Promise<number> {
-    return markVideosProcessedWithCollectionState(
-      this.ensurePool(),
-      items,
-      now,
-      {
-        bootstrapPriority: config.minute.bootstrapPriority,
-        bootstrapTtlHours: config.minute.bootstrapTtlHours,
-        bootstrapLabelContentTypes:
-          config.whitelist.minuteBootstrap.labelContentTypes,
-        bootstrapLabelOrigin: config.whitelist.minuteBootstrap.labelOrigin,
-        bootstrapLabelWriters: config.whitelist.minuteBootstrap.labelWriters,
-        bootstrapTidV2Allowlist: config.whitelist.minuteBootstrap.tidV2,
-        processedBackfillNewVideoAgeDays:
-          config.minute.processedBackfillNewVideoAgeDays,
-      },
-    );
+    return markVideosProcessedWithCollectionState(this.ensurePool(), items);
+  }
+
+  /** Values currently listed in the database whitelist for one kind. */
+  public async getCollectionWhitelist(
+    kind: CollectionWhitelistKind,
+  ): Promise<number[]> {
+    return getCollectionWhitelist(this.ensurePool(), kind);
   }
 
   public async updateProcessedVideoMetadata(
@@ -677,12 +658,14 @@ export class Database {
     accountId: bigint,
     aids: bigint[],
     pidV2Metadata: ReadonlyArray<{ aid: bigint; pidV2: number }>,
+    tidV2Metadata: ReadonlyArray<{ aid: bigint; tidV2: number }>,
   ): Promise<number> {
     return syncWatchLaterSnapshot(
       this.ensurePool(),
       accountId,
       aids,
       pidV2Metadata,
+      tidV2Metadata,
     );
   }
 

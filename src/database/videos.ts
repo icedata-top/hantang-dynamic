@@ -1,11 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 import type { VideoSnapshot } from "../types/models/database.js";
 import type { VideoData } from "../types/models/video.js";
-import {
-  type DatabaseQuery,
-  type ProcessedVideoCollectionOptions,
-  upsertCollectionStateFromProcessedVideo,
-} from "./collectionState.js";
+import type { DatabaseQuery } from "./collectionState.js";
 
 export interface BvidListQuery {
   where?: string;
@@ -310,7 +306,11 @@ export async function markVideoProcessed(
       user_id = EXCLUDED.user_id,
       is_filtered = EXCLUDED.is_filtered,
       staff = EXCLUDED.staff,
-      tid_v2 = EXCLUDED.tid_v2,
+      tid_v2 = CASE
+        WHEN COALESCE(EXCLUDED.tid_v2, 0) > 0 THEN EXCLUDED.tid_v2
+        WHEN COALESCE(processed_videos.tid_v2, 0) > 0 THEN processed_videos.tid_v2
+        ELSE COALESCE(EXCLUDED.tid_v2, processed_videos.tid_v2)
+      END,
       dynamic = EXCLUDED.dynamic,
       tag_new = CASE
         WHEN $25::boolean THEN EXCLUDED.tag_new
@@ -417,14 +417,14 @@ function batchVideoRow(item: ProcessedVideoBatchItem) {
 }
 
 /**
- * Persist a bounded set of full-detail videos and their collection state in a
- * single transaction. TAG snapshots are authoritative only when supplied.
+ * Persist a bounded set of full-detail videos in a single transaction. TAG
+ * snapshots are authoritative only when supplied. Monitoring is not decided
+ * here: the processed_videos trigger re-evaluates each inserted or changed
+ * video against collection_whitelist.
  */
 export async function markVideosProcessedWithCollectionState(
   pool: Pool,
   items: ReadonlyArray<ProcessedVideoBatchItem>,
-  now = new Date(),
-  options?: ProcessedVideoCollectionOptions,
 ): Promise<number> {
   const byAid = new Map<bigint, ProcessedVideoBatchItem>();
   for (const item of items) byAid.set(item.video.aid, item);
@@ -470,7 +470,11 @@ export async function markVideosProcessedWithCollectionState(
          user_id = EXCLUDED.user_id,
          is_filtered = EXCLUDED.is_filtered,
          staff = EXCLUDED.staff,
-         tid_v2 = EXCLUDED.tid_v2,
+         tid_v2 = CASE
+           WHEN COALESCE(EXCLUDED.tid_v2, 0) > 0 THEN EXCLUDED.tid_v2
+           WHEN COALESCE(video.tid_v2, 0) > 0 THEN video.tid_v2
+           ELSE COALESCE(EXCLUDED.tid_v2, video.tid_v2)
+         END,
          dynamic = EXCLUDED.dynamic,
          tag_new = COALESCE(EXCLUDED.tag_new, video.tag_new),
          tag_ids = COALESCE(EXCLUDED.tag_ids, video.tag_ids),
@@ -494,7 +498,13 @@ export async function markVideosProcessedWithCollectionState(
           OR video.user_id IS DISTINCT FROM EXCLUDED.user_id
           OR video.is_filtered IS DISTINCT FROM EXCLUDED.is_filtered
           OR video.staff IS DISTINCT FROM EXCLUDED.staff
-          OR video.tid_v2 IS DISTINCT FROM EXCLUDED.tid_v2
+          OR video.tid_v2 IS DISTINCT FROM (
+            CASE
+              WHEN COALESCE(EXCLUDED.tid_v2, 0) > 0 THEN EXCLUDED.tid_v2
+              WHEN COALESCE(video.tid_v2, 0) > 0 THEN video.tid_v2
+              ELSE COALESCE(EXCLUDED.tid_v2, video.tid_v2)
+            END
+          )
           OR video.dynamic IS DISTINCT FROM EXCLUDED.dynamic
           OR (EXCLUDED.tag_new IS NOT NULL AND video.tag_new IS DISTINCT FROM EXCLUDED.tag_new)
           OR (EXCLUDED.tag_ids IS NOT NULL AND video.tag_ids IS DISTINCT FROM EXCLUDED.tag_ids)
@@ -529,32 +539,6 @@ export async function markVideosProcessedWithCollectionState(
          updated_at = EXCLUDED.updated_at`,
       [payload],
     );
-    await client.query(
-      `SELECT fn_upsert_collection_state_from_processed_video(
-         input.aid, input.pubdate, input.ctime, input.tid_v2,
-         NULL, NULL, NULL, input.is_deleted, input.is_filtered,
-         $2::timestamptz, $3::integer, $4::integer, $5::text[], $6::text,
-         $7::text[], $8::integer[], $9::integer
-       )
-       FROM jsonb_to_recordset($1::jsonb) AS input(
-         aid bigint, pubdate bigint, ctime bigint, tid_v2 integer,
-         is_deleted boolean, is_filtered boolean
-       )`,
-      [
-        payload,
-        now,
-        options?.bootstrapPriority ?? 10,
-        options?.bootstrapTtlHours ?? 24,
-        options?.bootstrapLabelContentTypes ?? ["vocaloid", "maybe_vocaloid"],
-        options?.bootstrapLabelOrigin ?? "rule",
-        options?.bootstrapLabelWriters ?? [
-          "classification_apply",
-          "classification_trigger",
-        ],
-        options?.bootstrapTidV2Allowlist ?? [2022, 2061],
-        options?.processedBackfillNewVideoAgeDays ?? 7,
-      ],
-    );
     await client.query("COMMIT");
     return written.rowCount ?? 0;
   } catch (error) {
@@ -568,6 +552,7 @@ export async function markVideosProcessedWithCollectionState(
 export interface ProcessedVideoMetadata {
   aid: bigint;
   pidV2?: number;
+  tidV2?: number;
   cover43?: string;
 }
 
@@ -644,8 +629,10 @@ export async function updateProcessedVideoMetadata(
     byAid.set(item.aid, {
       aid: item.aid,
       ...(existing?.pidV2 !== undefined ? { pidV2: existing.pidV2 } : {}),
+      ...(existing?.tidV2 !== undefined ? { tidV2: existing.tidV2 } : {}),
       ...(existing?.cover43 !== undefined ? { cover43: existing.cover43 } : {}),
       ...(item.pidV2 !== undefined ? { pidV2: item.pidV2 } : {}),
+      ...(item.tidV2 !== undefined ? { tidV2: item.tidV2 } : {}),
       ...(item.cover43 !== undefined && item.cover43.length > 0
         ? { cover43: item.cover43 }
         : {}),
@@ -653,18 +640,26 @@ export async function updateProcessedVideoMetadata(
   }
 
   const entries = [...byAid.values()].filter(
-    (item) => item.pidV2 !== undefined || item.cover43 !== undefined,
+    (item) =>
+      item.pidV2 !== undefined ||
+      item.tidV2 !== undefined ||
+      item.cover43 !== undefined,
   );
   if (entries.length === 0) return 0;
 
   const result = await pool.query(
-    `WITH metadata(aid, pid_v2, cover43) AS (
+    `WITH metadata(aid, pid_v2, cover43, tid_v2) AS (
        SELECT *
-       FROM unnest($1::bigint[], $2::integer[], $3::varchar[])
+       FROM unnest($1::bigint[], $2::integer[], $3::varchar[], $4::integer[])
      )
      UPDATE processed_videos AS video
      SET pid_v2 = COALESCE(metadata.pid_v2, video.pid_v2),
          cover43 = COALESCE(metadata.cover43, video.cover43),
+         tid_v2 = CASE
+           WHEN metadata.tid_v2 IS NOT NULL AND COALESCE(video.tid_v2, 0) = 0
+             THEN metadata.tid_v2
+           ELSE video.tid_v2
+         END,
          updated_at = NOW()
      FROM metadata
      WHERE video.aid = metadata.aid
@@ -674,6 +669,8 @@ export async function updateProcessedVideoMetadata(
          AND video.pid_v2 IS DISTINCT FROM metadata.pid_v2
          OR metadata.cover43 IS NOT NULL
          AND video.cover43 IS DISTINCT FROM metadata.cover43
+         OR metadata.tid_v2 IS NOT NULL
+         AND COALESCE(video.tid_v2, 0) = 0
        )`,
     [
       entries.map((item) => item.aid.toString()),
@@ -683,38 +680,25 @@ export async function updateProcessedVideoMetadata(
           ? null
           : sanitizeDatabaseString(item.cover43),
       ),
+      entries.map((item) => item.tidV2 ?? null),
     ],
   );
   return result.rowCount ?? 0;
 }
 
 /**
- * Persist a processed video and its collection state atomically.
+ * Persist a processed video. Monitoring is not decided here: the
+ * processed_videos trigger re-evaluates the video against collection_whitelist.
  */
 export async function markVideoProcessedWithCollectionState(
   pool: Pool,
   video: VideoData,
   filtered: boolean,
-  now = new Date(),
-  options?: ProcessedVideoCollectionOptions,
 ): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     await markVideoProcessed(client, video, filtered);
-    await upsertCollectionStateFromProcessedVideo(
-      client,
-      {
-        aid: video.aid,
-        pubdate: video.pubdate,
-        ctime: video.ctime,
-        tidV2: video.tid_v2,
-        isDeleted: video.is_deleted ?? false,
-        isFiltered: filtered,
-      },
-      now,
-      options,
-    );
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");

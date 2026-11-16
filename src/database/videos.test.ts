@@ -25,6 +25,7 @@ function createPool(
   options: {
     existingAidForBvid?: string;
     failCollectionStateUpdate?: boolean;
+    failProcessedVideoWrite?: boolean;
   } = {},
 ) {
   const calls: QueryCall[] = [];
@@ -36,6 +37,12 @@ function createPool(
         sql.includes("collection_state")
       ) {
         throw new Error("collection state update failed");
+      }
+      if (
+        options.failProcessedVideoWrite &&
+        sql.includes("INSERT INTO processed_videos")
+      ) {
+        throw new Error("processed video write failed");
       }
       if (sql.includes("SELECT aid") && sql.includes("WHERE bvid = $1")) {
         return {
@@ -69,42 +76,28 @@ const video = {
   ctime: 1_700_000_000,
 };
 
-test("processed video and collection state commit in one transaction", async () => {
+test("processed video commits in one transaction and leaves monitoring to the database trigger", async () => {
   const { pool, calls } = createPool();
 
-  await markVideoProcessedWithCollectionState(
-    pool,
-    video,
-    true,
-    new Date("2026-08-26T00:00:00Z"),
-  );
+  await markVideoProcessedWithCollectionState(pool, video, true);
 
   assert.equal(calls[0]?.sql, "BEGIN");
   assert.match(calls[1]?.sql ?? "", /INSERT INTO processed_videos/);
-  assert.match(
-    calls[2]?.sql ?? "",
-    /fn_upsert_collection_state_from_processed_video/,
-  );
-  assert.deepEqual(calls[2]?.values?.slice(0, 9), [
-    "42",
-    1_700_000_000,
-    1_700_000_000,
-    2022,
-    null,
-    null,
-    null,
+  assert.equal(calls[2]?.sql, "COMMIT");
+  assert.equal(calls.length, 3);
+  assert.equal(
+    calls.some((call) => /collection_state/.test(call.sql)),
     false,
-    true,
-  ]);
-  assert.equal(calls[3]?.sql, "COMMIT");
+    "code must not write collection state; the processed_videos trigger does",
+  );
 });
 
-test("processed video insert rolls back when collection state upsert fails", async () => {
-  const { pool, calls } = createPool({ failCollectionStateUpdate: true });
+test("processed video write rolls back when the insert fails", async () => {
+  const { pool, calls } = createPool({ failProcessedVideoWrite: true });
 
   await assert.rejects(
     markVideoProcessedWithCollectionState(pool, video, true),
-    /collection state update failed/,
+    /processed video write failed/,
   );
 
   assert.equal(
@@ -112,6 +105,23 @@ test("processed video insert rolls back when collection state upsert fails", asy
     false,
   );
   assert.equal(calls[calls.length - 1]?.sql, "ROLLBACK");
+});
+
+test("a fetch that omits tid_v2 or pid_v2 keeps the stored values", async () => {
+  const { pool, calls } = createPool();
+  const { tid_v2: _omitted, ...withoutTid } = video;
+
+  await markVideoProcessedWithCollectionState(pool, withoutTid, true);
+
+  assert.equal(calls[1]?.values?.[11], null);
+  assert.match(
+    calls[1]?.sql ?? "",
+    /tid_v2 = CASE\s+WHEN COALESCE\(EXCLUDED\.tid_v2, 0\) > 0 THEN EXCLUDED\.tid_v2\s+WHEN COALESCE\(processed_videos\.tid_v2, 0\) > 0 THEN processed_videos\.tid_v2\s+ELSE COALESCE\(EXCLUDED\.tid_v2, processed_videos\.tid_v2\)\s+END/,
+  );
+  assert.match(
+    calls[1]?.sql ?? "",
+    /pid_v2 = COALESCE\(EXCLUDED\.pid_v2, processed_videos\.pid_v2\)/,
+  );
 });
 
 test("authoritative TAG snapshots update the processed video and dictionary transaction", async () => {
@@ -140,11 +150,7 @@ test("authoritative TAG snapshots update the processed video and dictionary tran
     ["10", "20"],
     ["vocaloid", "topic"],
   ]);
-  assert.match(
-    calls[3]?.sql ?? "",
-    /fn_upsert_collection_state_from_processed_video/,
-  );
-  assert.equal(calls[4]?.sql, "COMMIT");
+  assert.equal(calls[3]?.sql, "COMMIT");
 });
 
 test("missing TAG snapshots preserve stored names and TAG IDs", async () => {
@@ -513,6 +519,7 @@ test("supplemental metadata updates changed fields and merges duplicate related 
     ["1", "2"],
     [22, null],
     ["https://cover/1", "https://cover/�😀\\u0000"],
+    [null, null],
   ]);
   assert.match(calls[0]?.sql ?? "", /video\.aid = metadata\.aid/);
   assert.match(calls[0]?.sql ?? "", /video\.aid = ANY\(\$1::bigint\[\]\)/);
@@ -523,6 +530,38 @@ test("supplemental metadata updates changed fields and merges duplicate related 
   assert.match(
     calls[0]?.sql ?? "",
     /video\.cover43 IS DISTINCT FROM metadata\.cover43/,
+  );
+});
+
+test("supplemental metadata writes tid_v2 only over a missing or zero stored value", async () => {
+  const calls: QueryCall[] = [];
+  const query = {
+    async query(sql: string, values?: unknown[]) {
+      calls.push({ sql, values });
+      return { rows: [], rowCount: 2 };
+    },
+  };
+
+  await updateProcessedVideoMetadata(query as unknown as Pool, [
+    { aid: 1n, tidV2: 2022 },
+    { aid: 2n, pidV2: 22 },
+    { aid: 2n, tidV2: 2023 },
+  ]);
+
+  assert.deepEqual(calls[0]?.values, [
+    ["1", "2"],
+    [null, 22],
+    [null, null],
+    [2022, 2023],
+  ]);
+  const sql = calls[0]?.sql ?? "";
+  assert.match(
+    sql,
+    /tid_v2 = CASE\s+WHEN metadata\.tid_v2 IS NOT NULL AND COALESCE\(video\.tid_v2, 0\) = 0\s+THEN metadata\.tid_v2\s+ELSE video\.tid_v2\s+END/,
+  );
+  assert.match(
+    sql,
+    /OR metadata\.tid_v2 IS NOT NULL\s+AND COALESCE\(video\.tid_v2, 0\) = 0/,
   );
 });
 
@@ -575,11 +614,16 @@ test("full-detail batch writes once per database phase and keeps the final dupli
   assert.equal(payload[0]?.title, "final");
   assert.deepEqual(payload[0]?.tag_ids, ["10", "20"]);
   assert.match(calls[2]?.sql ?? "", /INSERT INTO tags/);
+  assert.equal(calls[3]?.sql, "COMMIT");
+  assert.equal(calls.length, 4);
   assert.match(
-    calls[3]?.sql ?? "",
-    /fn_upsert_collection_state_from_processed_video/,
+    calls[1]?.sql ?? "",
+    /tid_v2 = CASE\s+WHEN COALESCE\(EXCLUDED\.tid_v2, 0\) > 0 THEN EXCLUDED\.tid_v2\s+WHEN COALESCE\(video\.tid_v2, 0\) > 0 THEN video\.tid_v2\s+ELSE COALESCE\(EXCLUDED\.tid_v2, video\.tid_v2\)\s+END/,
   );
-  assert.equal(calls[4]?.sql, "COMMIT");
+  assert.match(
+    calls[1]?.sql ?? "",
+    /video\.tid_v2 IS DISTINCT FROM \(\s+CASE\s+WHEN COALESCE\(EXCLUDED\.tid_v2, 0\) > 0 THEN EXCLUDED\.tid_v2\s+WHEN COALESCE\(video\.tid_v2, 0\) > 0 THEN video\.tid_v2\s+ELSE COALESCE\(EXCLUDED\.tid_v2, video\.tid_v2\)\s+END\s+\)/,
+  );
 });
 
 test("full-detail batch preserves valid Unicode and sanitizes nested JSON values and keys", async () => {

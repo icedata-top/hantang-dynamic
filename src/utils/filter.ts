@@ -11,11 +11,20 @@ export const filterVideo = async (
     videoData.tag.toLowerCase(),
   ].join(" ");
 
-  if (
-    Array.isArray(config.whitelist.video.typeIds) &&
-    config.whitelist.video.typeIds.length > 0
-  ) {
-    if (!config.whitelist.video.typeIds.includes(videoData.type_id)) {
+  // A positive tid_v2 is judged by the tid_v2 list when one is configured;
+  // otherwise the type_id list decides.
+  const tidV2List = config.whitelist.video.tidV2;
+  const useTidV2 =
+    Array.isArray(tidV2List) &&
+    tidV2List.length > 0 &&
+    videoData.tid_v2 !== undefined &&
+    videoData.tid_v2 > 0;
+  const typeList = useTidV2 ? tidV2List : config.whitelist.video.typeIds;
+  const typeValue = useTidV2 ? videoData.tid_v2 : videoData.type_id;
+  const typeLabel = useTidV2 ? "tid_v2" : "类型";
+
+  if (Array.isArray(typeList) && typeList.length > 0) {
+    if (typeValue === undefined || !typeList.includes(typeValue)) {
       let inwhite = false;
       if (
         Array.isArray(config.whitelist.video.contentKeywords) &&
@@ -33,7 +42,7 @@ export const filterVideo = async (
       }
       if (!inwhite) {
         logger.debug(
-          `忽略类型 ${videoData.type_id}(${videoData.bvid}): ${videoData.title}`,
+          `忽略${typeLabel} ${typeValue}(${videoData.bvid}): ${videoData.title}`,
         );
         return null;
       }

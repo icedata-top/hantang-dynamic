@@ -1,5 +1,87 @@
 # Changelog
 
+## Unreleased
+
+Moves the monitoring whitelist into the database and lets a trigger, not
+application code, decide which videos are minute-monitored.
+
+Upgrade notes:
+
+- Run `pnpm init-schema` before starting this version. It creates
+  `collection_whitelist` and installs the `processed_videos` trigger; the
+  application reads that table at runtime. It does not re-evaluate videos that
+  are already stored.
+- `whitelist.minute_bootstrap.tid_v2` and `whitelist.recommendation.pid_v2`
+  (and their environment variables) now only seed `collection_whitelist` the
+  first time it is created. Edit the table afterwards. See
+  `docs/config/database.md`.
+- The trigger only reacts to future changes. Stored videos are not
+  re-evaluated by the upgrade. To apply the rules to them, first run the
+  read-only dry run (`pnpm reevaluate-collection --active-only`, or another
+  explicit aid range), review its report, and then apply the reviewed ranges
+  in batches with `--apply --pre-image <file>`. Do not call
+  `fn_reevaluate_collection_whitelist()` without arguments: that evaluates
+  every stored video in one statement and one transaction.
+
+Changes:
+
+- A video is monitored when its `tid_v2` is whitelisted. A `tid_v2` of 0 or
+  NULL means unknown. A monitored video with a known `tid_v2` that is not
+  whitelisted is pulled out of monitoring, and is brought back only if the
+  whitelist later admits it. `pid_v2` no longer decides monitoring; the
+  `pid_v2` list only pre-selects which related-video cards get their details
+  fetched.
+- Adds a `tid_v1` whitelist for the legacy tid (`type_id`), which is always
+  present but less reliable. It decides only while `tid_v2` is unknown; once a
+  non-zero `tid_v2` arrives, v2 decides alone. A v1 mismatch never removes a
+  video.
+- The `tid_v1` list is seeded from `whitelist.video.type_ids` the first time
+  `collection_whitelist` is created, alongside the `tid_v2` and `pid_v2` seeds.
+  Changing that key later does not change the list; edit the table instead.
+- The default `tid_v2` seed is `[2022, 2061, 4215]`.
+- A complete formal label (`label_content_type`, `label_origin` and
+  `labeled_by`, when an external classifier adds those columns) comes before
+  the whitelist: a passing label admits or keeps a video, a failing one demotes
+  it. A partial label counts as no label.
+- Videos added to `video_collection_state` by hand are marked `manual` and are
+  never pulled out by the whitelist.
+- Rows written before monitoring sources were recorded (no source), rows
+  created by the daily refresh (`daily`) and rows added by hand (`manual`) are
+  protected from automatic changes: a `tid_v2` mismatch does not pull out rows
+  with no source or `daily`, and a failing label does not demote any of the
+  three. The trigger and re-evaluation report these as
+  `pull_out_blocked_protected` and `label_demotion_blocked_protected`.
+  Deleted or filtered-out videos are still disabled.
+- Adds `pnpm reevaluate-collection`, which re-evaluates stored videos only in
+  an explicit aid range (`--from-aid`/`--to-aid`, `--aids-file`,
+  `--active-only` or `--all`) and refuses to run without one. By default it is
+  a read-only dry run that takes the whitelist values as arguments and also
+  works on a database that has not been upgraded yet. `--apply` writes one
+  batch per transaction, saves each batch's state rows to a pre-image file
+  first, and prints the aid to resume from; `--restore <file> --apply` puts the
+  saved rows back. `--allow-pull-legacy` and `--allow-label-demotion` release
+  the protection for the evaluated rows only.
+- Adds `fn_reevaluate_collection_whitelist(p_aids)`, which applies the rules to
+  the given stored videos on demand and is what `--apply` calls. It reads each
+  video again right before evaluating it, so a change committed during a long
+  call is not overwritten with older values, and reports admissions of videos
+  that had no state row with the prefix `new_`.
+- A fetch that omits `tid_v2` now keeps the stored value instead of overwriting
+  it with NULL, matching `pid_v2`.
+- A fetch that reports `tid_v2` as 0 no longer overwrites a stored non-zero
+  `tid_v2`; a non-zero value still replaces the stored one, and 0 is still
+  recorded for a video with no stored value.
+- The Watch Later snapshot also stores the `tid_v2` it reports for listed
+  videos, but only where the stored value is missing or 0.
+- The related-video `pid_v2` whitelist is read from the database for each
+  collection run, so edits apply without a restart.
+- Adds `whitelist.video.tid_v2` (environment variable `TID_V2_WHITE_LIST`,
+  default empty). When set, a video with a `tid_v2` is admitted by that list
+  instead of `whitelist.video.type_ids`; videos without a `tid_v2`, and every
+  video while the list is empty, are checked against `type_ids` as before.
+  Content keywords, copyright and the blacklist are unchanged, and videos
+  already stored are not re-evaluated.
+
 ## 5.10.2
 
 Stops minute sampling from requesting deleted videos forever and puts videos

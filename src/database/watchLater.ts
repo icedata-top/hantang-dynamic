@@ -55,11 +55,15 @@ export async function syncWatchLaterSnapshot(
   accountId: bigint,
   observedAids: bigint[],
   pidV2Metadata: ReadonlyArray<{ aid: bigint; pidV2: number }>,
+  tidV2Metadata: ReadonlyArray<{ aid: bigint; tidV2: number }>,
 ): Promise<number> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await updateProcessedVideoMetadata(client, pidV2Metadata);
+    await updateProcessedVideoMetadata(client, [
+      ...pidV2Metadata,
+      ...tidV2Metadata,
+    ]);
 
     const membershipResult = await client.query(
       `UPDATE video_collection_state
