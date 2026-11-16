@@ -106,12 +106,12 @@ async function main() {
       parseUpdateInfoPredicateArgument,
       runUpdateInfo,
     } = await import("./scripts/update-info");
-    const whitelistValue =
-      updateInfoWhitelistArgument(args) ??
-      config.whitelist.recommendation.pidV2.join(",");
+    const whitelistValue = updateInfoWhitelistArgument(args);
     const where = parseUpdateInfoPredicateArgument(args);
     await runUpdateInfo({
-      pidV2Whitelist: parsePidV2Whitelist(whitelistValue),
+      ...(whitelistValue === undefined
+        ? {}
+        : { pidV2Whitelist: parsePidV2Whitelist(whitelistValue) }),
       ...(where === undefined ? {} : { where }),
     });
     return;

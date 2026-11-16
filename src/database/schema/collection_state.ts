@@ -110,6 +110,42 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
     ADD COLUMN IF NOT EXISTS subtitle_last_error text
   `);
 
+  // Why a video is (or is not) monitored:
+  //   'whitelist' / 'label'  tracked by collection_whitelist or a formal label
+  //   'daily'                created by the daily refresh from video_daily data
+  //   'manual'               added by hand; never pulled out by the whitelist
+  //   'whitelist_excluded'   dragged out because its tid_v2/pid_v2 are not
+  //                          whitelisted (priority -1, revivable)
+  //   NULL                   written before this column existed
+  // Rows inserted by hand without naming a source become 'manual'. The default
+  // is set after the column exists so it never relabels pre-existing rows; every
+  // insert in this codebase names its source explicitly.
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD COLUMN IF NOT EXISTS monitor_source text
+  `);
+
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ALTER COLUMN monitor_source SET DEFAULT 'manual'
+  `);
+
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    DROP CONSTRAINT IF EXISTS chk_video_collection_monitor_source
+  `);
+
+  await pool.query(`
+    ALTER TABLE video_collection_state
+    ADD CONSTRAINT chk_video_collection_monitor_source
+      CHECK (
+        monitor_source IS NULL
+        OR monitor_source IN (
+          'label', 'whitelist', 'whitelist_excluded', 'manual', 'daily'
+        )
+      )
+  `);
+
   await pool.query(`
     ALTER TABLE video_collection_state
     DROP CONSTRAINT IF EXISTS chk_subtitle_state
@@ -398,7 +434,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       INSERT INTO video_collection_state (
         aid, latest_daily_delta, weekly_avg_daily_delta, daily_delta_source,
         priority, next_minute_due_at, last_daily_record_date, last_view,
-        next_gate_value, subtitle_state, updated_at
+        next_gate_value, subtitle_state, monitor_source, updated_at
       )
       SELECT
         c.aid, c.latest_daily_delta, c.weekly_avg_daily_delta, c.daily_delta_source,
@@ -410,6 +446,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         c.last_view,
         c.next_gate_value,
         fn_next_subtitle_state(NULL, c.last_view, c.crossed_gate),
+        'daily',
         p_now
       FROM calculated c
       ORDER BY c.aid
@@ -501,13 +538,23 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       video_timestamp timestamptz;
       is_new_video boolean;
       refresh_count integer;
+      existing_source text;
+      stored_tid integer;
+      stored_pid integer;
+      stored_type integer;
+      effective_tid integer;
+      v2_known boolean;
+      whitelist_pass boolean;
+      revived boolean := false;
+      new_source text;
+      outcome text;
     BEGIN
       IF p_aid IS NULL OR p_aid < 0 THEN
         RETURN 'ignored_invalid_aid';
       END IF;
 
-      SELECT priority
-      INTO existing_priority
+      SELECT priority, monitor_source
+      INTO existing_priority, existing_source
       FROM video_collection_state
       WHERE aid = p_aid;
       has_existing := found;
@@ -524,7 +571,11 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         RETURN 'ignored_deleted';
       END IF;
 
-      IF has_existing AND existing_priority = -1 THEN
+      -- -1 is final (deleted, filtered, label demotion) except for rows the
+      -- whitelist itself excluded, which may come back below.
+      IF has_existing
+         AND existing_priority = -1
+         AND existing_source IS DISTINCT FROM 'whitelist_excluded' THEN
         RETURN 'ignored_existing_disabled';
       END IF;
 
@@ -554,9 +605,27 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         AND p_labeled_by = ANY(p_bootstrap_label_writers),
         false
       );
-      fallback_pass :=
-        NOT has_formal_label_input
-        AND p_tid_v2 = ANY(p_bootstrap_tid_v2_allowlist);
+      -- Without a formal label, the database whitelist decides. tid_v2 and
+      -- pid_v2 are authoritative whenever either is known: the caller's tid_v2
+      -- wins, but a missing one falls back to the stored value, and pid_v2 is
+      -- always the stored value. Only while neither is known does the legacy
+      -- tid (type_id), which is always present but less reliable, stand in.
+      -- (p_bootstrap_tid_v2_allowlist is kept only so existing callers and the
+      -- 10-argument wrapper still bind.)
+      SELECT tid_v2, pid_v2, type_id
+      INTO stored_tid, stored_pid, stored_type
+      FROM processed_videos
+      WHERE aid = p_aid;
+      effective_tid := COALESCE(p_tid_v2, stored_tid);
+      v2_known := effective_tid IS NOT NULL OR stored_pid IS NOT NULL;
+      whitelist_pass := COALESCE(
+        CASE
+          WHEN v2_known THEN fn_collection_whitelist_match(effective_tid, stored_pid)
+          ELSE fn_collection_whitelist_match_v1(stored_type)
+        END,
+        false
+      );
+      fallback_pass := NOT has_formal_label_input AND whitelist_pass;
       should_track := COALESCE(formal_label_pass OR fallback_pass, false);
 
       IF has_complete_formal_label_input AND NOT formal_label_pass THEN
@@ -564,6 +633,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           UPDATE video_collection_state
           SET priority = -1,
               next_minute_due_at = NULL,
+              monitor_source = NULL,
               updated_at = p_now
           WHERE aid = p_aid;
           RETURN 'disabled_label_demotion';
@@ -572,7 +642,40 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       END IF;
 
       IF NOT should_track THEN
+        IF NOT has_formal_label_input AND v2_known THEN
+          -- Has a tid_v2/pid_v2 but neither is whitelisted: drag it out of the
+          -- monitored list, unless a formal label or a person put it there.
+          -- A legacy tid (v1) mismatch alone never demotes: v1 is not reliable
+          -- enough to remove a video, only to admit one until v2 arrives.
+          IF has_existing
+             AND existing_priority <> -1
+             AND COALESCE(existing_source, '') NOT IN ('label', 'manual') THEN
+            UPDATE video_collection_state
+            SET priority = -1,
+                next_minute_due_at = NULL,
+                monitor_source = 'whitelist_excluded',
+                updated_at = p_now
+            WHERE aid = p_aid;
+            RETURN 'disabled_not_whitelisted';
+          END IF;
+          RETURN 'ignored_not_whitelisted';
+        END IF;
         RETURN 'ignored_label_not_ready';
+      END IF;
+
+      new_source := CASE WHEN formal_label_pass THEN 'label' ELSE 'whitelist' END;
+
+      IF has_existing AND existing_priority = -1 THEN
+        -- Only whitelist-excluded rows get here: the whitelist now admits the
+        -- video, so reset the row and let the normal flow re-enter it.
+        revived := true;
+        UPDATE video_collection_state
+        SET priority = 0,
+            next_minute_due_at = NULL,
+            bootstrap_until = NULL,
+            monitor_source = NULL,
+            updated_at = p_now
+        WHERE aid = p_aid;
       END IF;
 
       SELECT EXISTS (
@@ -582,7 +685,13 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       IF has_daily_history THEN
         SELECT fn_refresh_video_collection_state_from_daily(ARRAY[p_aid], p_now)
         INTO refresh_count;
-        RETURN 'refreshed_from_daily';
+        UPDATE video_collection_state
+        SET monitor_source = CASE
+              WHEN monitor_source IN ('label', 'manual') THEN monitor_source
+              ELSE new_source
+            END
+        WHERE aid = p_aid;
+        RETURN CASE WHEN revived THEN 'revived_from_daily' ELSE 'refreshed_from_daily' END;
       END IF;
 
       video_timestamp := to_timestamp(COALESCE(p_pubdate, p_ctime, extract(epoch FROM p_now)::bigint));
@@ -595,6 +704,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         bootstrap_until,
         next_minute_due_at,
         subtitle_state,
+        monitor_source,
         updated_at
       )
       VALUES (
@@ -610,6 +720,7 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
           ELSE NULL
         END,
         NULL,
+        new_source,
         p_now
       )
       ON CONFLICT (aid) DO UPDATE SET
@@ -621,14 +732,27 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
         END,
         priority = CASE
           WHEN video_collection_state.priority = -1 THEN -1
+          WHEN revived THEN EXCLUDED.priority
           ELSE video_collection_state.priority
         END,
-        bootstrap_until = COALESCE(video_collection_state.bootstrap_until, EXCLUDED.bootstrap_until),
-        next_minute_due_at = COALESCE(video_collection_state.next_minute_due_at, EXCLUDED.next_minute_due_at),
+        bootstrap_until = CASE
+          WHEN revived THEN EXCLUDED.bootstrap_until
+          ELSE COALESCE(video_collection_state.bootstrap_until, EXCLUDED.bootstrap_until)
+        END,
+        next_minute_due_at = CASE
+          WHEN revived THEN EXCLUDED.next_minute_due_at
+          ELSE COALESCE(video_collection_state.next_minute_due_at, EXCLUDED.next_minute_due_at)
+        END,
         subtitle_state = video_collection_state.subtitle_state,
+        monitor_source = CASE
+          WHEN video_collection_state.monitor_source IN ('label', 'manual')
+          THEN video_collection_state.monitor_source
+          ELSE EXCLUDED.monitor_source
+        END,
         updated_at = p_now;
 
-      RETURN CASE WHEN is_new_video THEN 'upserted_bootstrap' ELSE 'upserted_backfill_daily_only' END;
+      outcome := CASE WHEN is_new_video THEN 'upserted_bootstrap' ELSE 'upserted_backfill_daily_only' END;
+      RETURN CASE WHEN revived THEN 'revived_' || outcome ELSE outcome END;
     END;
     $$ LANGUAGE plpgsql
   `);
@@ -668,6 +792,92 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       );
     END;
     $$ LANGUAGE plpgsql
+  `);
+
+  // The database, not application code, keeps monitoring in step with
+  // processed_videos: a new video, or a change to its type_id, tid_v2, pid_v2,
+  // is_filtered or is_deleted, re-evaluates it against collection_whitelist.
+  // Both functions below call the upsert with nine arguments on purpose: ten
+  // would also match the ten-argument wrapper and be rejected as ambiguous.
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_processed_video_collection_state()
+    RETURNS trigger AS $$
+    BEGIN
+      PERFORM fn_upsert_collection_state_from_processed_video(
+        NEW.aid,
+        NEW.pubdate,
+        NEW.ctime,
+        NEW.tid_v2,
+        NULL::text,
+        NULL::text,
+        NULL::text,
+        COALESCE(NEW.is_deleted, false),
+        NEW.is_filtered
+      );
+      RETURN NULL;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+
+  await pool.query(`
+    DROP TRIGGER IF EXISTS trg_processed_video_collection_state
+    ON processed_videos
+  `);
+
+  await pool.query(`
+    CREATE TRIGGER trg_processed_video_collection_state
+      AFTER INSERT ON processed_videos
+      FOR EACH ROW
+      EXECUTE FUNCTION fn_processed_video_collection_state()
+  `);
+
+  await pool.query(`
+    DROP TRIGGER IF EXISTS trg_processed_video_collection_state_update
+    ON processed_videos
+  `);
+
+  await pool.query(`
+    CREATE TRIGGER trg_processed_video_collection_state_update
+      AFTER UPDATE OF aid, type_id, tid_v2, pid_v2, is_filtered, is_deleted
+      ON processed_videos
+      FOR EACH ROW
+      WHEN (
+        OLD.aid IS DISTINCT FROM NEW.aid
+        OR OLD.type_id IS DISTINCT FROM NEW.type_id
+        OR OLD.tid_v2 IS DISTINCT FROM NEW.tid_v2
+        OR OLD.pid_v2 IS DISTINCT FROM NEW.pid_v2
+        OR OLD.is_filtered IS DISTINCT FROM NEW.is_filtered
+        OR OLD.is_deleted IS DISTINCT FROM NEW.is_deleted
+      )
+      EXECUTE FUNCTION fn_processed_video_collection_state()
+  `);
+
+  // On-demand: apply the current whitelist to videos that are already stored.
+  // Run it after editing collection_whitelist, or once after deploying the
+  // trigger. Pass p_aids to work in batches. Returns one row per outcome.
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION fn_reevaluate_collection_whitelist(
+      p_aids bigint[] DEFAULT NULL
+    ) RETURNS TABLE (outcome text, videos bigint) AS $$
+      SELECT evaluated.outcome, count(*)::bigint
+      FROM (
+        SELECT fn_upsert_collection_state_from_processed_video(
+                 video.aid,
+                 video.pubdate,
+                 video.ctime,
+                 video.tid_v2,
+                 NULL::text,
+                 NULL::text,
+                 NULL::text,
+                 COALESCE(video.is_deleted, false),
+                 video.is_filtered
+               ) AS outcome
+        FROM processed_videos AS video
+        WHERE p_aids IS NULL OR video.aid = ANY(p_aids)
+      ) AS evaluated
+      GROUP BY evaluated.outcome
+      ORDER BY evaluated.outcome
+    $$ LANGUAGE sql
   `);
 
   // For the dynamic-sleep handler loop: find the nearest *future* due time.

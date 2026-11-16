@@ -5,6 +5,7 @@ import {
   initCollectionStateSchema,
   repairInactiveVideoCollectionStates,
 } from "./collection_state.js";
+import { initCollectionWhitelistSchema } from "./collection_whitelist.js";
 import { initCronUserStats } from "./cron/user_stats.js";
 import { initCronVideoDaily } from "./cron/video_daily.js";
 import { initCronVideoDailyLatest } from "./cron/video_daily_latest.js";
@@ -40,6 +41,7 @@ export async function initializeSchema(
     initVideoMinuteSchema(pool),
     initVideoStaticSchema(pool),
     initPidV2NamesSchema(pool),
+    initCollectionWhitelistSchema(pool),
   ]);
 
   await initVideoHistorySchema(pool);

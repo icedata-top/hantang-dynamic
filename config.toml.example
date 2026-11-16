@@ -115,13 +115,13 @@ copyright_types = []          # Copyright types to include (1: Original, 2: Repo
 content_keywords = []         # Keywords that bypass type and copyright checks
 
 [whitelist.recommendation]
-pid_v2 = []                    # Explicit pid_v2 values eligible for recommendation admission
+pid_v2 = []                    # DEPRECATED: only seeds the collection_whitelist table when init-schema first creates it; edit that table instead
 
 [whitelist.minute_bootstrap]
 label_content_types = ["vocaloid", "maybe_vocaloid"]
 label_origin = "rule"
 label_writers = ["classification_apply", "classification_trigger"]
-tid_v2 = [2022, 2061]
+tid_v2 = [2022, 2061]             # DEPRECATED: only seeds the collection_whitelist table when init-schema first creates it; edit that table instead
 
 [export]
 [export.mysql]

@@ -17,6 +17,7 @@ const MAX_POSTGRES_INTEGER = 2_147_483_647;
 
 interface UpdateInfoDatabase extends RecommendationRefreshDatabase {
   close(): Promise<void>;
+  getCollectionWhitelist(kind: "pid_v2"): Promise<number[]>;
   getProcessedVideoMetadataCandidates(
     options: ProcessedVideoMetadataSweep,
   ): Promise<Array<{ aid: bigint; bvid: string; pidV2?: number }>>;
@@ -36,7 +37,8 @@ export interface UpdateInfoOptions {
     id: string | number,
   ) => Promise<BiliVideoFullDetailResponse | null>;
   onProgress?: (message: string) => void;
-  pidV2Whitelist: ReadonlySet<number>;
+  /** One-run override. When omitted, the database whitelist is used. */
+  pidV2Whitelist?: ReadonlySet<number>;
 }
 
 export interface UpdateInfoResult {
@@ -171,7 +173,9 @@ export async function runUpdateInfo(
       database,
       detailsService,
       fetchDetail,
-      pidV2Whitelist: options.pidV2Whitelist,
+      getPidV2Whitelist: async () =>
+        options.pidV2Whitelist ??
+        new Set(await database.getCollectionWhitelist("pid_v2")),
     });
 
     const highViewMissingPidAids = new Set<bigint>();

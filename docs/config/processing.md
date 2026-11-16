@@ -36,20 +36,17 @@ content_blacklist = []
 For environment variables, list values are comma-separated. The blacklist is
 applied after the video allowlists; matching an allowlist never bypasses it.
 
-## Video and recommendation allowlists
+## Video allowlists and the recommendation whitelist
 
-Video and recommendation allowlists use these TOML keys. A TOML value takes
-precedence over the corresponding environment variable; environment list values
-are comma-separated. Empty TOML arrays explicitly disable a list.
+Video allowlists use these TOML keys. A TOML value takes precedence over the
+corresponding environment variable; environment list values are
+comma-separated. Empty TOML arrays explicitly disable a list.
 
 ```toml
 [whitelist.video]
 type_ids = []
 copyright_types = []
 content_keywords = []
-
-[whitelist.recommendation]
-pid_v2 = []
 ```
 
 | TOML key | Environment variable | Default | Effect |
@@ -57,13 +54,22 @@ pid_v2 = []
 | `whitelist.video.type_ids` | `TYPE_ID_WHITE_LIST` | `[]` | Video types admitted by the type check. |
 | `whitelist.video.copyright_types` | `COPYRIGHT_WHITE_LIST` | `[]` | Copyright types admitted by the copyright check. |
 | `whitelist.video.content_keywords` | `CONTENT_WHITE_LIST` | `[]` | Keywords that bypass the type and copyright checks. Blank keywords are invalid. |
-| `whitelist.recommendation.pid_v2` | `UPDATE_INFO_PID_V2_WHITELIST` | `[]` | Related videos admitted by recommendation collection and `--update-info`. |
 
 An empty video type or copyright list disables that check. A matching content
 keyword bypasses those checks, while `processing.filtering.content_blacklist`
-still excludes matching videos. Recommendation admission requires a listed
-`pid_v2`; `--update-info --pid-v2-whitelist` overrides the configured list for
-that run.
+still excludes matching videos.
+
+The `pid_v2` whitelist that admits related videos is **not** a TOML setting. It
+lives in the database table `collection_whitelist` (kind `pid_v2`), together
+with the `tid_v2` list that decides which videos are minute-monitored. See
+[Monitoring whitelist](database.md#monitoring-whitelist). Recommendation
+admission requires a listed `pid_v2`, and the list is read at the start of each
+collection run, so edits apply without a restart. `--update-info
+--pid-v2-whitelist` overrides the database list for that run only.
+
+`whitelist.recommendation.pid_v2` and `UPDATE_INFO_PID_V2_WHITELIST` are
+deprecated: they now only seed `collection_whitelist` the first time
+`pnpm init-schema` creates it. Changing them afterwards has no effect.
 
 On startup, the app automatically moves these former TOML keys in `config.toml`
 to their current locations:

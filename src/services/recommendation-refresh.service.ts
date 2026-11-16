@@ -131,7 +131,8 @@ export class RecommendationRefreshService {
       fetchDetail: (
         id: string | number,
       ) => Promise<BiliVideoFullDetailResponse | null>;
-      pidV2Whitelist: ReadonlySet<number>;
+      /** Resolved once per collection run, so whitelist edits apply on the next run. */
+      getPidV2Whitelist: () => Promise<ReadonlySet<number>>;
       rateLimiter?: Pick<RateLimiter, "acquire">;
     },
   ) {}
@@ -206,6 +207,7 @@ export class RecommendationRefreshService {
         recommendations.filter((item) => existing.has(item.aid)),
       );
 
+    const pidV2Whitelist = await this.options.getPidV2Whitelist();
     const admissions = [
       ...new Map(
         related
@@ -213,7 +215,7 @@ export class RecommendationRefreshService {
             (item) =>
               validAid(item.aid) &&
               validPidV2(item.pid_v2) &&
-              this.options.pidV2Whitelist.has(item.pid_v2) &&
+              pidV2Whitelist.has(item.pid_v2) &&
               !existing.has(BigInt(item.aid)),
           )
           .map((item) => [item.aid, item] as const),

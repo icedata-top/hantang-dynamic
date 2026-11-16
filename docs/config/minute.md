@@ -141,7 +141,7 @@ tid_v2 = [2022, 2061]
 | `label_content_types` | `MINUTE_BOOTSTRAP_LABEL_CONTENT_TYPES` | `["vocaloid", "maybe_vocaloid"]` | Eligible formal label types. |
 | `label_origin` | `MINUTE_BOOTSTRAP_LABEL_ORIGIN` | `rule` | Required label origin. |
 | `label_writers` | `MINUTE_BOOTSTRAP_LABEL_WRITERS` | `["classification_apply", "classification_trigger"]` | Eligible label writers. |
-| `tid_v2` | `MINUTE_BOOTSTRAP_TID_V2_ALLOWLIST` | `[2022, 2061]` | Fallback values when no formal label exists. |
+| `tid_v2` | `MINUTE_BOOTSTRAP_TID_V2_ALLOWLIST` | `[2022, 2061]` | **Deprecated.** Only seeds `collection_whitelist` when `init-schema` first creates it. Edit that table instead. |
 
 On startup, the app automatically moves these former TOML keys in `config.toml`
 to their current locations:
@@ -153,11 +153,20 @@ to their current locations:
 | `minute.bootstrap_label_writers` | `whitelist.minute_bootstrap.label_writers` |
 | `minute.bootstrap_tid_v2_allowlist` | `whitelist.minute_bootstrap.tid_v2` |
 
-Existing environment variable names remain valid. After changing
-minute-bootstrap values, run `pnpm init-schema` against the database so stored
-SQL function defaults use the new values, then restart the application. Without
-schema initialization, calls that rely on the stored SQL defaults can continue
-using the previously installed bootstrap values.
+Existing environment variable names remain valid.
+
+Without a formal label, whether a video is minute-monitored is decided by the
+database-resident `collection_whitelist`, not by TOML: a video qualifies when
+its `tid_v2` or its `pid_v2` is listed, and the legacy tid (`tid_v1`) stands in
+until either of those is known. A database trigger on `processed_videos`
+applies it, including pulling non-whitelisted videos back out, except videos
+added by hand. See [Monitoring whitelist](database.md#monitoring-whitelist).
+
+`label_content_types`, `label_origin`, `label_writers` and the
+`[minute]` bootstrap settings are still baked into the stored SQL function
+defaults. After changing them, run `pnpm init-schema` against the database and
+restart the application. Without schema initialization, the trigger keeps using
+the previously installed values.
 
 ## Metrics
 

@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased
+
+Moves the monitoring whitelist into the database and lets a trigger, not
+application code, decide which videos are minute-monitored.
+
+Upgrade notes:
+
+- Run `pnpm init-schema` before starting this version. It creates
+  `collection_whitelist` and installs the `processed_videos` trigger; the
+  application reads that table at runtime.
+- `whitelist.minute_bootstrap.tid_v2` and `whitelist.recommendation.pid_v2`
+  (and their environment variables) now only seed `collection_whitelist` the
+  first time it is created. Edit the table afterwards. See
+  `docs/config/database.md`.
+- The trigger only reacts to future changes. Run
+  `SELECT * FROM fn_reevaluate_collection_whitelist();` once to pull
+  already-monitored videos with a non-whitelisted `tid_v2` or `pid_v2` out of
+  monitoring. It also acts on videos tracked before this version, whatever put
+  them there. Before running it, pin any you added by hand with
+  `UPDATE video_collection_state SET monitor_source = 'manual' WHERE aid = ...`.
+
+Changes:
+
+- A video is monitored when its `tid_v2` or its `pid_v2` is whitelisted. A video
+  that has one of them but matches neither is pulled out of monitoring, and is
+  brought back only if the whitelist later admits it.
+- Adds a `tid_v1` whitelist for the legacy tid (`type_id`), which is always
+  present but less reliable. It admits a video only until a `tid_v2` or `pid_v2`
+  arrives, after which v2 decides alone; a v1 mismatch never removes a video.
+- Videos added to `video_collection_state` by hand are marked `manual` and are
+  never pulled out by the whitelist. Deleted or filtered-out videos are still
+  disabled.
+- A fetch that omits `tid_v2` now keeps the stored value instead of overwriting
+  it with NULL, matching `pid_v2`.
+- The related-video `pid_v2` whitelist is read from the database for each
+  collection run, so edits apply without a restart.
+- Adds `fn_reevaluate_collection_whitelist()` to apply whitelist edits to
+  stored videos on demand.
+
 ## 5.10.2
 
 Stops minute sampling from requesting deleted videos forever and puts videos

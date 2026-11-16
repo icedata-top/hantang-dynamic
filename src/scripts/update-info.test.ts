@@ -105,6 +105,13 @@ class FakeDatabase {
   async close() {
     this.closed = true;
   }
+  databaseWhitelist: number[] = [];
+  whitelistReads = 0;
+  readonly persisted: number[] = [];
+  async getCollectionWhitelist(_kind: "pid_v2") {
+    this.whitelistReads++;
+    return this.databaseWhitelist;
+  }
   async getProcessedVideoMetadataUpperAid() {
     return BigInt(Math.max(...this.sources));
   }
@@ -146,7 +153,10 @@ class FakeDatabase {
     items: readonly ProcessedVideoBatchItem[],
   ) {
     this.calls.persist++;
-    for (const item of items) this.existing.add(Number(item.video.aid));
+    for (const item of items) {
+      this.existing.add(Number(item.video.aid));
+      this.persisted.push(Number(item.video.aid));
+    }
     return items.length;
   }
 }
@@ -161,7 +171,7 @@ test("collector uses one bounded membership and refresh path while admitting onl
   const service = new RecommendationRefreshService({
     database,
     detailsService: parser,
-    pidV2Whitelist: new Set([7]),
+    getPidV2Whitelist: async () => new Set([7]),
     rateLimiter: {
       async acquire() {
         return () => {};
@@ -207,7 +217,7 @@ test("concurrent collectors share the configured capacity for source and admissi
     new RecommendationRefreshService({
       database,
       detailsService: parser,
-      pidV2Whitelist: new Set([7]),
+      getPidV2Whitelist: async () => new Set([7]),
       fetchDetail,
     });
   await Promise.all(
@@ -221,6 +231,74 @@ test("concurrent collectors share the configured capacity for source and admissi
   );
   assert.equal(maximum, config.application.concurrencyLimit);
   assert.equal(admissionRequests, 50);
+});
+
+test("collector resolves the pid_v2 whitelist at run time so edits apply to the next run", async () => {
+  const database = new FakeDatabase([1], new Set([1]));
+  let whitelist = new Set<number>([7]);
+  let resolutions = 0;
+  const service = new RecommendationRefreshService({
+    database,
+    detailsService: parser,
+    getPidV2Whitelist: async () => {
+      resolutions++;
+      return whitelist;
+    },
+    rateLimiter: {
+      async acquire() {
+        return () => {};
+      },
+    },
+    fetchDetail: async (id) =>
+      detail(
+        Number(id),
+        100,
+        Number(id) === 1 ? [related(1_000, 7), related(2_000, 8)] : [],
+      ),
+  });
+
+  await service.collectForAids([{ aid: 1n }]);
+  assert.deepEqual(database.persisted, [1_000]);
+  assert.equal(resolutions, 1);
+
+  whitelist = new Set([8]);
+  database.persisted.length = 0;
+  await service.collectForAids([{ aid: 1n }]);
+  assert.deepEqual(database.persisted, [2_000]);
+  assert.equal(resolutions, 2);
+});
+
+test("manual updater reads the database whitelist unless a one-run override is given", async () => {
+  const run = async (override?: ReadonlySet<number>) => {
+    const database = new FakeDatabase([1], new Set([1]));
+    database.databaseWhitelist = [7];
+    await runUpdateInfo({
+      database,
+      detailsService: parser,
+      ...(override === undefined ? {} : { pidV2Whitelist: override }),
+      onProgress: () => {},
+      fetchDetail: async (id) => {
+        const aid = Number(String(id).replace("BV", ""));
+        return detail(
+          aid,
+          100,
+          aid === 1 ? [related(1_000, 7), related(2_000, 8)] : [],
+        );
+      },
+    });
+    return {
+      admitted: [...new Set(database.persisted)],
+      reads: database.whitelistReads,
+    };
+  };
+
+  const fromDatabase = await run();
+  assert.deepEqual(fromDatabase.admitted, [1_000]);
+  assert.ok(fromDatabase.reads > 0);
+
+  const overridden = await run(new Set([8]));
+  assert.deepEqual(overridden.admitted, [2_000]);
+  assert.equal(overridden.reads, 0);
 });
 
 test("manual updater passes its source predicate to both sweeps", async () => {
@@ -318,7 +396,7 @@ test("partial related cards refresh only their supplied existing fields", async 
   const service = new RecommendationRefreshService({
     database,
     detailsService: parser,
-    pidV2Whitelist: new Set(),
+    getPidV2Whitelist: async () => new Set<number>(),
     rateLimiter: {
       async acquire() {
         return () => {};
