@@ -1047,32 +1047,68 @@ export async function initCollectionStateSchema(pool: Pool): Promise<void> {
       EXECUTE FUNCTION fn_processed_video_collection_state()
   `);
 
-  // On-demand: apply the current whitelist to videos that are already stored.
-  // Run it after editing collection_whitelist, or once after deploying the
-  // trigger. Pass p_aids to work in batches. Returns one row per outcome.
+  // On demand only: applies the current whitelist and labels to the stored
+  // videos in p_aids. Nothing calls it automatically. Use the batched
+  // `pnpm reevaluate-collection` command (dry run first) rather than calling
+  // it directly. Without p_aids it evaluates every row of processed_videos in
+  // one statement and one transaction.
+  //
+  // Each video is read again right before it is evaluated, so a change
+  // committed while a long call runs is not overwritten with older values.
+  // Returns one row per outcome; an admission of a video that had no state row
+  // before is reported with the prefix 'new_'.
   await pool.query(`
     CREATE OR REPLACE FUNCTION fn_reevaluate_collection_whitelist(
       p_aids bigint[] DEFAULT NULL
     ) RETURNS TABLE (outcome text, videos bigint) AS $$
-      SELECT evaluated.outcome, count(*)::bigint
-      FROM (
-        SELECT fn_upsert_collection_state_from_processed_video(
-                 video.aid,
-                 video.pubdate,
-                 video.ctime,
-                 video.tid_v2,
-                 ${reevaluateLabel[0]},
-                 ${reevaluateLabel[1]},
-                 ${reevaluateLabel[2]},
-                 COALESCE(video.is_deleted, false),
-                 video.is_filtered
-               ) AS outcome
-        FROM processed_videos AS video
-        WHERE p_aids IS NULL OR video.aid = ANY(p_aids)
-      ) AS evaluated
-      GROUP BY evaluated.outcome
-      ORDER BY evaluated.outcome
-    $$ LANGUAGE sql
+    DECLARE
+      video_aid bigint;
+      video processed_videos%ROWTYPE;
+      had_state boolean;
+      result text;
+      counts jsonb := '{}'::jsonb;
+    BEGIN
+      FOR video_aid IN
+        SELECT candidate.aid
+        FROM processed_videos AS candidate
+        WHERE p_aids IS NULL OR candidate.aid = ANY(p_aids)
+        ORDER BY candidate.aid
+      LOOP
+        SELECT * INTO video FROM processed_videos WHERE aid = video_aid;
+        CONTINUE WHEN NOT FOUND;
+
+        had_state := EXISTS (
+          SELECT 1 FROM video_collection_state WHERE aid = video_aid
+        );
+        result := fn_upsert_collection_state_from_processed_video(
+          video.aid,
+          video.pubdate,
+          video.ctime,
+          video.tid_v2,
+          ${reevaluateLabel[0]},
+          ${reevaluateLabel[1]},
+          ${reevaluateLabel[2]},
+          COALESCE(video.is_deleted, false),
+          video.is_filtered
+        );
+        IF NOT had_state AND result IN (
+          'upserted_bootstrap', 'upserted_backfill_daily_only', 'refreshed_from_daily'
+        ) THEN
+          result := 'new_' || result;
+        END IF;
+        counts := jsonb_set(
+          counts,
+          ARRAY[result],
+          to_jsonb(COALESCE((counts ->> result)::bigint, 0) + 1)
+        );
+      END LOOP;
+
+      RETURN QUERY
+      SELECT counted.key, counted.value::bigint
+      FROM jsonb_each_text(counts) AS counted
+      ORDER BY counted.key;
+    END;
+    $$ LANGUAGE plpgsql
   `);
 
   // For the dynamic-sleep handler loop: find the nearest *future* due time.

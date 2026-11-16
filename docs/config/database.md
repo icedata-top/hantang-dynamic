@@ -149,7 +149,8 @@ absent and the whitelist decides. Nothing in this schema adds the columns.
 | Does not pass | Demoted to priority `-1` with no source, which is final, unless its source protects it (below). A video never monitored gets no row. |
 
 Changing only the label columns does not fire the trigger. Re-evaluate the
-affected videos afterwards to apply the new labels.
+affected videos afterwards to apply the new labels (dry run first, see
+[Applying a whitelist change to stored videos](#applying-a-whitelist-change-to-stored-videos)).
 
 ### Which rows are protected
 
@@ -176,7 +177,9 @@ UPDATE video_collection_state SET monitor_source = 'whitelist'
 WHERE aid = ANY(ARRAY[1, 2, 3]::bigint[]);
 ```
 
-or evaluate them inside a transaction that sets the release settings. Each
+or re-evaluate them with the release switches of `pnpm reevaluate-collection`
+(`--allow-pull-legacy`, `--allow-label-demotion`; dry-run them first, see
+below). By hand, the same is a transaction that sets the release settings. Each
 setting only lasts until the end of its transaction, and the trigger never sets
 them:
 
@@ -188,24 +191,145 @@ SELECT * FROM fn_reevaluate_collection_whitelist(ARRAY[1, 2, 3]::bigint[]);
 COMMIT;
 ```
 
+Only ever use `SET LOCAL` inside such a transaction. Never set these settings
+for a session (`SET`), a role or the database (`ALTER ROLE/DATABASE ... SET`):
+the trigger reads them too, so every write in that scope would drop the
+protection.
+
 None of this keeps a deleted video, or one filtered out by the content filters,
 from being disabled.
 
 ### Applying a whitelist change to stored videos
 
-The trigger only reacts to future changes. After editing `collection_whitelist`,
-or once after upgrading, apply it to stored videos on demand:
+`pnpm init-schema` seeds `collection_whitelist` from the configuration only
+when it first creates the table; from then on the table is the only list.
+Neither `init-schema`, application start nor the trigger re-evaluates videos
+that are already stored: the trigger only reacts to new videos and to changes
+of a video's `type_id`, `tid_v2`, `pid_v2`, `is_filtered` or `is_deleted`. A
+whitelist edit or a label-only change reaches stored videos only through the
+steps below, which are always run by hand.
 
-```sql
-SELECT * FROM fn_reevaluate_collection_whitelist();
--- or a batch:
-SELECT * FROM fn_reevaluate_collection_whitelist(ARRAY[1, 2, 3]::bigint[]);
-```
+1. Edit the table:
 
-It returns one row per outcome (for example `disabled_not_whitelisted`,
-`revived_upserted_bootstrap`, `ignored_not_whitelisted`) with a video count. The
-full run is a single statement over `processed_videos`; on a large table, pass
-`p_aids` in batches.
+   ```sql
+   BEGIN;
+   INSERT INTO collection_whitelist (kind, value)
+   SELECT 'tid_v2', unnest(ARRAY[2016, 2021, 2022, 2023, 2061])
+   ON CONFLICT DO NOTHING;
+   DELETE FROM collection_whitelist
+   WHERE kind = 'tid_v2' AND value <> ALL (ARRAY[2016, 2021, 2022, 2023, 2061]);
+   COMMIT;
+   ```
+
+   To compare candidate lists before touching the table, skip this step and
+   pass them to the dry run instead (`--tid-v2`, `--tid-v1`).
+
+2. Dry-run the videos you intend to change. Nothing is written:
+
+   ```bash
+   pnpm reevaluate-collection --active-only
+   pnpm reevaluate-collection --from-aid 1 --to-aid 500000 --details dry-run.csv
+   pnpm reevaluate-collection --active-only --tid-v2 2016,2021,2022,2023,2061 --tid-v1 28,30,47,59,130,244
+   ```
+
+   or with an executable: `./bilibili-dynamic-subscribe-linux --reevaluate-collection --active-only`.
+
+3. Apply the reviewed range in batches, keeping the pre-image file:
+
+   ```bash
+   pnpm reevaluate-collection --active-only --apply --pre-image before-1.jsonl
+   ```
+
+4. If the result is wrong, put the saved rows back:
+
+   ```bash
+   pnpm reevaluate-collection --restore before-1.jsonl            # preview
+   pnpm reevaluate-collection --restore before-1.jsonl --apply
+   ```
+
+A range is required. Give `--from-aid`/`--to-aid` (inclusive), `--aids-file`
+(aids separated by whitespace or commas), `--active-only` (videos whose state
+priority is above 0), or `--all` for every stored video. Without one the
+command exits with an error and does nothing. `--from-aid`/`--to-aid` also
+narrow the other three.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--apply` | off | Write. Without it the run is a dry run. |
+| `--pre-image <file>` | — | Required with `--apply`. Appends each batch's state rows (whole rows, or `null` when a video has none) before the batch is written. |
+| `--batch <n>` | `5000` | Videos per batch; each batch is one transaction. |
+| `--max-batches <n>` | all | Stop after this many batches. |
+| `--statement-timeout`, `--lock-timeout` | `60s`, `5s` | Set for each batch's transaction. |
+| `--tid-v2 a,b`, `--tid-v1 a,b` | `collection_whitelist` | Dry run only: the lists to evaluate against. Required where the table does not exist yet. |
+| `--exact-daily-history` | off | Dry run only: look up `video_daily` for each batch instead of approximating (see below). |
+| `--details <file>` | — | Write one CSV line for every evaluated video. |
+| `--allow-pull-legacy`, `--allow-label-demotion` | off | Release the protection (see above) for the evaluated videos: as `SET LOCAL` inside each `--apply` batch, and in the dry run's verdicts. |
+| `--restore <file>` | — | Restore a pre-image file; a preview unless `--apply` is given. |
+
+The dry run runs every batch in a read-only transaction. It evaluates the same
+decision expression the trigger uses, inlined into a plain query, so it does
+not need `collection_whitelist`, the `monitor_source` column or any function of
+this schema: it also runs on a database that has not been upgraded yet, and
+with `default_transaction_read_only = on`. Label rules and the new-video age
+come from the configuration and are printed with the report; make sure they
+match what `init-schema` installed. Whether a video has daily history only
+decides how an admitted video enters (from daily data or as bootstrap or
+backfill). By default the dry run approximates it with the state row's
+`last_daily_record_date` and says so in the report; `--exact-daily-history`
+reads `video_daily` once per batch instead, which is slower on a large table.
+
+The report prints the outcome counts, the counts by outcome, current priority
+(`>0`, `0`, `-1`, `-2`, `none`) and current `monitor_source`, by `tid_v2` (by
+`type_id` while `tid_v2` is 0 or NULL) and by `label_content_type`, and lists
+every video with priority above 0. Without `--details` it also lists every
+video that leaves, enters or is held by the protection. Each listed video shows
+`aid, tid_v2, type_id, pid_v2`, the label columns, the current priority and
+source, the `basis` that decided (`label`, `v2`, or `v1` while `tid_v2` is
+unknown), the raw `decision` and the `outcome`:
+
+| Outcome | Meaning |
+| --- | --- |
+| `keep_active` | Already has a state row and keeps it. |
+| `newly_admit_bootstrap`, `newly_admit_backfill`, `newly_admit_daily` | Enters monitoring on its `tid_v2` (new video, older video, or from daily data). |
+| `v2_unknown_v1_admit` | Enters monitoring on its `type_id` while `tid_v2` is unknown. |
+| `v2_unknown_no_v1` | `tid_v2` unknown and `type_id` not listed: left alone. |
+| `label_admit` | A passing label admits or keeps it. |
+| `revive` | A whitelist exclusion that the whitelist now admits again. |
+| `pull_out` | Leaves monitoring: `tid_v2` not listed. |
+| `pull_out_blocked_protected` | Would leave monitoring, but its source protects it. |
+| `label_demotion` | Leaves monitoring for good: its label fails. |
+| `label_demotion_blocked_protected` | Would be demoted, but its source protects it. |
+| `disable_deleted`, `disable_filtered_out` | Disabled because the video is deleted or filtered out. |
+| `unchanged_disabled` | Already disabled and stays so. |
+| `no_row_not_admitted` | Has no state row and does not get one. |
+| `label_not_ready` | A partial label reached the decision. Never expected here; a self-check. |
+
+`--apply` processes the range in `aid` order. Each batch locks its state rows,
+appends them to the pre-image file, re-evaluates every video with
+`fn_reevaluate_collection_whitelist`, which reads the video again right before
+evaluating it, and commits. After each batch the command prints the next
+`--from-aid`; if a run stops, by `--max-batches` or an error (the failed batch
+is rolled back), rerun the same command with that `--from-aid`. Use a new
+pre-image file per run, or keep appending to the same one: restore uses the
+first entry of each aid. Restore writes the saved rows back column by column
+and deletes rows that did not exist before. It does not undo
+`video_collection_gate_crossings` rows that the daily refresh records while
+admitting a video, and it overwrites anything the application changed in those
+rows after the apply, such as the next minute due time.
+
+`fn_reevaluate_collection_whitelist(p_aids)` is the same evaluation for a given
+set of videos. It returns one row per outcome (for example
+`disabled_not_whitelisted`, `new_upserted_bootstrap`,
+`revived_upserted_bootstrap`), where `new_` marks a video that had no state
+row. Called without arguments it evaluates every stored video in one statement
+and one transaction; use the batched command instead.
+
+To roll back the schema of this version itself, keep a `pg_get_functiondef`
+copy of the previous `fn_upsert_collection_state_from_processed_video`
+before upgrading. Rolling back means re-creating that definition and dropping
+the triggers `trg_processed_video_collection_state` and
+`trg_processed_video_collection_state_update` on `processed_videos`; do it by
+hand, there is no command for it.
 
 Run `pnpm init-schema` before upgrading the application: the app reads
 `collection_whitelist` at runtime and the trigger is installed by the schema.

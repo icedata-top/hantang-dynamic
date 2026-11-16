@@ -208,7 +208,8 @@ test("trigger and re-evaluation call the upsert with nine arguments to avoid the
     const call = sql.slice(
       sql.indexOf("fn_upsert_collection_state_from_processed_video("),
     );
-    const args = call.slice(call.indexOf("(") + 1, call.indexOf(")\n"));
+    // The argument list ends at the closing parenthesis on its own line.
+    const args = call.slice(call.indexOf("(") + 1, call.search(/\n\s*\)/));
     assert.equal(
       args.split(",\n").length,
       9,

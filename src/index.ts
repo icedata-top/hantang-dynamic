@@ -121,6 +121,23 @@ async function main() {
     throw new Error("--pid-v2-whitelist requires --update-info");
   }
 
+  if (args.includes("--reevaluate-collection")) {
+    const { parseCollectionReevaluationArgs, runCollectionReevaluation } =
+      await import("./scripts/reevaluate-collection");
+    // Parse first: an incomplete command fails before any connection is made.
+    const options = parseCollectionReevaluationArgs(
+      args.filter((argument) => argument !== "--reevaluate-collection"),
+    );
+    const db = Database.getInstance();
+    try {
+      await db.init();
+      await runCollectionReevaluation(db.getPool(), options);
+    } finally {
+      await db.close();
+    }
+    return;
+  }
+
   if (args.includes("--init-schema")) {
     logger.info("Initializing database schema");
     const db = Database.getInstance();

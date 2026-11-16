@@ -20,8 +20,9 @@ export type CollectionWhitelistKind =
  * unknown; once a tid_v2 arrives, it alone decides and a v1 match no longer
  * counts. Kind 'pid_v2' does not decide monitoring: it only pre-selects which
  * related-video cards get their details fetched. The table is the single source
- * of truth: edit it with plain SQL, then run fn_reevaluate_collection_whitelist()
- * to apply the change to videos that are already stored.
+ * of truth: edit it with plain SQL. New events follow the edit at once; to
+ * apply it to videos that are already stored, dry-run and then apply it in
+ * explicit aid ranges with `pnpm reevaluate-collection`.
  *
  * The TOML/env values (`whitelist.video.type_ids`,
  * `whitelist.minute_bootstrap.tid_v2`, `whitelist.recommendation.pid_v2`) are
